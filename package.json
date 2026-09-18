@@ -10,7 +10,8 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --test \"test/*.test.js\"",
-    "keygen": "node scripts/keygen.js"
+    "keygen": "node scripts/keygen.js",
+    "check": "node scripts/check.js"
   },
   "dependencies": {
     "@noble/post-quantum": "^0.7.1",
