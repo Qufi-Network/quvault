@@ -1,0 +1,25 @@
+{
+  "name": "quvault",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A testnet4 Bitcoin wallet whose key is sealed post-quantum and whose withdrawals need a Veyns palm approval.",
+  "type": "module",
+  "engines": {
+    "node": "24.x"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test \"test/*.test.js\"",
+    "keygen": "node scripts/keygen.js"
+  },
+  "dependencies": {
+    "@noble/post-quantum": "^0.7.1",
+    "@scure/base": "^1.2.6",
+    "@scure/btc-signer": "^1.8.1",
+    "pg": "^8.23.0",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8"
+  }
+}

@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QuVault</title>
+  <meta name="description" content="A testnet Bitcoin wallet sealed with post-quantum encryption and spendable only with your palm.">
+  <link rel="icon" href="/qufi-mark.png" type="image/png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" type="module"></script>
+</head>
+<body>
+  <div class="field" aria-hidden="true"></div>
+
+  <header class="top">
+    <a class="mark" href="/">
+      <img src="/qufi-mark.png" alt="" width="34" height="34">
+      <span>QuVault</span>
+    </a>
+    <div class="who" id="who" hidden>
+      <span class="chip" id="network-chip"></span>
+      <button class="link" id="signout" type="button">Sign out</button>
+    </div>
+  </header>
+
+  <main id="view-loading" class="view narrow">
+    <p class="quiet" id="loading-text">Loading…</p>
+    <button class="btn ghost" id="retry" type="button" hidden>Try again</button>
+  </main>
+
+  <main id="view-setup" class="view narrow" hidden>
+    <p class="eyebrow">Setup</p>
+    <h1>QuVault needs two things</h1>
+    <ol class="steps" id="setup-steps"></ol>
+    <p class="fine">Restart or redeploy after setting them.</p>
+  </main>
+
+  <main id="view-signin" class="view split" hidden>
+    <section class="pitch">
+      <p class="eyebrow">Bitcoin <span id="pitch-network">testnet4</span> · Veyns palm</p>
+      <h1>Your coins move<br><em>only for your hand.</em></h1>
+      <p class="lede">The wallet key is created under a palm scan and sealed with post-quantum encryption. Every withdrawal needs a fresh palm approval bound to that exact transaction.</p>
+      <ul class="facts">
+        <li><b>ML-KEM-768 + X25519</b> seal the stored key</li>
+        <li><b>Palm approval</b> releases it, once, per transaction</li>
+        <li><b>Test coins only</b>, no real value</li>
+      </ul>
+    </section>
+    <section class="card signin-card">
+      <p class="eyebrow">Sign in</p>
+      <button class="btn brand wide" id="signin-browser" type="button" disabled>Continue with Veyns</button>
+      <button class="btn ghost wide" id="signin-palm" type="button" disabled>Sign in with palm</button>
+      <p class="error" id="signin-error" role="alert"></p>
+      <p class="fine">Veyns opens in a small window. QuVault only receives a private account key, never your palm.</p>
+    </section>
+  </main>
+
+  <main id="view-create" class="view narrow" hidden>
+    <p class="eyebrow">First step</p>
+    <h1>Create your vault</h1>
+    <p class="lede">A new Bitcoin key is generated on the server and sealed immediately. The palm scan you do now binds the wallet to your account and is recorded with it.</p>
+    <ul class="facts">
+      <li>Nobody can spend from it without a palm approval</li>
+      <li>The sealed key can only be opened by this server, using post-quantum keys</li>
+      <li>You can receive coins straight away</li>
+    </ul>
+    <button class="btn brand wide" id="create-wallet" type="button">Create wallet with a palm scan</button>
+    <p class="error" id="create-error" role="alert"></p>
+  </main>
+
+  <main id="view-wallet" class="view" hidden>
+    <section class="hero">
+      <div class="balance">
+        <p class="eyebrow">Balance</p>
+        <p class="amount"><span id="balance">0.00000000</span><span class="unit">tBTC</span></p>
+        <p class="quiet" id="balance-note"></p>
+        <p class="error" id="chain-error" role="alert"></p>
+      </div>
+
+      <div class="card receive">
+        <p class="eyebrow">Receive</p>
+        <div class="qr" id="qr"></div>
+        <p class="address" id="address"></p>
+        <div class="row">
+          <button class="btn ghost small" id="copy-address" type="button">Copy address</button>
+          <a class="btn ghost small" id="explorer-link" target="_blank" rel="noopener">Explorer</a>
+        </div>
+        <p class="fine">Send test coins here from a testnet4 faucet. They appear after one confirmation.</p>
+      </div>
+    </section>
+
+    <section class="lane">
+      <header class="lane-head"><h2>Withdraw</h2><p class="quiet" id="fee-note"></p></header>
+      <form id="send-form" class="card send">
+        <label for="send-to">To address</label>
+        <input id="send-to" autocomplete="off" spellcheck="false" placeholder="tb1…" required>
+        <div class="two">
+          <div>
+            <label for="send-amount">Amount <span class="optional">satoshis</span></label>
+            <input id="send-amount" inputmode="numeric" placeholder="50000">
+          </div>
+          <div>
+            <label for="send-fee">Fee rate <span class="optional">sat/vB, optional</span></label>
+            <input id="send-fee" inputmode="numeric" placeholder="auto">
+          </div>
+        </div>
+        <label class="check"><input type="checkbox" id="send-max"> <span>Send everything (the fee comes out of the amount)</span></label>
+        <button class="btn brand wide" type="submit">Review withdrawal</button>
+        <p class="error" id="send-error" role="alert"></p>
+      </form>
+    </section>
+
+    <section class="lane">
+      <header class="lane-head"><h2>Activity</h2></header>
+      <ol class="ledger" id="history"></ol>
+    </section>
+  </main>
+
+  <dialog id="approval" aria-labelledby="approval-statement">
+    <div class="sheet">
+      <p class="eyebrow pulseline" id="approval-kind">Palm approval</p>
+      <p class="statement" id="approval-statement"></p>
+      <dl class="details" id="approval-details"></dl>
+
+      <div class="wait" id="approval-wait">
+        <span class="pulse" aria-hidden="true"></span>
+        <p id="approval-wait-text" aria-live="polite">Open Veyns on your phone, check the request and scan your palm.</p>
+        <button class="link" id="approval-open" type="button" hidden>Show status window</button>
+      </div>
+
+      <p class="error" id="approval-error" role="alert"></p>
+      <div class="sheet-foot">
+        <p class="fine">Veyns shows this statement word for word. The signature covers this exact transaction.</p>
+        <button class="link" id="approval-cancel" type="button">Cancel</button>
+      </div>
+    </div>
+  </dialog>
+
+  <p class="toast" id="toast" role="status" aria-live="polite" hidden></p>
+</body>
+</html>
