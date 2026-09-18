@@ -117,7 +117,10 @@ export function createApp(options) {
   let dbPromise = null;
   const database = () => {
     if (!databaseUrl && options.requireDatabaseUrl) {
-      return Promise.reject(new HttpError(503, 'No database yet: add Postgres to this project, then redeploy.'));
+      const seen = options.databaseCandidates?.length
+        ? ` The deployment has ${options.databaseCandidates.join(', ')}, but none holds a postgres:// URL.`
+        : ' This deployment has no database variable at all — connect Neon to Production, then redeploy.';
+      return Promise.reject(new HttpError(503, `No database yet.${seen}`));
     }
     dbPromise ??= openDb({ url: databaseUrl, dir: dataDir && path.join(dataDir, 'pgdata') })
       .catch(error => {
@@ -277,6 +280,9 @@ export function createApp(options) {
       requirePalmSignin,
       network,
       vaultReady: Boolean(walletSeed),
+      // Which environment variable the database came from; never its value.
+      databaseVariable: options.databaseVariable ?? (databaseUrl ? 'local' : null),
+      databaseCandidates: options.databaseCandidates ?? [],
     };
   }
 

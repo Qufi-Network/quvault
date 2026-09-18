@@ -4,6 +4,28 @@ import { createApp } from '../src/app.js';
 const env = process.env;
 const productionHost = env.VERCEL_PROJECT_PRODUCTION_URL;
 
+/**
+ * Finds the Postgres connection however the database was connected: Neon on Vercel names the
+ * variable after the prefix chosen at the time, so accept the usual names and then any variable
+ * holding a postgres:// URL. Only names are ever reported, never values.
+ */
+function findDatabase(environment) {
+  const preferred = ['DATABASE_URL', 'STORAGE_URL', 'POSTGRES_URL', 'STORAGE_DATABASE_URL', 'POSTGRES_PRISMA_URL'];
+  const isPostgres = value => /^postgres(ql)?:\/\//.test(value ?? '');
+  const pooled = name => !/UNPOOLED|NO_?SSL|NON_?POOLING|PRISMA/i.test(name);
+
+  let chosen = preferred.find(name => isPostgres(environment[name]));
+  chosen ??= Object.keys(environment).find(name => isPostgres(environment[name]) && pooled(name));
+  chosen ??= Object.keys(environment).find(name => isPostgres(environment[name]));
+
+  return {
+    databaseUrl: chosen ? environment[chosen] : '',
+    databaseVariable: chosen ?? null,
+    // Names only, so a missing connection can be diagnosed from the outside without leaking anything.
+    databaseCandidates: Object.keys(environment).filter(name => /POSTGRES|DATABASE|NEON|STORAGE/i.test(name)).sort(),
+  };
+}
+
 const app = createApp({
   publicOrigin: (env.PUBLIC_ORIGIN || (productionHost ? `https://${productionHost}` : 'http://localhost:3000')).replace(/\/$/, ''),
   issuer: (env.VEYNS_ISSUER || 'https://sandbox.id.veyns.io').replace(/\/$/, ''),
@@ -13,7 +35,7 @@ const app = createApp({
   network: env.BITCOIN_NETWORK || 'testnet4',
   chainApi: env.CHAIN_API || 'https://mempool.space/testnet4/api',
   requirePalmSignin: env.REQUIRE_PALM_SIGNIN === 'true',
-  databaseUrl: env.DATABASE_URL || env.STORAGE_URL || env.POSTGRES_URL || '',
+  ...findDatabase(env),
   requireDatabaseUrl: true,
 });
 
