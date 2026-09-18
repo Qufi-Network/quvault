@@ -97,7 +97,11 @@ if (c.clientId) {
 
 const anonymous = await http(`${issuer}/v1/approvals/${b64(24)}`);
 anonymous.status === 401 ? pass('approvals API refuses anonymous calls') : fail('approvals API refuses anonymous calls', `HTTP ${anonymous.status}`);
-if (secret && c.clientId) {
+const localClientId = process.env.VEYNS_CLIENT_ID || '';
+if (secret && c.clientId && localClientId !== c.clientId) {
+  // The local .env belongs to a different app, so its credential says nothing about this one.
+  skip('credential accepted', `the local .env is for ${localClientId || 'another app'}, not ${c.clientId}`);
+} else if (secret && c.clientId) {
   const authorization = 'Basic ' + Buffer.from(`${c.clientId}:${secret}`).toString('base64');
   const probe = await http(`${issuer}/v1/approvals/${b64(24)}`, { headers: { authorization } });
   if (probe.status === 401) fail('credential accepted', 'Veyns rejected it: create or rotate it in the console');
