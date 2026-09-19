@@ -74,69 +74,127 @@
     <div id="create-pending"></div>
   </main>
 
-  <main id="view-wallet" class="view" hidden>
-    <section class="hero">
-      <div class="balance">
-        <p class="eyebrow">Balance</p>
-        <p class="amount"><span id="balance">0.00000000</span><span class="unit">tBTC</span></p>
-        <p class="quiet" id="balance-note"></p>
-        <p class="error" id="chain-error" role="alert"></p>
-      </div>
+  <main id="view-wallet" class="shell" hidden>
+    <nav class="side" aria-label="Wallet sections">
+      <p class="side-label">Wallet</p>
+      <button class="tab" data-tab="vault" type="button">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="4" width="15" height="12" rx="2.5"/><circle cx="10" cy="10" r="2.6"/></svg>
+        Vault
+      </button>
+      <button class="tab" data-tab="send" type="button">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 15.5V4.5"/><path d="M5.5 9 10 4.5 14.5 9"/></svg>
+        Send Funds
+      </button>
+      <button class="tab" data-tab="receive" type="button">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4.5v11"/><path d="M14.5 11 10 15.5 5.5 11"/></svg>
+        Receive Funds
+      </button>
 
-      <div class="card receive">
-        <p class="eyebrow">Receive</p>
-        <div class="qr" id="qr"></div>
-        <p class="address" id="address"></p>
-        <div class="row">
-          <button class="btn ghost small" id="copy-address" type="button">Copy address</button>
-          <a class="btn ghost small" id="explorer-link" target="_blank" rel="noopener">Explorer</a>
-        </div>
-        <p class="fine">Send test coins here from a testnet4 faucet. They appear after one confirmation.</p>
-      </div>
-    </section>
+      <p class="side-label spaced">Accounts</p>
+      <button class="account" data-tab="vault" type="button" id="account-btc">
+        <span class="account-mark">₿</span>
+        <span class="account-text">
+          <b>BTC</b>
+          <small id="account-network">testnet4</small>
+        </span>
+        <span class="account-amount" id="account-balance">0.00000000</span>
+      </button>
+      <p class="side-note">More accounts can join this vault later. Each keeps its own rules.</p>
+    </nav>
 
-    <section class="lane" id="pending-lane" hidden>
-      <header class="lane-head"><h2>Waiting for approval</h2><p class="quiet">Each approver scans their own palm.</p></header>
-      <div class="requests" id="pending"></div>
-    </section>
-
-    <section class="lane">
-      <header class="lane-head"><h2>Withdraw</h2><p class="quiet" id="fee-note"></p></header>
-      <form id="send-form" class="card send">
-        <label for="send-to">To address</label>
-        <input id="send-to" autocomplete="off" spellcheck="false" placeholder="tb1…" required>
-        <div class="two">
+    <div class="panes">
+      <section class="pane" data-pane="vault">
+        <header class="pane-head">
           <div>
-            <label for="send-amount">Amount <span class="optional">satoshis</span></label>
-            <input id="send-amount" inputmode="numeric" placeholder="50000">
+            <p class="eyebrow">Bitcoin account</p>
+            <h1 class="pane-title">Vault</h1>
           </div>
+        </header>
+
+        <div class="balance card">
+          <p class="eyebrow">Balance</p>
+          <p class="amount"><span id="balance">0.00000000</span><span class="unit">tBTC</span></p>
+          <p class="quiet" id="balance-note"></p>
+          <p class="error" id="chain-error" role="alert"></p>
+        </div>
+
+        <section class="lane" id="pending-lane" hidden>
+          <header class="lane-head"><h2>Waiting for approval</h2><p class="quiet">Each approver scans their own palm.</p></header>
+          <div class="requests" id="pending"></div>
+        </section>
+
+        <section class="lane">
+          <header class="lane-head">
+            <h2>Rules and approvers</h2>
+            <button class="btn ghost small" id="edit-rules" type="button">Change rules</button>
+          </header>
+          <div class="card rules">
+            <ul class="rule-list" id="rule-list"></ul>
+            <div class="members" id="member-list"></div>
+            <p class="fine">Your approver code: <code id="my-code"></code> <button class="link" id="copy-code" type="button">Copy</button> — give it to a wallet owner so they can add you.</p>
+          </div>
+        </section>
+
+        <section class="lane">
+          <header class="lane-head"><h2>Activity</h2></header>
+          <ol class="ledger" id="history"></ol>
+        </section>
+      </section>
+
+      <section class="pane" data-pane="send" hidden>
+        <header class="pane-head">
           <div>
-            <label for="send-fee">Fee rate <span class="optional">sat/vB, optional</span></label>
-            <input id="send-fee" inputmode="numeric" placeholder="auto">
+            <p class="eyebrow">Bitcoin account</p>
+            <h1 class="pane-title">Send Funds</h1>
+          </div>
+          <p class="quiet" id="fee-note"></p>
+        </header>
+
+        <form id="send-form" class="card send">
+          <label for="send-to">To address</label>
+          <input id="send-to" autocomplete="off" spellcheck="false" placeholder="tb1…" required>
+          <div class="two">
+            <div>
+              <label for="send-amount">Amount <span class="optional">satoshis</span></label>
+              <input id="send-amount" inputmode="numeric" placeholder="50000">
+            </div>
+            <div>
+              <label for="send-fee">Fee rate <span class="optional">sat/vB, optional</span></label>
+              <input id="send-fee" inputmode="numeric" placeholder="auto">
+            </div>
+          </div>
+          <label class="check"><input type="checkbox" id="send-max"> <span>Send everything (the fee comes out of the amount)</span></label>
+          <button class="btn brand wide" type="submit">Review withdrawal</button>
+          <p class="error" id="send-error" role="alert"></p>
+        </form>
+
+        <p class="fine spread" id="send-rule-note"></p>
+        <div class="requests" id="send-pending"></div>
+      </section>
+
+      <section class="pane" data-pane="receive" hidden>
+        <header class="pane-head">
+          <div>
+            <p class="eyebrow">Bitcoin account</p>
+            <h1 class="pane-title">Receive Funds</h1>
+          </div>
+        </header>
+
+        <div class="card receive wide-card">
+          <div class="qr" id="qr"></div>
+          <div class="receive-body">
+            <p class="eyebrow">Your address</p>
+            <p class="address" id="address"></p>
+            <div class="row">
+              <button class="btn ghost small" id="copy-address" type="button">Copy address</button>
+              <a class="btn ghost small" id="explorer-link" target="_blank" rel="noopener">Explorer</a>
+            </div>
+            <p class="fine">Send test coins here from a testnet4 faucet. They appear after one confirmation, and receiving never needs a palm scan.</p>
+            <p class="quiet" id="receive-note"></p>
           </div>
         </div>
-        <label class="check"><input type="checkbox" id="send-max"> <span>Send everything (the fee comes out of the amount)</span></label>
-        <button class="btn brand wide" type="submit">Review withdrawal</button>
-        <p class="error" id="send-error" role="alert"></p>
-      </form>
-    </section>
-
-    <section class="lane">
-      <header class="lane-head">
-        <h2>Rules and approvers</h2>
-        <button class="btn ghost small" id="edit-rules" type="button">Change rules</button>
-      </header>
-      <div class="card rules">
-        <ul class="rule-list" id="rule-list"></ul>
-        <div class="members" id="member-list"></div>
-        <p class="fine">Your approver code: <code id="my-code"></code> <button class="link" id="copy-code" type="button">Copy</button> — give it to a wallet owner so they can add you.</p>
-      </div>
-    </section>
-
-    <section class="lane">
-      <header class="lane-head"><h2>Activity</h2></header>
-      <ol class="ledger" id="history"></ol>
-    </section>
+      </section>
+    </div>
   </main>
 
   <dialog id="approval" aria-labelledby="approval-statement">

@@ -209,15 +209,96 @@ input:focus { border-color: var(--brand); outline: none; }
 .steps { margin: 0; padding-left: 20px; display: grid; gap: 14px; color: var(--text-2); }
 .steps code { font: 400 13px/1.5 var(--mono); color: var(--brand-soft); overflow-wrap: anywhere; }
 
-/* -------------------------------------------------------------- wallet */
+/* ----------------------------------------------------------- dashboard */
 
-.hero {
+.shell {
+  position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 360px);
-  gap: 40px;
+  grid-template-columns: 232px minmax(0, 1fr);
+  gap: 32px;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 8px 28px 96px;
   align-items: start;
-  padding: 2vh 0 40px;
 }
+
+.side {
+  position: sticky;
+  top: 16px;
+  display: grid;
+  gap: 4px;
+  padding: 18px 14px;
+  background: linear-gradient(180deg, var(--panel) 0%, rgba(8, 13, 24, .6) 100%);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+.side-label {
+  margin: 4px 0 8px 10px;
+  font: 500 9.5px/1 var(--mono);
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.side-label.spaced { margin-top: 22px; }
+.side-note { margin: 10px 10px 2px; font-size: 11.5px; line-height: 1.5; color: var(--muted); }
+
+.tab, .account {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-2);
+  font: 400 14.5px/1 var(--sans);
+  text-align: left;
+  cursor: pointer;
+}
+.tab svg { width: 19px; height: 19px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.tab:hover, .account:hover { background: rgba(23, 105, 255, .10); color: var(--text); }
+.tab.active {
+  background: linear-gradient(90deg, rgba(23, 105, 255, .22), rgba(23, 105, 255, .05));
+  border-color: rgba(23, 105, 255, .45);
+  color: #fff;
+}
+.tab.active svg { color: var(--brand-soft); }
+
+.account { gap: 10px; padding: 10px 12px; }
+.account-mark {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 50%;
+  background: linear-gradient(180deg, var(--brand) 0%, var(--brand-deep) 100%);
+  color: #fff;
+  font-size: 14px;
+}
+.account-text { display: grid; gap: 2px; min-width: 0; }
+.account-text b { font-weight: 600; font-size: 14px; color: var(--text); }
+.account-text small { font: 400 10px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.account-amount { margin-left: auto; font: 400 11.5px/1 var(--mono); color: var(--brand-soft); }
+.account.active { border-color: rgba(23, 105, 255, .45); background: rgba(23, 105, 255, .10); }
+
+.panes { min-width: 0; }
+.pane > * + * { margin-top: 22px; }
+.pane-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 10px 0 4px;
+}
+.pane-title { font-size: clamp(28px, 4vw, 40px); }
+.balance.card { display: grid; gap: 2px; }
+.spread { display: block; }
+
+.wide-card { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 24px; align-items: start; }
+.receive-body { display: grid; gap: 12px; }
 .amount {
   display: flex;
   align-items: baseline;
@@ -410,11 +491,19 @@ dialog::backdrop { background: rgba(2, 5, 12, .72); backdrop-filter: blur(3px); 
   box-shadow: 0 20px 50px -20px #000;
 }
 
-@media (max-width: 860px) {
+@media (max-width: 960px) {
   .top { padding: 14px 16px; }
   .view { padding: 10px 16px 72px; }
-  .view.split, .hero { grid-template-columns: minmax(0, 1fr); gap: 28px; }
-  .view.split { padding-top: 5vh; }
+  .view.split { grid-template-columns: minmax(0, 1fr); gap: 28px; padding-top: 5vh; }
+
+  /* The sidebar becomes a row of tabs above the content. */
+  .shell { grid-template-columns: minmax(0, 1fr); gap: 20px; padding: 8px 16px 72px; }
+  .side { position: static; grid-auto-flow: column; grid-auto-columns: max-content; gap: 8px; overflow-x: auto; padding: 10px; }
+  .side-label, .side-note { display: none; }
+  .tab, .account { width: auto; white-space: nowrap; }
+  .account-amount { margin-left: 10px; }
+  .wide-card { grid-template-columns: minmax(0, 1fr); }
+  .qr svg { max-width: 220px; margin: 0 auto; }
 }
 
 @media (max-width: 520px) {

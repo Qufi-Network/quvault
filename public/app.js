@@ -117,6 +117,7 @@ async function refresh() {
   }
   renderWallet(data);
   show('wallet');
+  setTab(location.hash.slice(1) || 'vault', { remember: false });
 }
 
 function showSetup() {
@@ -272,18 +273,54 @@ $('create-wallet').addEventListener('click', async () => {
   }
 });
 
+/* ------------------------------------------------------- dashboard tabs */
+
+const TABS = ['vault', 'send', 'receive'];
+
+function setTab(name, { remember = true } = {}) {
+  const tab = TABS.includes(name) ? name : 'vault';
+  for (const pane of document.querySelectorAll('.pane')) pane.hidden = pane.dataset.pane !== tab;
+  for (const node of document.querySelectorAll('.side .tab')) {
+    const active = node.dataset.tab === tab;
+    node.classList.toggle('active', active);
+    node.setAttribute('aria-current', active ? 'page' : 'false');
+  }
+  if (remember && location.hash.slice(1) !== tab) history.replaceState(null, '', `#${tab}`);
+}
+
+for (const node of document.querySelectorAll('.side .tab')) {
+  node.addEventListener('click', () => setTab(node.dataset.tab));
+}
+$('account-btc').addEventListener('click', () => {
+  $('account-btc').classList.add('active');
+  setTab('vault');
+});
+addEventListener('hashchange', () => setTab(location.hash.slice(1), { remember: false }));
+
 function renderWallet(data) {
   const { wallet, balance, spendable, coins, chainHistory, feeRate, qr, chainError, policy, members, me } = data;
   $('address').textContent = wallet.address;
   $('explorer-link').href = wallet.explorer;
   if (qr) $('qr').innerHTML = qr; // A QR code this server generated; no external content.
   $('my-code').textContent = me.code;
+  $('account-network').textContent = wallet.network;
+  $('account-btc').classList.add('active');
 
-  $('balance').textContent = btc(balance ? balance.confirmed + balance.pending : 0);
+  const total = balance ? balance.confirmed + balance.pending : 0;
+  $('account-balance').textContent = btc(total);
+  $('receive-note').textContent = balance?.txCount ? `${balance.txCount} transaction${balance.txCount === 1 ? '' : 's'} so far.` : '';
+
+  // What the rules will ask for, said plainly on the sending screen.
+  const steps = policy.rules.map(rule => (rule.upToSats === null
+    ? `anything larger needs ${rule.approvals} palm${rule.approvals === 1 ? '' : 's'}`
+    : `up to ${fmtSats(rule.upToSats)} sats needs ${rule.approvals} palm${rule.approvals === 1 ? '' : 's'}`));
+  $('send-rule-note').textContent = `Your rules: ${steps.join(' · ')}.`;
+
+  $('balance').textContent = btc(total);
   const notes = [];
   if (balance?.pending) notes.push(`${fmtSats(balance.pending)} sats still unconfirmed`);
   if (coins) notes.push(`${coins} spendable coin${coins === 1 ? '' : 's'} (${fmtSats(spendable)} sats)`);
-  else if (balance && !balance.txCount) notes.push('No coins yet — send test coins to the address on the right.');
+  else if (balance && !balance.txCount) notes.push('No coins yet — open Receive Funds for your address.');
   notes.push(`Key sealed with ${wallet.protection}`);
   $('balance-note').textContent = notes.join(' · ');
   $('chain-error').textContent = chainError || '';
@@ -296,6 +333,7 @@ function renderWallet(data) {
     m.label, m.owner ? el('small', {}, 'owner') : null, m.id === me.id ? el('small', {}, 'you') : null)));
 
   renderRequests($('pending'), data.pending);
+  renderRequests($('send-pending'), data.pending.filter(op => op.kind === 'withdraw'));
   $('pending-lane').hidden = data.pending.length === 0;
   renderHistory(chainHistory || [], data.history || []);
 }
