@@ -16,11 +16,14 @@
   "dependencies": {
     "@noble/post-quantum": "^0.7.1",
     "@scure/base": "^1.2.6",
+    "@scure/bip32": "^1.7.0",
+    "@scure/bip39": "^1.6.0",
     "@scure/btc-signer": "^1.8.1",
     "pg": "^8.23.0",
     "qrcode": "^1.5.4"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "^0.5.8"
+    "@electric-sql/pglite": "^0.5.8",
+    "esbuild": "^0.28.2"
   }
 }

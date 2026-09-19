@@ -83,8 +83,27 @@ const SCHEMA = [
     created_at   BIGINT NOT NULL,
     closed_at    BIGINT
   )`,
-  'CREATE UNIQUE INDEX IF NOT EXISTS approvals_one_per_person ON approvals (operation_id, user_id)',
   'CREATE INDEX IF NOT EXISTS approvals_operation ON approvals (operation_id, status)',
+
+  /*
+   * v3: the key moved into the person's browser. The server keeps an address, a public key and
+   * a sealed unlock secret that is useless without the encrypted blob on that device.
+   * Approvals gained a slot, so one person can scan twice for the two-hand recovery ceremony.
+   */
+  'ALTER TABLE wallets ALTER COLUMN sealed_key DROP NOT NULL',
+  "ALTER TABLE wallets ADD COLUMN IF NOT EXISTS custody TEXT NOT NULL DEFAULT 'server'",
+  'ALTER TABLE wallets ADD COLUMN IF NOT EXISTS unlock_sealed TEXT',
+  'ALTER TABLE wallets ADD COLUMN IF NOT EXISTS salt TEXT',
+  'ALTER TABLE approvals ADD COLUMN IF NOT EXISTS slot INTEGER NOT NULL DEFAULT 1',
+  'DROP INDEX IF EXISTS approvals_one_per_person',
+  'CREATE UNIQUE INDEX IF NOT EXISTS approvals_one_per_slot ON approvals (operation_id, user_id, slot)',
+  `DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'operations_kind_v3') THEN
+      ALTER TABLE operations DROP CONSTRAINT IF EXISTS operations_kind_check;
+      ALTER TABLE operations ADD CONSTRAINT operations_kind_v3
+        CHECK (kind IN ('create', 'withdraw', 'policy', 'recovery'));
+    END IF;
+  END $$`,
 ];
 
 const INT8 = 20; // Timestamps are BIGINT; read them back as numbers.
