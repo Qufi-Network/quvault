@@ -621,6 +621,29 @@ dialog::backdrop { background: rgba(29, 29, 31, .28); backdrop-filter: blur(4px)
 .network-choice:hover { border-color: var(--brand); background: var(--brand-tint); color: var(--text); }
 .network-choice .chip { margin-left: auto; }
 
+/* The four steps of adding an account */
+.wizard-steps {
+  display: flex;
+  gap: 8px;
+  margin: 18px 0 4px;
+  padding: 0;
+  list-style: none;
+}
+.wizard-step {
+  flex: 1;
+  padding-top: 8px;
+  border-top: 2px solid var(--line);
+  font: 500 10.5px/1.4 var(--mono);
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.wizard-step.done { border-color: var(--brand-tint-2); color: var(--text-2); }
+.wizard-step.on { border-color: var(--brand); color: var(--brand-deep); }
+#wizard { display: grid; gap: 14px; margin: 14px 0 4px; }
+#wizard .details, #wizard .network-list, #wizard .member-rows, #wizard .presets { margin: 0; }
+.member-row .palm-id { color: var(--brand-deep); letter-spacing: .06em; text-transform: none; }
+
 .words {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));

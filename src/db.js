@@ -130,6 +130,23 @@ const SCHEMA = [
   `INSERT INTO accounts (wallet_user_id, network, address, public_key, created_at)
    SELECT user_id, 'bitcoin', address, public_key, created_at FROM wallets
    ON CONFLICT (wallet_user_id, network) DO NOTHING`,
+
+  /*
+   * v6: signers and thresholds belong to an account, not to the vault as a whole, so one
+   * account can need two palms while another needs one. Accounts that predate this keep
+   * exactly what the vault had. Operations record which account they are about.
+   */
+  'ALTER TABLE accounts ADD COLUMN IF NOT EXISTS policy TEXT',
+  'ALTER TABLE accounts ADD COLUMN IF NOT EXISTS signers TEXT',
+  'ALTER TABLE operations ADD COLUMN IF NOT EXISTS network TEXT',
+  // The identity a person is given the first time they put their palm to this vault.
+  'ALTER TABLE members ADD COLUMN IF NOT EXISTS palm_id TEXT',
+  'ALTER TABLE members ADD COLUMN IF NOT EXISTS palm_at BIGINT',
+  `UPDATE accounts a SET policy = w.policy FROM wallets w
+   WHERE a.wallet_user_id = w.user_id AND a.policy IS NULL AND w.policy IS NOT NULL`,
+  `UPDATE accounts a SET signers = (
+     SELECT json_agg(m.member_id)::text FROM members m WHERE m.wallet_user_id = a.wallet_user_id
+   ) WHERE a.signers IS NULL`,
 ];
 
 const INT8 = 20; // Timestamps are BIGINT; read them back as numbers.

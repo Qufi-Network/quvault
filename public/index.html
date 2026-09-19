@@ -216,14 +216,14 @@
       <section class="pane" data-pane="settings" hidden>
         <header class="pane-head">
           <div>
-            <p class="eyebrow">Vault</p>
+            <p class="eyebrow account-name">Bitcoin account</p>
             <h1 class="pane-title">Settings</h1>
           </div>
           <p class="quiet" id="settings-required"></p>
         </header>
 
         <section class="lane no-top">
-          <header class="lane-head"><h2>Signers</h2><p class="quiet">Everyone who can approve with their palm.</p></header>
+          <header class="lane-head"><h2>Signers</h2><p class="quiet" id="signers-note">Everyone who can approve for this account with their palm.</p></header>
           <div class="card settings-card">
             <div class="member-rows" id="signer-rows"></div>
             <div class="two">
@@ -308,15 +308,19 @@
   <dialog id="new-account" aria-labelledby="new-account-title">
     <div class="sheet">
       <p class="eyebrow" id="new-account-title">Add an account</p>
-      <p class="fine">The address comes from the same recovery phrase, derived in this browser on the standard path for each network. Adding one takes a palm approval, like any other change.</p>
-      <div class="network-list" id="network-list"></div>
+      <ol class="wizard-steps" id="wizard-steps"></ol>
+      <div id="wizard"></div>
       <p class="error" id="new-account-error" role="alert"></p>
       <div class="sheet-foot">
-        <p class="fine">Sending is live for Bitcoin. The others receive and show balances today.</p>
-        <button class="link" id="new-account-cancel" type="button">Close</button>
+        <button class="link" id="new-account-cancel" type="button">Cancel</button>
+        <div class="row">
+          <button class="btn ghost small" id="wizard-back" type="button">Back</button>
+          <button class="btn brand small" id="wizard-next" type="button">Continue</button>
+        </div>
       </div>
     </div>
   </dialog>
+
   <dialog id="phrase" aria-labelledby="phrase-title">
     <div class="sheet">
       <p class="eyebrow seal" id="phrase-title">Recovery phrase</p>

@@ -441,11 +441,9 @@ function renderWallet(data) {
   $('chain-error').textContent = chainError || '';
   $('fee-note').textContent = feeRate ? `Network suggests ${feeRate} sat/vB` : '';
 
-  const steps = policy.rules.map(rule => (rule.upToSats === null
-    ? `anything larger needs ${rule.approvals} of ${members.length}`
-    : `up to ${fmtSats(rule.upToSats)} sats needs ${rule.approvals} of ${members.length}`));
-  $('send-rule-note').textContent = `Your thresholds: ${steps.join(' · ')}.`;
-  $('accounts-note').textContent = `${members.length} signer${members.length === 1 ? '' : 's'} on this vault`;
+  const spending = (data.accounts || []).find(account => account.network === 'bitcoin');
+  $('send-rule-note').textContent = spending ? `Your thresholds: ${spending.rulesText}.` : '';
+  $('accounts-note').textContent = `${members.length} signer${members.length === 1 ? '' : 's'} across this vault`;
 
   renderAccounts(data);
   renderSettings(data);
@@ -485,9 +483,7 @@ function renderAccounts(data) {
 }
 
 function accountCard(account, data) {
-  const { policy, members, coins } = data;
-  const strongest = Math.max(...policy.rules.map(rule => rule.approvals));
-  const lightest = Math.min(...policy.rules.map(rule => rule.approvals));
+  const { coins } = data;
   const bitcoin = account.network === 'bitcoin';
   return el('article', { class: `account-card${account.network === state.account ? ' active' : ''}` },
     el('header', {},
@@ -498,9 +494,7 @@ function accountCard(account, data) {
         : (account.canSend ? 'send and receive' : 'receive only'))),
     el('p', { class: 'account-balance' }, account.formatted ?? '—', el('span', { class: 'unit' }, account.symbol)),
     bitcoin ? el('p', { class: 'quiet small', id: 'account-fiat' }, '') : null,
-    el('p', { class: 'quiet small' }, account.canSend
-      ? `${lightest === strongest ? strongest : `${lightest}–${strongest}`} of ${members.length} palm approval${strongest === 1 && lightest === 1 ? '' : 's'} to spend`
-      : 'Receiving and balances today; spending from here comes next.'),
+    el('p', { class: 'quiet small' }, `${account.rulesText}`),
     el('p', { class: 'account-address' }, account.address),
     el('div', { class: 'row' },
       account.canSend ? button('Send', 'btn brand small', () => { selectAccount(account.network); setTab('send'); }) : null,
@@ -513,6 +507,7 @@ function selectAccount(networkId) {
   if (!state.data) return;
   renderAccounts(state.data);
   renderAccountPanes(state.data);
+  renderSettings(state.data); // its signers and threshold are its own
 }
 
 function renderAccountPanes(data) {
@@ -543,38 +538,162 @@ function renderAccountPanes(data) {
 
 /* --------------------------------------------------- adding an account */
 
+const WIZARD_STEPS = ['Network', 'Signers', 'Threshold', 'Review'];
+
 function openNewAccount() {
   if (!state.data) return;
   $('new-account-error').textContent = '';
   // A vault that still signs on the server has no phrase for another network to come from.
   if (state.data.wallet?.custody !== 'client') {
-    $('network-list').replaceChildren(
-      el('p', { class: 'quiet' }, 'This vault was made before keys lived in the browser, so it has no recovery phrase for other networks to come from. Move it into this browser and the four other accounts become available.'),
+    $('wizard-steps').replaceChildren();
+    $('wizard').replaceChildren(
+      el('p', { class: 'quiet' }, 'This vault was made before keys lived in the browser, so it has no recovery phrase for other networks to come from. Move it into this browser and the other accounts become available.'),
       button('Move this vault into this browser', 'btn brand wide', () => startMove($('new-account-error'))));
+    $('wizard-back').hidden = true;
+    $('wizard-next').hidden = true;
     $('new-account').showModal();
     return;
   }
-  const have = new Set((state.data.accounts || []).map(account => account.network));
-  const choices = (state.data.networks || []).filter(network => !have.has(network.id));
-  $('network-list').replaceChildren(...(choices.length
-    ? choices.map(network => el('button', { class: 'network-choice', type: 'button', onclick: () => addAccount(network) },
-      el('span', { class: 'account-mark' }, MARKS[network.id] || network.symbol.slice(0, 1)),
-      el('span', { class: 'account-text' }, el('b', {}, network.label), el('small', {}, network.chain)),
-      el('span', { class: 'chip soft' }, network.canSend ? 'send and receive' : 'receive')))
-    : [el('p', { class: 'quiet' }, 'This vault already has an account on every network QuVault supports.')]));
+
+  const me = state.data.members.find(member => member.id === state.data.me.id);
+  state.wizard = {
+    step: 0,
+    network: null,
+    signers: [{ id: state.data.me.id, label: me?.label || 'You', owner: true, palmId: me?.palmId || null }],
+    approvals: 1,
+  };
+  drawWizard();
   $('new-account').showModal();
 }
 
-async function addAccount(network) {
+function drawWizard() {
+  const wizard = state.wizard;
+  const have = new Set((state.data.accounts || []).map(account => account.network));
+  const choices = (state.data.networks || []).filter(network => !have.has(network.id));
   $('new-account-error').textContent = '';
+  $('wizard-back').hidden = wizard.step === 0;
+  $('wizard-next').hidden = wizard.step === 0;
+  $('wizard-next').textContent = wizard.step === 3 ? 'Create with a palm scan' : 'Continue';
+
+  $('wizard-steps').replaceChildren(...WIZARD_STEPS.map((label, index) => el('li', {
+    class: `wizard-step${index === wizard.step ? ' on' : ''}${index < wizard.step ? ' done' : ''}`,
+  }, label)));
+
+  if (wizard.step === 0) return drawNetworkStep(choices);
+  if (wizard.step === 1) return drawSignerStep();
+  if (wizard.step === 2) return drawThresholdStep();
+  return drawReviewStep();
+}
+
+function drawNetworkStep(choices) {
+  $('wizard').replaceChildren(
+    el('p', { class: 'fine' }, 'The address is derived in this browser from the same recovery phrase, on that network\'s standard path.'),
+    choices.length
+      ? el('div', { class: 'network-list' }, ...choices.map(network => el('button', {
+        class: 'network-choice', type: 'button', onclick: () => { state.wizard.network = network; state.wizard.step = 1; drawWizard(); },
+      },
+        el('span', { class: 'account-mark' }, MARKS[network.id] || network.symbol.slice(0, 1)),
+        el('span', { class: 'account-text' }, el('b', {}, network.label), el('small', {}, network.chain)),
+        el('span', { class: 'chip soft' }, network.canSend ? 'send and receive' : 'receive'))))
+      : el('p', { class: 'quiet' }, 'This vault already has an account on every network QuVault supports.'));
+}
+
+function drawSignerStep() {
+  const wizard = state.wizard;
+  const chosen = new Set(wizard.signers.map(signer => signer.id));
+  const others = (state.data.members || []).filter(member => !chosen.has(member.id));
+
+  const code = el('input', { placeholder: 'their approver code', autocomplete: 'off', spellcheck: 'false' });
+  const label = el('input', { placeholder: 'their name', maxlength: '40' });
+
+  // replaceChildren keeps a null as the text "null", unlike el(), so the list is filtered.
+  $('wizard').replaceChildren(...[
+    el('p', { class: 'fine' }, 'Everyone here can approve for this account with their palm. Each of them gets a palm ID in this vault the first time they scan.'),
+    el('div', { class: 'member-rows' }, ...wizard.signers.map(signer => el('div', { class: 'member-row' },
+      el('span', {},
+        signer.label,
+        signer.owner ? el('small', {}, 'you') : null,
+        el('small', { class: 'palm-id' }, signer.palmId || 'palm id on first scan')),
+      signer.owner ? el('span', { class: 'quiet small' }, 'always a signer') : button('Remove', 'link', () => {
+        wizard.signers = wizard.signers.filter(s => s.id !== signer.id);
+        wizard.approvals = Math.min(wizard.approvals, wizard.signers.length);
+        drawWizard();
+      })))),
+    others.length ? el('div', { class: 'row' }, el('span', { class: 'quiet small' }, 'Already in this vault:'),
+      ...others.map(member => button(`+ ${member.label}`, 'chip pick', () => {
+        wizard.signers.push({ id: member.id, label: member.label, owner: false, palmId: member.palmId, existing: true });
+        drawWizard();
+      }))) : null,
+    el('div', { class: 'two' }, el('div', {}, el('label', {}, 'Add by approver code'), code), el('div', {}, el('label', {}, 'Their name'), label)),
+    button('Add signer', 'btn ghost small', () => {
+      const id = code.value.trim();
+      const name = label.value.trim();
+      if (!id || !name) {
+        $('new-account-error').textContent = 'Enter both the approver code and a name.';
+        return;
+      }
+      wizard.signers.push({ id, label: name, owner: false, palmId: null, isNew: true });
+      drawWizard();
+    }),
+  ].filter(Boolean));
+}
+
+function drawThresholdStep() {
+  const wizard = state.wizard;
+  const count = wizard.signers.length;
+  wizard.approvals = Math.min(Math.max(1, wizard.approvals), count);
+  $('wizard').replaceChildren(
+    el('p', { class: 'fine' }, 'How many of those palms have to approve before anything moves from this account — and before these settings can be changed again.'),
+    el('div', { class: 'presets' }, ...Array.from({ length: count }, (_, i) => i + 1).map(m =>
+      button(`${m} of ${count}`, `chip pick${wizard.approvals === m ? ' on' : ''}`, () => { wizard.approvals = m; drawWizard(); }))),
+    el('p', { class: 'quiet small' }, count === 1
+      ? 'One palm: yours. You can add signers later, and that change will need your palm.'
+      : `${wizard.approvals} of ${count} palms. Changing this afterwards will need ${wizard.approvals} of them.`),
+    el('p', { class: 'fine' }, 'Different thresholds for larger amounts can be set in Settings once the account exists.'));
+}
+
+function drawReviewStep() {
+  const wizard = state.wizard;
+  const count = wizard.signers.length;
+  $('wizard').replaceChildren(
+    el('dl', { class: 'details' },
+      el('div', {}, el('dt', {}, 'Network'), el('dd', {}, `${wizard.network.label} ${wizard.network.chain}`)),
+      el('div', {}, el('dt', {}, 'Address from'), el('dd', {}, 'the same recovery phrase')),
+      el('div', {}, el('dt', {}, 'Signers'), el('dd', {}, wizard.signers.map(s => s.label).join(', '))),
+      el('div', {}, el('dt', {}, 'Threshold'), el('dd', {}, `${wizard.approvals} of ${count}`)),
+      el('div', {}, el('dt', {}, 'Sending'), el('dd', {}, wizard.network.canSend ? 'live' : 'receive and balances today'))),
+    el('p', { class: 'fine' }, 'Creating the account takes a palm approval from the signers who guard this vault today.'));
+}
+
+$('wizard-back').addEventListener('click', () => {
+  state.wizard.step = Math.max(0, state.wizard.step - 1);
+  drawWizard();
+});
+
+$('wizard-next').addEventListener('click', async () => {
+  const wizard = state.wizard;
+  if (wizard.step < 3) {
+    wizard.step += 1;
+    drawWizard();
+    return;
+  }
+  $('new-account-error').textContent = '';
+  $('wizard-next').disabled = true;
   try {
-    const { operation } = await api('/api/accounts/approval', { network: network.id });
+    const { operation } = await api('/api/accounts/approval', {
+      network: wizard.network.id,
+      add: wizard.signers.filter(s => s.isNew).map(s => ({ code: s.id, label: s.label })),
+      signers: wizard.signers.filter(s => s.existing).map(s => s.id),
+      rules: [{ upToSats: null, approvals: wizard.approvals }],
+    });
     $('new-account').close();
-    openApproval(operation, `Adding the ${network.label} account…`);
+    openApproval(operation, `Adding the ${wizard.network.label} account…`);
   } catch (error) {
     $('new-account-error').textContent = friendly(error);
+  } finally {
+    $('wizard-next').disabled = false;
   }
-}
+});
 
 $('add-account').addEventListener('click', openNewAccount);
 $('new-account-cancel').addEventListener('click', () => $('new-account').close());
@@ -658,17 +777,11 @@ async function copy(text, message) {
 
 /* ----------------------------------------------------------- settings */
 
-/** The editable copy of signers and thresholds, rebuilt whenever the server view changes. */
+/** The editable copy of one account's signers and thresholds, rebuilt from the server view. */
 function renderSettings(data) {
-  const { policy, members, me, wallet } = data;
-  state.draft = {
-    rules: policy.rules.map(rule => ({ ...rule })),
-    members: members.map(member => ({ ...member })),
-    removed: [],
-  };
+  const { me, wallet } = data;
+  const account = (data.accounts || []).find(item => item.network === state.account) || data.accounts?.[0];
   $('my-code').textContent = me.code;
-  $('settings-network').textContent = wallet.network;
-  $('settings-address').textContent = wallet.address;
   $('settings-protection').textContent = wallet.protection;
 
   const legacy = wallet.custody !== 'client';
@@ -681,33 +794,45 @@ function renderSettings(data) {
   $('show-phrase').hidden = legacy || !holds;
   $('restore-device').hidden = legacy || holds;
   $('move-vault').hidden = !legacy;
-  const changeCost = Math.min(Math.max(...policy.rules.map(rule => rule.approvals)), members.length);
-  $('settings-required').textContent = `Changes here need ${changeCost} palm approval${changeCost === 1 ? '' : 's'}`;
+
+  if (!account) return;
+  state.draft = {
+    network: account.network,
+    rules: account.policy.rules.map(rule => ({ ...rule })),
+    members: account.signers.map(signer => ({ ...signer })),
+    removed: [],
+  };
+  $('signers-note').textContent = `Everyone who can approve for the ${account.label} account with their palm.`;
+  $('settings-required').textContent = `Changes here need ${account.changeRequired} palm approval${account.changeRequired === 1 ? '' : 's'} from its signers`;
   drawSettings();
 }
 
 function drawSettings() {
   const draft = state.draft;
+  if (!draft) return;
   const count = draft.members.length;
 
   $('signer-rows').replaceChildren(...draft.members.map(member => el('div', { class: 'member-row' },
-    el('span', {}, member.label, member.owner ? el('small', {}, 'owner') : null, member.id === state.data.me.id ? el('small', {}, 'you') : null),
+    el('span', {},
+      member.label,
+      member.owner ? el('small', {}, 'owner') : null,
+      member.id === state.data.me.id ? el('small', {}, 'you') : null,
+      el('small', { class: 'palm-id' }, member.palmId || (member.isNew ? 'palm id on approval' : 'no palm yet'))),
     member.owner ? el('span', { class: 'quiet small' }, 'cannot be removed') : button('Remove', 'link', () => {
-      draft.removed.push(member.id);
+      if (!member.isNew) draft.removed.push(member.id);
       draft.members = draft.members.filter(m => m.id !== member.id);
       for (const rule of draft.rules) rule.approvals = Math.min(rule.approvals, draft.members.length);
       drawSettings();
     }))));
 
   // Quick pick: the common "M of N" choices for every amount.
-  const presets = [];
-  for (let m = 1; m <= count; m++) presets.push(m);
   $('presets').replaceChildren(
     el('span', { class: 'quiet small' }, 'Every amount:'),
-    ...presets.map(m => button(`${m} of ${count}`, `chip pick${draft.rules.length === 1 && draft.rules[0].approvals === m ? ' on' : ''}`, () => {
-      draft.rules = [{ upToSats: null, approvals: m }];
-      drawSettings();
-    })));
+    ...Array.from({ length: count }, (_, i) => i + 1).map(m =>
+      button(`${m} of ${count}`, `chip pick${draft.rules.length === 1 && draft.rules[0].approvals === m ? ' on' : ''}`, () => {
+        draft.rules = [{ upToSats: null, approvals: m }];
+        drawSettings();
+      })));
 
   $('rule-rows').replaceChildren(...draft.rules.map((rule, index) => {
     const last = index === draft.rules.length - 1;
@@ -728,13 +853,14 @@ function drawSettings() {
       }) : el('span', {}));
   }));
 
-  const same = JSON.stringify(draft.rules) === JSON.stringify(state.data.policy.rules)
+  const account = (state.data.accounts || []).find(item => item.network === draft.network);
+  const same = JSON.stringify(draft.rules) === JSON.stringify(account?.policy.rules)
     && draft.removed.length === 0
-    && draft.members.length === state.data.members.length;
+    && draft.members.length === (account?.signers.length ?? 0);
   $('save-settings').disabled = same;
   $('change-cost').textContent = same
     ? 'Nothing changed yet.'
-    : `Proposing this asks every required signer for a palm scan.`;
+    : `Proposing this asks ${account?.changeRequired ?? 1} of the current signers for a palm scan.`;
 }
 
 $('add-rule').addEventListener('click', () => {
@@ -763,7 +889,9 @@ $('save-settings').addEventListener('click', async () => {
   const draft = state.draft;
   const add = draft.members.filter(m => m.isNew).map(m => ({ code: m.id, label: m.label }));
   try {
-    const { operation } = await api('/api/policy', { rules: draft.rules, add, remove: draft.removed });
+    const { operation } = await api('/api/policy', {
+      network: draft.network, rules: draft.rules, add, remove: draft.removed,
+    });
     openApproval(operation, 'Applying the new settings…');
   } catch (error) {
     $('rules-error').textContent = friendly(error);

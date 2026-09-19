@@ -55,16 +55,23 @@ const SQL = {
   accountOn: 'SELECT * FROM accounts WHERE wallet_user_id = $1 AND network = $2',
   insertAccount: `INSERT INTO accounts (wallet_user_id, network, address, public_key, created_at)
                   VALUES ($1, $2, $3, $4, $5) ON CONFLICT (wallet_user_id, network) DO NOTHING`,
+  insertAccountFull: `INSERT INTO accounts (wallet_user_id, network, address, public_key, policy, signers, created_at)
+                      VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (wallet_user_id, network) DO NOTHING`,
+  setAccountPolicy: 'UPDATE accounts SET policy = $1, signers = $2 WHERE wallet_user_id = $3 AND network = $4',
 
   membersOf: 'SELECT * FROM members WHERE wallet_user_id = $1 ORDER BY is_owner DESC, added_at',
   memberIn: 'SELECT * FROM members WHERE wallet_user_id = $1 AND member_id = $2',
   walletsForMember: 'SELECT wallet_user_id FROM members WHERE member_id = $1',
   insertMember: `INSERT INTO members (wallet_user_id, member_id, label, is_owner, added_at) VALUES ($1, $2, $3, $4, $5)
                  ON CONFLICT (wallet_user_id, member_id) DO UPDATE SET label = EXCLUDED.label`,
+  // The first palm a signer puts to this vault is the identity everyone can point at afterwards.
+  bindPalm: `UPDATE members SET palm_id = COALESCE(palm_id, $1), palm_at = COALESCE(palm_at, $2)
+             WHERE wallet_user_id = $3 AND member_id = $4`,
+  bindPalmId: 'UPDATE members SET palm_id = $1 WHERE wallet_user_id = $2 AND member_id = $3 AND palm_id IS NULL',
   deleteMember: 'DELETE FROM members WHERE wallet_user_id = $1 AND member_id = $2 AND is_owner = false',
 
-  insertOperation: `INSERT INTO operations (id, wallet_user_id, started_by, kind, statement, details, digest, payload, required, status, created_at, expires_at)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'collecting', $10, $11)`,
+  insertOperation: `INSERT INTO operations (id, wallet_user_id, started_by, kind, statement, details, digest, payload, required, status, network, created_at, expires_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'collecting', $10, $11, $12)`,
   operationById: 'SELECT * FROM operations WHERE id = $1',
   openOperationsFor: `SELECT * FROM operations WHERE wallet_user_id = ANY($1) AND status IN ('collecting', 'running') ORDER BY seq`,
   closedOperationsFor: `SELECT * FROM operations WHERE wallet_user_id = ANY($1) AND status IN ('done', 'failed', 'cancelled')
@@ -97,6 +104,8 @@ const SQL = {
 
 const sha256 = value => crypto.createHash('sha256').update(value).digest('base64url');
 const fmtSats = n => Number(n).toLocaleString('en-US');
+// A short, stable name for one person's palm inside this vault, from their pairwise subject.
+const palmId = sub => `PALM-${sha256(`palm:${sub}`).replace(/[-_]/g, '').slice(0, 12).toUpperCase()}`;
 
 function parseCookies(header = '') {
   const cookies = {};
@@ -216,6 +225,19 @@ export function createApp(options) {
 
   const policyOf = wallet => (wallet?.policy ? JSON.parse(wallet.policy) : DEFAULT_POLICY);
 
+  /*
+   * Signers and thresholds belong to an account. An account made before that, or one whose
+   * row has not been written yet, falls back to what the vault as a whole was set to.
+   */
+  const policyOfAccount = (account, wallet) => (account?.policy ? JSON.parse(account.policy) : policyOf(wallet));
+
+  const signersOf = (account, members) => {
+    const roster = members.map(m => m.member_id);
+    const stored = account?.signers ? JSON.parse(account.signers) : null;
+    const kept = (stored ?? roster).filter(id => roster.includes(id));
+    return kept.length ? kept : roster;
+  };
+
   /* --------------------------------------------------------------- views */
 
   const walletView = w => ({
@@ -229,7 +251,14 @@ export function createApp(options) {
       : 'ML-KEM-768 + X25519 + AES-256-GCM',
   });
 
-  const memberView = m => ({ id: m.member_id, label: m.label, owner: m.is_owner });
+  const memberView = m => ({
+    id: m.member_id,
+    label: m.label,
+    owner: m.is_owner,
+    // Assigned the first time that person put their palm to this vault.
+    palmId: m.palm_id || null,
+    palmAt: m.palm_at || null,
+  });
 
   const operationView = (op, approvals, me) => ({
     id: op.id,
@@ -248,8 +277,8 @@ export function createApp(options) {
     } : null,
     txid: op.txid,
     error: op.error,
-    // Which network a pending "add account" request is for, so the browser knows what to derive.
-    network: op.kind === 'account' && op.payload ? JSON.parse(op.payload).network : null,
+    // Which account the request is about, so the browser knows what to derive or to sign with.
+    network: op.network ?? (op.kind === 'account' && op.payload ? JSON.parse(op.payload).network : null),
     startedBy: op.started_by,
     walletOwner: op.wallet_user_id,
     createdAt: op.created_at,
@@ -333,16 +362,24 @@ export function createApp(options) {
     return [...ids];
   }
 
-  /** The people who may approve for this wallet, and what a spend of `sats` needs. */
-  async function quorumFor(walletOwnerId, sats) {
-    const wallet = await one('walletOf', walletOwnerId);
-    const members = await all('membersOf', walletOwnerId);
-    const policy = policyOf(wallet);
+  /** Who may approve for one account, and what a movement of `sats` from it needs. */
+  async function quorumFor(walletOwnerId, networkId, sats) {
+    const [wallet, members, account] = await Promise.all([
+      one('walletOf', walletOwnerId), all('membersOf', walletOwnerId), one('accountOn', walletOwnerId, networkId),
+    ]);
+    const policy = policyOfAccount(account, wallet);
+    const signers = signersOf(account, members);
     const { approvals, rule } = requiredFor(policy, sats);
-    return { wallet, members, policy, required: Math.min(approvals, Math.max(1, members.length)), rule };
+    return { wallet, account, members, signers, policy, required: Math.min(approvals, Math.max(1, signers.length)), rule };
   }
 
-  async function newOperation({ walletOwnerId, user, kind, statement, details, payload = null, required = 1 }) {
+  /** What it takes to change an account's signers or thresholds: its own quorum, as it stands now. */
+  async function changeQuorum(walletOwnerId, networkId) {
+    const { policy, signers, members, account, wallet } = await quorumFor(walletOwnerId, networkId, 0);
+    return { required: requiredToChange(policy, signers.length), policy, signers, members, account, wallet };
+  }
+
+  async function newOperation({ walletOwnerId, user, kind, statement, details, payload = null, required = 1, networkId = null }) {
     const id = randomId(16);
     const time = now();
     const replaced = await transaction(async q => {
@@ -353,7 +390,7 @@ export function createApp(options) {
         closed = (await q('cancelApprovalsOf', time, previous.id)).rows;
       }
       await q('insertOperation', id, walletOwnerId, user.id, kind, statement, JSON.stringify(details),
-        actionDigest(statement, details), payload && JSON.stringify(payload), required, time, time + OPERATION_SECONDS);
+        actionDigest(statement, details), payload && JSON.stringify(payload), required, networkId, time, time + OPERATION_SECONDS);
       return closed;
     });
     cancelRemote(replaced);
@@ -397,15 +434,62 @@ export function createApp(options) {
 
   async function applyPolicy(op) {
     const payload = JSON.parse(op.payload);
+    const networkId = payload.network || 'bitcoin';
     const time = now();
     await transaction(async q => {
-      await q('setPolicy', JSON.stringify({ rules: payload.rules }), op.wallet_user_id);
       for (const member of payload.members) {
         await q('insertMember', op.wallet_user_id, member.id, member.label, member.owner, time);
       }
-      for (const id of payload.removed ?? []) await q('deleteMember', op.wallet_user_id, id);
+      await q('setAccountPolicy', JSON.stringify({ rules: payload.rules }),
+        JSON.stringify(payload.members.map(m => m.id)), op.wallet_user_id, networkId);
     });
+    for (const member of payload.members) await assignPalmId(op.wallet_user_id, member.id);
+    await pruneRoster(op.wallet_user_id);
     return { txid: null };
+  }
+
+  /** A signer carries the same palm identity everywhere in this vault, from their pairwise subject. */
+  async function assignPalmId(ownerId, memberId) {
+    const person = await one('userById', memberId);
+    if (person) await query('bindPalmId', palmId(person.sub), ownerId, memberId);
+  }
+
+  /** The roster exists so signers can see the vault: drop anyone who now signs for nothing. */
+  async function pruneRoster(ownerId) {
+    const [accounts, members] = await Promise.all([all('accountsOf', ownerId), all('membersOf', ownerId)]);
+    const signing = new Set(accounts.flatMap(account => signersOf(account, members)));
+    for (const member of members) {
+      if (!member.is_owner && !signing.has(member.member_id)) await query('deleteMember', ownerId, member.member_id);
+    }
+  }
+
+  /** Resolves the people a request names into signer entries, by approver code or by id. */
+  async function collectSigners({ user, roster, keep, add = [], include = [] }) {
+    const chosen = new Map(keep);
+    for (const id of include) {
+      const member = roster.find(m => m.member_id === String(id));
+      if (!member) throw new HttpError(400, 'That signer is not part of this vault.');
+      chosen.set(member.member_id, { id: member.member_id, label: member.label, owner: member.is_owner });
+    }
+    for (const entry of add) {
+      const code = String(entry.code ?? '').trim();
+      const label = String(entry.label ?? '').replace(/\s+/g, ' ').trim().slice(0, 40);
+      if (!label) throw new HttpError(400, 'Give each signer a name.');
+      const person = await one('userById', code);
+      if (!person) throw new HttpError(400, `No one has the approver code "${code}". They must sign in to QuVault once first.`);
+      chosen.set(person.id, { id: person.id, label, owner: person.id === user.id });
+    }
+    return chosen;
+  }
+
+  function readRules(proposed, fallback, signerCount) {
+    try {
+      const value = Array.isArray(proposed) ? { rules: proposed } : proposed ?? fallback;
+      return validatePolicy(value, signerCount);
+    } catch (error) {
+      if (error instanceof PolicyError) throw new HttpError(400, error.message);
+      throw error;
+    }
   }
 
   /** Only for wallets made before the key moved into the browser. */
@@ -524,14 +608,18 @@ export function createApp(options) {
     const view = {
       me: { id: user.id, code: user.id },
       wallet: wallet ? walletView(wallet) : null,
+      // Kept for the vault as a whole; each account carries its own in accounts[].
       policy: wallet ? policyOf(wallet) : null,
       members: members.map(memberView),
       networks: networkList(),
-      accounts: wallet ? await accountsView(user.id, wallet) : [],
+      accounts: wallet ? await accountsView(user.id, wallet, members) : [],
       labels,
       pending: await Promise.all(open.map(withApprovals)),
       history: await Promise.all(closed.map(withApprovals)),
     };
+
+    // Spending is Bitcoin's today, so the vault-level rules shown are that account's.
+    view.policy = view.accounts.find(account => account.network === 'bitcoin')?.policy ?? view.policy;
 
     if (!wallet) return view;
     try {
@@ -609,7 +697,10 @@ export function createApp(options) {
     await query('insertClientWallet', user.id, network, address, publicKey, payload.unlockSealed, payload.salt,
       user.sub, payload.decisionId, JSON.stringify(DEFAULT_POLICY), time);
     await query('insertMember', user.id, user.id, payload.label || 'Owner', true, time);
-    await query('insertAccount', user.id, 'bitcoin', address, publicKey, time);
+    // This vault exists because that palm approved it, so the owner's palm identity starts here.
+    await query('bindPalm', palmId(user.sub), time, user.id, user.id);
+    await query('insertAccountFull', user.id, 'bitcoin', address, publicKey,
+      JSON.stringify(DEFAULT_POLICY), JSON.stringify([user.id]), time);
     return { wallet: walletView(await one('walletOf', user.id)) };
   }
 
@@ -651,13 +742,16 @@ export function createApp(options) {
   }
 
   /** Every account this vault holds, with its balance read from that network. */
-  async function accountsView(ownerId, wallet) {
+  async function accountsView(ownerId, wallet, members) {
     let rows = await all('accountsOf', ownerId);
     if (!rows.some(row => row.network === 'bitcoin')) {
       // A vault made before accounts existed still has the Bitcoin account it was created as.
-      await query('insertAccount', ownerId, 'bitcoin', wallet.address, wallet.public_key, wallet.created_at);
+      await query('insertAccountFull', ownerId, 'bitcoin', wallet.address, wallet.public_key,
+        wallet.policy, JSON.stringify(members.map(m => m.member_id)), wallet.created_at);
       rows = await all('accountsOf', ownerId);
     }
+    const byId = new Map(members.map(m => [m.member_id, m]));
+
     const accounts = await Promise.all(rows.map(async row => {
       const network = NETWORKS[row.network];
       const [amount, qr] = await Promise.all([
@@ -666,6 +760,9 @@ export function createApp(options) {
           : balances.of(row.network, row.address),
         QRCode.toString(row.address, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' }).catch(() => null),
       ]);
+      const policy = policyOfAccount(row, wallet);
+      const signerIds = signersOf(row, members);
+      const signers = signerIds.map(id => memberView(byId.get(id) ?? { member_id: id, label: 'Signer', is_owner: false }));
       return {
         network: row.network,
         label: network.label,
@@ -677,6 +774,11 @@ export function createApp(options) {
         amount,
         formatted: amount === null ? null : format(amount, row.network),
         qr,
+        policy,
+        signers,
+        // What it takes to change this account's signers or thresholds, as they stand now.
+        changeRequired: requiredToChange(policy, signers.length),
+        rulesText: describePolicy(policy, signers),
         createdAt: row.created_at,
       };
     }));
@@ -697,20 +799,29 @@ export function createApp(options) {
     if (!network) throw new HttpError(400, 'Choose one of the supported networks.');
     if (await one('accountOn', user.id, networkId)) throw new HttpError(409, `This vault already has a ${network.label} account.`);
 
-    const members = await all('membersOf', user.id);
+    const roster = await all('membersOf', user.id);
+    const owner = roster.find(m => m.member_id === user.id);
+    const keep = new Map([[user.id, { id: user.id, label: owner?.label || 'Owner', owner: true }]]);
+    const chosen = await collectSigners({ user, roster, keep, add: body.add, include: body.signers });
+    const signers = [...chosen.values()];
+    const policy = readRules(body.rules, DEFAULT_POLICY, signers.length);
+
+    // Adding an account is as guarded as changing the main account: the same palms, in the same number.
+    const { required } = await changeQuorum(user.id, 'bitcoin');
     const statement = `Add a ${network.label} account to my vault`;
     const details = {
       action: 'add account',
       network: `${network.label} ${network.chain}`,
       derived_from: 'the same recovery phrase',
-      spending_rule: 'the same signers and thresholds as this vault',
+      signers: signers.map(s => s.label).join(', '),
+      rules: describePolicy(policy, signers),
     };
     const op = await newOperation({
       walletOwnerId: user.id, user, kind: 'account', statement, details,
-      payload: { network: networkId },
-      required: requiredToChange(policyOf(wallet), members.length),
+      payload: { network: networkId, rules: policy.rules, members: signers },
+      required, networkId,
     });
-    return { operation: operationView(op, [], user) };
+    return { operation: operationView(op, [], user), signers, policy };
   }
 
   /** The browser reports the address it derived for the new network. */
@@ -719,12 +830,23 @@ export function createApp(options) {
     if (op.kind !== 'account' || op.status !== 'done' || op.wallet_user_id !== user.id) {
       throw new HttpError(409, 'That is not an approved account request.');
     }
-    const networkId = JSON.parse(op.payload).network;
+    const payload = JSON.parse(op.payload);
+    const networkId = payload.network;
     const network = NETWORKS[networkId];
     const address = String(body.address ?? '').trim();
     if (!network.valid(address)) throw new HttpError(400, `That does not look like a ${network.label} address.`);
     if (await one('accountOn', user.id, networkId)) throw new HttpError(409, `This vault already has a ${network.label} account.`);
-    await query('insertAccount', user.id, networkId, address, String(body.publicKey ?? '').slice(0, 130), now());
+
+    const time = now();
+    const signers = payload.members ?? [{ id: user.id, label: 'Owner', owner: true }];
+    await transaction(async q => {
+      for (const member of signers) {
+        await q('insertMember', user.id, member.id, member.label, member.owner, time);
+      }
+      await q('insertAccountFull', user.id, networkId, address, String(body.publicKey ?? '').slice(0, 130),
+        JSON.stringify({ rules: payload.rules ?? DEFAULT_POLICY.rules }), JSON.stringify(signers.map(m => m.id)), time);
+    });
+    for (const member of signers) await assignPalmId(user.id, member.id);
     return { ok: true };
   }
 
@@ -735,7 +857,6 @@ export function createApp(options) {
     const wallet = await one('walletOf', user.id);
     if (!wallet) throw new HttpError(409, 'Create the wallet first.');
     if (wallet.custody === 'client') throw new HttpError(409, 'This vault already lives in your browser.');
-    const members = await all('membersOf', user.id);
     const statement = 'Move this vault into my browser and retire the key held on the server';
     const details = {
       action: 'move key to browser',
@@ -744,10 +865,8 @@ export function createApp(options) {
       coins: 'every confirmed coin is swept to the new address',
       spending_rule: 'the same signers and thresholds keep applying',
     };
-    const op = await newOperation({
-      walletOwnerId: user.id, user, kind: 'upgrade', statement, details,
-      required: requiredToChange(policyOf(wallet), members.length),
-    });
+    const { required } = await changeQuorum(user.id, 'bitcoin');
+    const op = await newOperation({ walletOwnerId: user.id, user, kind: 'upgrade', statement, details, required });
     return { operation: operationView(op, [], user) };
   }
 
@@ -803,7 +922,8 @@ export function createApp(options) {
       const moved = await q('moveWalletToBrowser', address, publicKey, payload.unlockSealed, payload.salt, user.id);
       if (!moved.count) throw new HttpError(409, 'This vault has already been moved.');
       await q('setBitcoinAccount', address, publicKey, user.id);
-      await q('insertAccount', user.id, 'bitcoin', address, publicKey, now());
+      await q('insertAccountFull', user.id, 'bitcoin', address, publicKey,
+        wallet.policy, JSON.stringify([user.id]), now());
     });
     if (txid) await query('setOperationTxid', txid, op.id);
     return { wallet: walletView(await one('walletOf', user.id)), txid, sweptSats };
@@ -825,49 +945,50 @@ export function createApp(options) {
     requirePalmReady();
     const wallet = await one('walletOf', user.id);
     if (!wallet) throw new HttpError(409, 'Create the wallet first.');
-    const current = await all('membersOf', user.id);
+    const networkId = String(body.network ?? 'bitcoin');
+    const network = NETWORKS[networkId];
+    if (!network) throw new HttpError(400, 'That is not one of the networks here.');
+    const account = await one('accountOn', user.id, networkId);
+    if (!account) throw new HttpError(409, `This vault has no ${network.label} account.`);
 
-    const keep = new Map(current.map(m => [m.member_id, { id: m.member_id, label: m.label, owner: m.is_owner }]));
+    const roster = await all('membersOf', user.id);
+    const current = signersOf(account, roster);
+    const byId = new Map(roster.map(m => [m.member_id, m]));
+    const keep = new Map(current.map(id => [id, {
+      id,
+      label: byId.get(id)?.label || 'Signer',
+      owner: Boolean(byId.get(id)?.is_owner),
+    }]));
     for (const id of body.remove ?? []) {
       const member = keep.get(String(id));
       if (!member) continue;
       if (member.owner) throw new HttpError(400, 'The owner cannot be removed.');
       keep.delete(String(id));
     }
-    for (const entry of body.add ?? []) {
-      const code = String(entry.code ?? '').trim();
-      const label = String(entry.label ?? '').replace(/\s+/g, ' ').trim().slice(0, 40);
-      if (!label) throw new HttpError(400, 'Give each approver a name.');
-      const person = await one('userById', code);
-      if (!person) throw new HttpError(400, `No one has the approver code "${code}". They must sign in to QuVault once first.`);
-      keep.set(person.id, { id: person.id, label, owner: person.id === user.id });
-    }
+    const chosen = await collectSigners({ user, roster, keep, add: body.add, include: body.include });
+    const members = [...chosen.values()];
+    if (!members.some(m => m.owner)) throw new HttpError(400, 'The owner must stay a signer.');
+    const policy = readRules(body.rules, policyOfAccount(account, wallet), members.length);
 
-    const members = [...keep.values()];
-    if (!members.some(m => m.owner)) throw new HttpError(400, 'The owner must stay an approver.');
-    let policy;
-    try {
-      // Accept either a bare list of rules or a whole policy object.
-      const proposed = Array.isArray(body.rules) ? { rules: body.rules } : body.rules ?? policyOf(wallet);
-      policy = validatePolicy(proposed, members.length);
-    } catch (error) {
-      if (error instanceof PolicyError) throw new HttpError(400, error.message);
-      throw error;
-    }
-
-    const removed = current.filter(m => !keep.has(m.member_id)).map(m => m.member_id);
-    const summary = describePolicy(policy, members);
-    const statement = `Change the spending rules of my ${network} wallet`;
-    const details = { action: 'change spending rules', network, rules: summary, approvers: members.length };
-    const required = requiredToChange(policyOf(wallet), current.length);
+    const removed = current.filter(id => !chosen.has(id));
+    const statement = `Change who can approve for my ${network.label} account and how many palms it takes`;
+    const details = {
+      action: 'change signers and thresholds',
+      network: `${network.label} ${network.chain}`,
+      signers: members.map(m => m.label).join(', '),
+      rules: describePolicy(policy, members),
+      approvers: members.length,
+    };
+    // The palms that guard the account as it stands now are the ones that can change it.
+    const { required } = await changeQuorum(user.id, networkId);
     const op = await newOperation({
       walletOwnerId: user.id, user, kind: 'policy', statement, details,
-      payload: { rules: policy.rules, members, removed }, required,
+      payload: { network: networkId, rules: policy.rules, members, removed },
+      required, networkId,
     });
     return { operation: operationView(op, [], user), policy, members };
   }
 
-  /** The recovery phrase ceremony: two palm scans, one per hand, before the words are shown. */
   async function requestRecovery({ user }) {
     requirePalmReady();
     const wallet = await one('walletOf', user.id);
@@ -909,7 +1030,7 @@ export function createApp(options) {
     }
 
     const leaving = plan.sentSats + plan.feeSats;
-    const { members, required, rule } = await quorumFor(user.id, leaving);
+    const { signers, required, rule } = await quorumFor(user.id, 'bitcoin', leaving);
     const statement = `Send ${toBtc(plan.sentSats)} tBTC to ${to}`;
     const details = {
       action: 'withdraw',
@@ -920,9 +1041,11 @@ export function createApp(options) {
       fee_rate: `${plan.feeRate} sat/vB`,
       spends: plan.inputs.map(i => `${i.txid}:${i.index}`).join(' '),
       change_sats: plan.changeSats,
-      approvals_required: `${required} of ${members.length} approver${members.length === 1 ? '' : 's'}`,
+      approvals_required: `${required} of ${signers.length} signer${signers.length === 1 ? '' : 's'}`,
     };
-    const op = await newOperation({ walletOwnerId: user.id, user, kind: 'withdraw', statement, details, payload: plan, required });
+    const op = await newOperation({
+      walletOwnerId: user.id, user, kind: 'withdraw', statement, details, payload: plan, required, networkId: 'bitcoin',
+    });
     return { operation: operationView(op, [], user), plan, rule };
   }
 
@@ -943,6 +1066,17 @@ export function createApp(options) {
     if (op.kind !== 'create') {
       const member = await one('memberIn', op.wallet_user_id, user.id);
       if (!member) throw new HttpError(403, 'You are not an approver for this wallet.');
+      if (op.network) {
+        // Only the people who sign for that account, as it stands before this change.
+        // A brand new account has no signers yet, so the main account's stand in.
+        const [account, members] = await Promise.all([
+          one('accountOn', op.wallet_user_id, op.kind === 'account' ? 'bitcoin' : op.network),
+          all('membersOf', op.wallet_user_id),
+        ]);
+        if (!signersOf(account, members).includes(user.id)) {
+          throw new HttpError(403, 'You are not a signer on that account.');
+        }
+      }
     } else if (op.wallet_user_id !== user.id) {
       throw new HttpError(403, 'Only the owner can create this wallet.');
     }
@@ -1054,6 +1188,7 @@ export function createApp(options) {
     if (op.status !== 'collecting') return fail('the request is no longer collecting approvals');
 
     await query('setDecision', remote.decision_id, a.id);
+    await query('bindPalm', palmId(claims.sub), now(), op.wallet_user_id, user.id);
     // Record this approval and, if it completes the quorum, claim the right to run the operation.
     const mine = await transaction(async q => {
       if ((await q('claimApproval', `decision:${remote.decision_id}`, now(), a.id)).count !== 1) return false;

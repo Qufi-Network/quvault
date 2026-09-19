@@ -1,209 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import http from 'node:http';
 import * as btc from '@scure/btc-signer';
 import { hex } from '@scure/base';
-import { createApp } from '../src/app.js';
 import { actionDigest } from '../src/veyns.js';
 import { serverKeys, seal, open as openSealed } from '../src/vault.js';
 import { createKey, publicKeyOf, addressOf, planSpend, signPlan } from '../src/bitcoin.js';
 import { PolicyError, requiredFor, requiredToChange, validatePolicy } from '../src/policy.js';
-
-const ISSUER = 'https://issuer.test';
-const CHAIN = 'https://chain.test/api';
-const ORIGIN = 'https://quvault.test';
-const CLIENT_ID = 'quvault-test';
-const SECRET = 'backend-secret';
-const SEED = crypto.randomBytes(64).toString('base64');
-const DEST = 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx';
-const quiet = { error() {}, warn() {}, log() {} };
-
-/** Stands in for Veyns (real ES256 tokens) and for the Bitcoin API (coins, fees, broadcast). */
-function mockWorld(clock) {
-  const { privateKey, publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
-  const jwk = { ...publicKey.export({ format: 'jwk' }), kid: 'k1', alg: 'ES256', use: 'sig' };
-  const requests = new Map();
-  const log = { created: [], acks: [], cancelled: [], broadcast: [] };
-  const chain = { utxos: [], feeRate: 2, broadcastError: null, pending: 0 };
-  const b64 = value => Buffer.from(JSON.stringify(value)).toString('base64url');
-  const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
-
-  function token(claims) {
-    const t = clock();
-    const input = `${b64({ alg: 'ES256', kid: 'k1', typ: 'JWT' })}.${b64({
-      iss: ISSUER, aud: CLIENT_ID, iat: t, exp: t + 300, auth_time: t,
-      veyns_presence: true, amr: ['veyns:browser'], ...claims,
-    })}`;
-    const signature = crypto.sign('sha256', Buffer.from(input), { key: privateKey, dsaEncoding: 'ieee-p1363' });
-    return `${input}.${signature.toString('base64url')}`;
-  }
-
-  async function fetchImpl(url, init = {}) {
-    const { pathname } = new URL(url);
-    const method = init.method || 'GET';
-    const body = init.body;
-
-    if (String(url).startsWith(CHAIN)) {
-      const rest = String(url).slice(CHAIN.length);
-      if (rest.endsWith('/utxo')) return json(200, chain.utxos.map(u => ({ ...u, status: { confirmed: true, block_height: 100 } })));
-      if (rest.endsWith('/txs')) return json(200, []);
-      if (rest === '/v1/fees/recommended') return json(200, { halfHourFee: chain.feeRate, hourFee: chain.feeRate });
-      if (rest.startsWith('/address/')) {
-        const funded = chain.utxos.reduce((sum, u) => sum + u.value, 0);
-        return json(200, { chain_stats: { funded_txo_sum: funded, spent_txo_sum: 0, tx_count: chain.utxos.length }, mempool_stats: { funded_txo_sum: chain.pending, spent_txo_sum: 0, tx_count: chain.pending ? 1 : 0 } });
-      }
-      if (rest === '/tx' && method === 'POST') {
-        if (chain.broadcastError) return new Response(chain.broadcastError, { status: 400 });
-        const tx = btc.Transaction.fromRaw(hex.decode(body), { allowUnknownOutputs: true });
-        log.broadcast.push({ hex: body, txid: tx.id, tx });
-        return new Response(tx.id, { status: 200 });
-      }
-      return json(404, { error: 'not_found' });
-    }
-
-    if (pathname === '/jwks.json') return json(200, { keys: [jwk] });
-    if (init.headers?.authorization !== 'Basic ' + Buffer.from(`${CLIENT_ID}:${SECRET}`).toString('base64')) {
-      return json(401, { error: 'invalid_client' });
-    }
-    const parsed = body ? JSON.parse(body) : undefined;
-    if (method === 'POST' && pathname === '/v1/approvals') {
-      const id = crypto.randomBytes(18).toString('base64url');
-      const record = {
-        request_id: id, subject: parsed.subject, status: 'pending', required_method: 'palm',
-        challenge: crypto.randomBytes(18).toString('base64url'),
-        action: { ...parsed.action, digest: actionDigest(parsed.action.statement, parsed.action.details) },
-        approval_url: `${ISSUER}/approve#${id}.${'v'.repeat(32)}`,
-      };
-      requests.set(id, record);
-      log.created.push(record);
-      return json(201, record);
-    }
-    let m;
-    if (method === 'GET' && (m = pathname.match(/^\/v1\/approvals\/([^/]+)$/))) return json(200, requests.get(m[1]));
-    if ((m = pathname.match(/^\/v1\/approvals\/([^/]+)\/cancel$/))) {
-      log.cancelled.push(m[1]);
-      return json(200, requests.get(m[1]) ?? {});
-    }
-    if ((m = pathname.match(/^\/v1\/approvals\/([^/]+)\/ack$/))) {
-      log.acks.push({ request_id: m[1], ...parsed });
-      return json(200, { acknowledged: true });
-    }
-    return json(404, { error: 'not_found' });
-  }
-
-  function approvePalm(requestId, overrides = {}) {
-    const r = requests.get(requestId);
-    r.status = 'approved';
-    r.decision_id = crypto.randomBytes(12).toString('base64url');
-    r.decision = token({
-      sub: r.subject, veyns_intent: 'action', amr: ['veyns:palm'], request_id: r.request_id,
-      request_nonce: r.challenge, veyns_action: { statement: r.action.statement, digest: r.action.digest },
-      ...overrides,
-    });
-    return r;
-  }
-
-  return { fetchImpl, token, approvePalm, log, chain, requests };
-}
-
-async function start(t, overrides = {}) {
-  let time = 1_800_000_000;
-  const clock = () => time;
-  const world = mockWorld(clock);
-  const app = createApp({
-    publicOrigin: ORIGIN, issuer: ISSUER, chainApi: CHAIN, clientId: CLIENT_ID, backendSecret: SECRET,
-    walletSeed: SEED, now: clock, fetchImpl: world.fetchImpl, log: quiet, ...overrides,
-  });
-  await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
-  t.after(() => app.close());
-  const { port } = app.server.address();
-
-  function client() {
-    const jar = new Map();
-    const call = (method, path, body) => new Promise((resolve, reject) => {
-      const payload = body === undefined ? undefined : JSON.stringify(body);
-      const req = http.request({
-        host: '127.0.0.1', port, method, path,
-        headers: {
-          origin: ORIGIN,
-          cookie: [...jar].map(([k, v]) => `${k}=${v}`).join('; '),
-          ...(payload ? { 'content-type': 'application/json' } : {}),
-        },
-      }, res => {
-        for (const cookie of res.headers['set-cookie'] || []) {
-          const pair = cookie.split(';')[0];
-          const i = pair.indexOf('=');
-          if (/Max-Age=0\b/.test(cookie)) jar.delete(pair.slice(0, i));
-          else jar.set(pair.slice(0, i), pair.slice(i + 1));
-        }
-        let data = '';
-        res.on('data', chunk => { data += chunk; });
-        res.on('end', () => resolve({ status: res.statusCode, body: data ? JSON.parse(data) : null }));
-      });
-      req.on('error', reject);
-      req.end(payload);
-    });
-    return { get: path => call('GET', path), post: (path, body = {}) => call('POST', path, body) };
-  }
-
-  return { world, client, app, advance: seconds => { time += seconds; } };
-}
-
-function ok(response) {
-  assert.equal(response.status, 200, JSON.stringify(response.body));
-  return response.body;
-}
-
-async function signedIn(env, sub) {
-  const c = env.client();
-  const { nonce } = ok(await c.post('/api/login/start'));
-  ok(await c.post('/api/login/finish', { token: env.world.token({ sub, nonce, veyns_intent: 'login' }) }));
-  c.id = ok(await c.get('/api/wallet')).me.id;
-  return c;
-}
-
-/** One person putting their palm to a pending request. */
-async function palmApprove(env, c, operationId, overrides) {
-  const { approval } = ok(await c.post(`/api/operations/${operationId}/approval`, {}));
-  ok(await c.post(`/api/approvals/${approval.id}/palm`, {}));
-  env.world.approvePalm(env.world.log.created.at(-1).request_id, overrides);
-  return ok(await c.get(`/api/approvals/${approval.id}`));
-}
-
-/**
- * Stands in for the owner's browser: after the palm scan it takes the unlock secret,
- * makes its own key, and registers only the address and public key.
- */
-async function walletFor(env, c) {
-  const { operation } = ok(await c.post('/api/wallet/approval', { label: 'Owner' }));
-  await palmApprove(env, c, operation.id);
-  const unlocked = ok(await c.post(`/api/operations/${operation.id}/unlock`, {}));
-  c.unlock = unlocked.unlock;
-  c.salt = unlocked.salt;
-  c.key = createKey();
-  c.publicKey = publicKeyOf(c.key);
-  c.address = addressOf(c.publicKey);
-  ok(await c.post('/api/wallet/register', {
-    operationId: operation.id, address: c.address, publicKey: c.publicKey.toString('hex'),
-  }));
-  return ok(await c.get('/api/wallet')).wallet;
-}
-
-/** The browser signing an approved plan and handing back the raw transaction. */
-async function signAndSend(env, c, operationId) {
-  const { plan } = ok(await c.post(`/api/operations/${operationId}/unlock`, {}));
-  const signed = signPlan({ privateKey: c.key, publicKey: c.publicKey, plan });
-  return ok(await c.post(`/api/operations/${operationId}/broadcast`, { hex: signed.hex }));
-}
-
-/** Adds an approver and sets the amount rules, through the palm-approved policy change. */
-async function setRules(env, owner, { add = [], remove = [], rules }) {
-  const { operation } = ok(await owner.post('/api/policy', { add, remove, rules }));
-  const approvers = [owner, ...add.map(a => a.client).filter(Boolean)];
-  for (let i = 0; i < operation.required; i++) await palmApprove(env, approvers[i], operation.id);
-  return ok(await owner.get('/api/wallet'));
-}
+import { DEST, SEED, start, ok, signedIn, palmApprove, walletFor, signAndSend, setRules } from './harness.js';
 
 test('the vault seals a key so only this server seed can open it', () => {
   const keys = serverKeys(SEED);
@@ -267,7 +71,12 @@ test('creating the wallet needs a palm scan, and binds the key to that account',
 
   const view = ok(await c.get('/api/wallet'));
   assert.equal(view.wallet.address, address);
-  assert.deepEqual(view.members, [{ id: c.id, label: 'Alex', owner: true }]);
+  assert.equal(view.members.length, 1);
+  assert.equal(view.members[0].label, 'Alex');
+  assert.ok(view.members[0].owner);
+  // Putting a palm to the vault gives that person an identity inside it.
+  assert.match(view.members[0].palmId, /^PALM-[0-9A-Z]{12}$/);
+  assert.ok(view.members[0].palmAt > 0);
   assert.deepEqual(view.policy.rules, [{ upToSats: null, approvals: 1 }]);
   assert.equal(env.world.log.acks.length, 1);
 
@@ -401,7 +210,7 @@ test('a withdrawal is planned, signed only after the palm scan, and broadcast ex
 
   const { operation, plan } = ok(await c.post('/api/withdrawals', { to: DEST, amount: 120_000 }));
   assert.equal(operation.statement, `Send 0.00120000 tBTC to ${DEST}`);
-  assert.equal(operation.details.approvals_required, '1 of 1 approver');
+  assert.equal(operation.details.approvals_required, '1 of 1 signer');
   assert.equal(env.world.log.broadcast.length, 0, 'nothing is broadcast before the palm scan');
 
   const approved = await palmApprove(env, c, operation.id);
@@ -449,7 +258,7 @@ test('a bigger amount needs two palms, from two different people', async t => {
   env.world.chain.utxos = [{ txid: 'c'.repeat(64), vout: 0, value: 1_000_000 }];
   const big = ok(await alex.post('/api/withdrawals', { to: DEST, amount: 400_000 }));
   assert.equal(big.operation.required, 2);
-  assert.equal(big.operation.details.approvals_required, '2 of 2 approvers');
+  assert.equal(big.operation.details.approvals_required, '2 of 2 signers');
 
   const first = await palmApprove(env, alex, big.operation.id);
   assert.equal(first.operation.status, 'collecting');
