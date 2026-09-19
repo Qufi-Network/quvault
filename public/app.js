@@ -117,7 +117,7 @@ async function refresh() {
   }
   renderWallet(data);
   show('wallet');
-  setTab(location.hash.slice(1) || 'vault', { remember: false });
+  setTab(location.hash.slice(1) || 'dashboard', { remember: false });
 }
 
 function showSetup() {
@@ -275,10 +275,11 @@ $('create-wallet').addEventListener('click', async () => {
 
 /* ------------------------------------------------------- dashboard tabs */
 
-const TABS = ['vault', 'send', 'receive'];
+const TABS = ['dashboard', 'vault', 'send', 'receive'];
 
 function setTab(name, { remember = true } = {}) {
-  const tab = TABS.includes(name) ? name : 'vault';
+  const tab = TABS.includes(name) ? name : 'dashboard';
+  if (tab === 'dashboard') loadChart();
   for (const pane of document.querySelectorAll('.pane')) pane.hidden = pane.dataset.pane !== tab;
   for (const node of document.querySelectorAll('.side .tab')) {
     const active = node.dataset.tab === tab;
@@ -290,6 +291,107 @@ function setTab(name, { remember = true } = {}) {
 
 for (const node of document.querySelectorAll('.side .tab')) {
   node.addEventListener('click', () => setTab(node.dataset.tab));
+}
+for (const node of document.querySelectorAll('[data-goto]')) {
+  node.addEventListener('click', () => setTab(node.dataset.goto));
+}
+
+/**
+ * The price chart. The server fetches the data and this draws it, so no third-party code
+ * ever runs on the page holding your wallet session.
+ */
+let chartLoaded = false;
+async function loadChart({ force = false } = {}) {
+  if (chartLoaded && !force) return;
+  chartLoaded = true;
+  try {
+    const price = await api('/api/price');
+    if (price.error || !price.series?.length) {
+      $('chart-note').textContent = price.error || 'No price data right now.';
+      return;
+    }
+    drawChart(price);
+  } catch (error) {
+    chartLoaded = false;
+    $('chart-note').textContent = friendly(error);
+  }
+}
+
+function drawChart(price) {
+  const NS = 'http://www.w3.org/2000/svg';
+  const points = price.series;
+  const width = 960;
+  const height = 320;
+  const pad = { top: 18, right: 62, bottom: 22, left: 10 };
+  const low = Math.min(...points.map(p => p.usd));
+  const high = Math.max(...points.map(p => p.usd));
+  const span = high - low || 1;
+  const x = i => pad.left + (i / (points.length - 1)) * (width - pad.left - pad.right);
+  const y = usd => pad.top + (1 - (usd - low) / span) * (height - pad.top - pad.bottom);
+
+  const line = points.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p.usd).toFixed(1)}`).join(' ');
+  const area = `${line} L${x(points.length - 1).toFixed(1)},${height - pad.bottom} L${x(0).toFixed(1)},${height - pad.bottom} Z`;
+
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.setAttribute('class', 'price-chart');
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', `Bitcoin price over the last week, between ${Math.round(low)} and ${Math.round(high)} US dollars`);
+
+  const gradient = document.createElementNS(NS, 'linearGradient');
+  gradient.setAttribute('id', 'priceFade');
+  gradient.setAttribute('x1', '0'); gradient.setAttribute('y1', '0');
+  gradient.setAttribute('x2', '0'); gradient.setAttribute('y2', '1');
+  for (const [offset, opacity] of [['0', '.42'], ['1', '0']]) {
+    const stop = document.createElementNS(NS, 'stop');
+    stop.setAttribute('offset', offset);
+    stop.setAttribute('stop-color', '#1769ff');
+    stop.setAttribute('stop-opacity', opacity);
+    gradient.append(stop);
+  }
+  const defs = document.createElementNS(NS, 'defs');
+  defs.append(gradient);
+  svg.append(defs);
+
+  // Four horizontal guides, labelled on the right.
+  for (let i = 0; i <= 3; i++) {
+    const usd = low + (span * i) / 3;
+    const gy = y(usd);
+    const guide = document.createElementNS(NS, 'line');
+    guide.setAttribute('x1', pad.left); guide.setAttribute('x2', width - pad.right);
+    guide.setAttribute('y1', gy); guide.setAttribute('y2', gy);
+    guide.setAttribute('class', 'chart-guide');
+    const label = document.createElementNS(NS, 'text');
+    label.setAttribute('x', width - pad.right + 8);
+    label.setAttribute('y', gy + 4);
+    label.setAttribute('class', 'chart-label');
+    label.textContent = `$${Math.round(usd).toLocaleString('en-US')}`;
+    svg.append(guide, label);
+  }
+
+  for (const [d, className] of [[area, 'chart-area'], [line, 'chart-line']]) {
+    const path = document.createElementNS(NS, 'path');
+    path.setAttribute('d', d);
+    path.setAttribute('class', className);
+    svg.append(path);
+  }
+
+  const last = document.createElementNS(NS, 'circle');
+  last.setAttribute('cx', x(points.length - 1));
+  last.setAttribute('cy', y(points.at(-1).usd));
+  last.setAttribute('r', '4');
+  last.setAttribute('class', 'chart-dot');
+  svg.append(last);
+
+  const change = price.change24h;
+  $('chart').replaceChildren(
+    el('div', { class: 'chart-head' },
+      el('p', { class: 'chart-price' }, `$${Math.round(price.usd).toLocaleString('en-US')}`),
+      change === null ? null : el('span', { class: `chart-change ${change >= 0 ? 'up' : 'down'}` },
+        `${change >= 0 ? '+' : ''}${change.toFixed(2)}% · 24h`),
+      el('span', { class: 'quiet small' }, 'BTC/USD · last 7 days')),
+    svg);
+  $('chart-note').textContent = `Price data from mempool.space, fetched by this server. Updated ${when(price.at)}.`;
 }
 $('account-btc').addEventListener('click', () => {
   $('account-btc').classList.add('active');
@@ -332,10 +434,44 @@ function renderWallet(data) {
   $('member-list').replaceChildren(...members.map(m => el('span', { class: 'member' },
     m.label, m.owner ? el('small', {}, 'owner') : null, m.id === me.id ? el('small', {}, 'you') : null)));
 
+  renderAccounts(data);
   renderRequests($('pending'), data.pending);
   renderRequests($('send-pending'), data.pending.filter(op => op.kind === 'withdraw'));
+  renderRequests($('dash-pending'), data.pending);
   $('pending-lane').hidden = data.pending.length === 0;
+  $('dash-pending-lane').hidden = data.pending.length === 0;
   renderHistory(chainHistory || [], data.history || []);
+}
+
+/** One card per account. Bitcoin is the first; others can join the same vault later. */
+function renderAccounts(data) {
+  const { wallet, balance, coins, spendable, policy } = data;
+  const total = balance ? balance.confirmed + balance.pending : 0;
+  const strongest = Math.max(...policy.rules.map(rule => rule.approvals));
+
+  const card = el('article', { class: 'account-card' },
+    el('header', {},
+      el('span', { class: 'account-mark big' }, '₿'),
+      el('div', {},
+        el('b', {}, 'Bitcoin'),
+        el('small', {}, wallet.network)),
+      el('span', { class: 'chip soft' }, coins ? `${coins} coin${coins === 1 ? '' : 's'}` : 'empty')),
+    el('p', { class: 'account-balance' }, btc(total), el('span', { class: 'unit' }, 'tBTC')),
+    el('p', { class: 'quiet small' }, [
+      balance?.pending ? `${fmtSats(balance.pending)} sats unconfirmed` : null,
+      coins ? `${fmtSats(spendable)} sats spendable` : null,
+      `spending needs ${policy.rules[0].approvals}–${strongest} palm${strongest === 1 ? '' : 's'}`,
+    ].filter(Boolean).join(' · ')),
+    el('p', { class: 'account-address' }, wallet.address),
+    el('div', { class: 'row' },
+      button('Send', 'btn brand small', () => setTab('send')),
+      button('Receive', 'btn ghost small', () => setTab('receive'))));
+
+  const soon = el('article', { class: 'account-card muted' },
+    el('header', {}, el('span', { class: 'account-mark big ghost' }, '+'), el('div', {}, el('b', {}, 'Another account'), el('small', {}, 'later'))),
+    el('p', { class: 'quiet small' }, 'Each account joins the same vault and keeps its own approvers and amount rules.'));
+
+  $('accounts').replaceChildren(card, soon);
 }
 
 /** One card per request waiting for palms, with who has approved so far. */

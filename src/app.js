@@ -6,7 +6,7 @@ import QRCode from 'qrcode';
 import { openDb } from './db.js';
 import { createVeyns, actionDigest, isFresh, randomId, HttpError } from './veyns.js';
 import { serverKeys, seal, open as openSealed } from './vault.js';
-import { createChain, ChainError } from './chain.js';
+import { createChain, createPrices, ChainError } from './chain.js';
 import { createKey, publicKeyOf, addressOf, planSpend, signPlan, isValidAddress, toBtc, WalletError } from './bitcoin.js';
 import { DEFAULT_POLICY, PolicyError, describePolicy, requiredFor, requiredToChange, validatePolicy } from './policy.js';
 
@@ -153,6 +153,7 @@ export function createApp(options) {
 
   const veyns = createVeyns({ issuer, getClientId: () => clientId, backendSecret, now, fetchImpl });
   const chain = createChain({ apiUrl: chainApi, fetchImpl });
+  const prices = createPrices({ apiUrl: options.priceApi ?? 'https://mempool.space/api', fetchImpl, now });
 
   let vaultKeys = null;
   const vault = () => {
@@ -168,6 +169,8 @@ export function createApp(options) {
 
   const secureCookies = publicOrigin.startsWith('https:');
   const publicHost = new URL(publicOrigin).host;
+  // Nothing third-party runs on the wallet page: no outside scripts, no frames. Market data
+  // is fetched by this server and drawn here, so a compromised widget cannot reach a session.
   const csp = [
     "default-src 'self'",
     `script-src 'self' ${issuer}`,
@@ -175,6 +178,7 @@ export function createApp(options) {
     `img-src 'self' data: ${issuer}`,
     "style-src 'self' https://fonts.googleapis.com",
     'font-src https://fonts.gstatic.com',
+    "frame-src 'none'",
     "frame-ancestors 'none'",
     "base-uri 'none'",
     "form-action 'self'",
@@ -494,6 +498,16 @@ export function createApp(options) {
     return view;
   }
 
+  /** Market price for the dashboard chart. Never touches wallet state. */
+  async function getPrice() {
+    try {
+      return await prices.latest();
+    } catch (error) {
+      if (!(error instanceof ChainError)) throw error;
+      return { usd: null, series: [], error: error.message };
+    }
+  }
+
   async function requestWallet({ user, body }) {
     requirePalmReady();
     vault();
@@ -744,6 +758,7 @@ export function createApp(options) {
     { method: 'POST', path: '/api/login/start', handler: loginStart },
     { method: 'POST', path: '/api/login/finish', handler: loginFinish },
     { method: 'POST', path: '/api/logout', handler: logout },
+    { method: 'GET', path: '/api/price', handler: getPrice, auth: true },
     { method: 'GET', path: '/api/wallet', handler: getWallet, auth: true },
     { method: 'POST', path: '/api/wallet/approval', handler: requestWallet, auth: true },
     { method: 'POST', path: '/api/policy', handler: requestPolicy, auth: true },

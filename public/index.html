@@ -77,6 +77,10 @@
   <main id="view-wallet" class="shell" hidden>
     <nav class="side" aria-label="Wallet sections">
       <p class="side-label">Wallet</p>
+      <button class="tab" data-tab="dashboard" type="button">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="2.5" width="6.5" height="8" rx="1.5"/><rect x="11" y="2.5" width="6.5" height="5" rx="1.5"/><rect x="2.5" y="12.5" width="6.5" height="5" rx="1.5"/><rect x="11" y="9.5" width="6.5" height="8" rx="1.5"/></svg>
+        Dashboard
+      </button>
       <button class="tab" data-tab="vault" type="button">
         <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="4" width="15" height="12" rx="2.5"/><circle cx="10" cy="10" r="2.6"/></svg>
         Vault
@@ -103,7 +107,38 @@
     </nav>
 
     <div class="panes">
-      <section class="pane" data-pane="vault">
+      <section class="pane" data-pane="dashboard">
+        <header class="pane-head">
+          <div>
+            <p class="eyebrow">Overview</p>
+            <h1 class="pane-title">Dashboard</h1>
+          </div>
+          <div class="row">
+            <button class="btn brand small" data-goto="send" type="button">Send</button>
+            <button class="btn ghost small" data-goto="receive" type="button">Receive</button>
+          </div>
+        </header>
+
+        <div class="accounts" id="accounts"></div>
+
+        <section class="lane" id="dash-pending-lane" hidden>
+          <header class="lane-head"><h2>Needs your palm</h2></header>
+          <div class="requests" id="dash-pending"></div>
+        </section>
+
+        <section class="lane">
+          <header class="lane-head">
+            <h2>Bitcoin price</h2>
+            <a class="link" href="https://www.tradingview.com/chart/?symbol=BITSTAMP%3ABTCUSD" target="_blank" rel="noopener noreferrer">Open on TradingView</a>
+          </header>
+          <div class="card chart-card">
+            <div id="chart" class="chart"></div>
+            <p class="fine" id="chart-note">Loading the price…</p>
+          </div>
+        </section>
+      </section>
+
+      <section class="pane" data-pane="vault" hidden>
         <header class="pane-head">
           <div>
             <p class="eyebrow">Bitcoin account</p>

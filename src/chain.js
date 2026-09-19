@@ -74,3 +74,43 @@ export function createChain({ apiUrl, fetchImpl = globalThis.fetch }) {
     broadcast: rawHex => call('/tx', { method: 'POST', body: rawHex, asText: true }),
   };
 }
+
+/**
+ * Bitcoin's market price, read on the server so the wallet page never has to talk to a
+ * third party. Cached briefly: the price is background information, not wallet state.
+ */
+export function createPrices({ apiUrl, fetchImpl = globalThis.fetch, now = () => Math.floor(Date.now() / 1000), ttl = 300 }) {
+  const base = apiUrl.replace(/\/$/, '');
+  let cache = { at: -Infinity, data: null };
+
+  async function get(path) {
+    let response;
+    try {
+      response = await fetchImpl(`${base}${path}`, { signal: AbortSignal.timeout(12_000) });
+    } catch {
+      throw new ChainError('The price service is not reachable right now.');
+    }
+    if (!response.ok) throw new ChainError(`The price service returned ${response.status}.`);
+    try {
+      return await response.json();
+    } catch {
+      throw new ChainError('The price service sent an unreadable answer.');
+    }
+  }
+
+  return {
+    async latest() {
+      if (cache.data && now() - cache.at < ttl) return cache.data;
+      const [current, history] = await Promise.all([get('/v1/prices'), get('/v1/historical-price?currency=USD')]);
+      const series = (history.prices || [])
+        .filter(point => Number.isFinite(point.USD) && point.USD > 0)
+        .map(point => ({ t: point.time, usd: point.USD }))
+        .sort((a, b) => a.t - b.t)
+        .slice(-168); // about a week, hourly
+      const dayAgo = series.find(point => point.t >= (series.at(-1)?.t ?? 0) - 86_400)?.usd ?? series[0]?.usd;
+      const usd = current.USD ?? series.at(-1)?.usd ?? null;
+      cache = { at: now(), data: { usd, at: current.time ?? now(), change24h: dayAgo ? ((usd - dayAgo) / dayAgo) * 100 : null, series } };
+      return cache.data;
+    },
+  };
+}
