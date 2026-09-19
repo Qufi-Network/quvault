@@ -1,5 +1,5 @@
 import {
-  accountFrom, clearRecord, decryptMnemonic, encryptMnemonic, fromBase64, jitterFrom,
+  accountFrom, accountsFrom, clearRecord, decryptMnemonic, encryptMnemonic, fromBase64, jitterFrom,
   loadRecord, makeMnemonic, saveRecord, signPlan,
 } from '/vendor/wallet.js';
 
@@ -14,7 +14,10 @@ const RANGES = [
   { key: 'max', label: '3M', seconds: 120 * 86_400 },
 ];
 
-const state = { config: null, data: null, price: null, range: 'week', loginNonce: null, draft: null };
+const state = { config: null, data: null, price: null, range: 'week', loginNonce: null, draft: null, account: 'bitcoin' };
+
+// A letter for each network, so an account is recognisable before its name is read.
+const MARKS = { bitcoin: '₿', ethereum: 'Ξ', tron: 'T', solana: '◎', stellar: '✦' };
 let active = null; // the approval currently shown in the sheet
 
 /* ------------------------------------------------------------ helpers */
@@ -346,6 +349,23 @@ const device = {
     return api(`/api/operations/${operation.id}/broadcast`, { hex: signed.hex });
   },
 
+  /** Derives the address for a newly approved network and reports only the public part. */
+  async addAccount(operation) {
+    if (!this.record) throw new Error('This browser does not hold the key for this wallet.');
+    const unlocked = await this.unlockFor(operation.id);
+    const mnemonic = await decryptMnemonic(this.record.blob, unlocked.unlock, this.record.salt);
+    const derived = accountsFrom(mnemonic);
+    if (derived.bitcoin.address !== this.record.address) throw new Error('That phrase belongs to a different wallet.');
+    const account = derived[operation.network];
+    if (!account) throw new Error('This vault does not know that network.');
+    await api('/api/accounts/register', {
+      operationId: operation.id,
+      address: account.address,
+      publicKey: account.publicKey,
+    });
+    return account;
+  },
+
   async phrase(operation) {
     if (!this.record) throw new Error('This browser does not hold the key for this wallet.');
     const unlocked = await this.unlockFor(operation.id);
@@ -381,18 +401,13 @@ $('create-wallet').addEventListener('click', async () => {
 });
 
 function renderWallet(data) {
-  const { wallet, balance, spendable, coins, chainHistory, feeRate, qr, chainError, policy, members, me } = data;
+  const { wallet, balance, spendable, coins, chainHistory, feeRate, chainError, policy, members, me } = data;
   const total = balance ? balance.confirmed + balance.pending : 0;
   const myName = members.find(m => m.id === me.id)?.label || 'there';
   const hour = new Date().getHours();
   $('greeting').textContent = `Good ${hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening'}, ${myName}.`;
-  $('greeting-note').textContent = `Here is the summary of your ${1} account.`;
-
-  // Receive
-  $('address').textContent = wallet.address;
-  $('explorer-link').href = wallet.explorer;
-  if (qr) $('qr').innerHTML = qr; // A QR code this server generated; no external content.
-  $('receive-note').textContent = balance?.txCount ? `${balance.txCount} transaction${balance.txCount === 1 ? '' : 's'} so far.` : '';
+  const count = (data.accounts || []).length;
+  $('greeting-note').textContent = `Here is the summary of your ${count} account${count === 1 ? '' : 's'}.`;
 
   // Totals
   $('balance').textContent = btc(total);
@@ -411,8 +426,9 @@ function renderWallet(data) {
   $('send-rule-note').textContent = `Your thresholds: ${steps.join(' · ')}.`;
   $('accounts-note').textContent = `${members.length} signer${members.length === 1 ? '' : 's'} on this vault`;
 
-  renderAccounts(data, total);
+  renderAccounts(data);
   renderSettings(data);
+  renderAccountPanes(data);
   renderRequests($('pending'), data.pending);
   renderRequests($('send-pending'), data.pending.filter(op => op.kind === 'withdraw'));
   $('pending-lane').hidden = data.pending.length === 0;
@@ -420,37 +436,118 @@ function renderWallet(data) {
   paintFiat();
 }
 
-/** The sidebar list and the account cards: one Bitcoin account today, more later. */
-function renderAccounts(data, total) {
-  const { wallet, policy, members, coins } = data;
-  const strongest = Math.max(...policy.rules.map(rule => rule.approvals));
-  const lightest = Math.min(...policy.rules.map(rule => rule.approvals));
+/** The sidebar list and the account cards: one per network, all from the same phrase. */
+function renderAccounts(data) {
+  const accounts = data.accounts || [];
+  if (!accounts.some(account => account.network === state.account)) {
+    state.account = accounts[0]?.network || 'bitcoin';
+  }
 
-  $('account-list').replaceChildren(
-    el('button', { class: 'account active', type: 'button', onclick: () => setTab('dashboard') },
-      el('span', { class: 'account-mark' }, '₿'),
-      el('span', { class: 'account-text' }, el('b', {}, 'Bitcoin account'), el('small', {}, `tBTC ${btc(total)}`))),
-  );
+  $('account-list').replaceChildren(...accounts.map(account => el('button', {
+    class: `account${account.network === state.account ? ' active' : ''}`,
+    type: 'button',
+    onclick: () => selectAccount(account.network),
+  },
+    el('span', { class: 'account-mark' }, MARKS[account.network] || account.symbol.slice(0, 1)),
+    el('span', { class: 'account-text' }, el('b', {}, account.label), el('small', {}, account.chain)),
+    el('span', { class: 'account-amount' }, account.formatted ?? '—'))));
 
   $('accounts').replaceChildren(
-    el('article', { class: 'account-card' },
+    ...accounts.map(account => accountCard(account, data)),
+    el('button', { class: 'account-card muted add', type: 'button', onclick: openNewAccount },
       el('header', {},
-        el('span', { class: 'account-mark big' }, '₿'),
-        el('div', {}, el('b', {}, 'Bitcoin account'), el('small', {}, wallet.network)),
-        el('span', { class: 'chip soft' }, coins ? `${coins} coin${coins === 1 ? '' : 's'}` : 'empty')),
-      el('p', { class: 'account-balance' }, btc(total), el('span', { class: 'unit' }, 'tBTC')),
-      el('p', { class: 'quiet small', id: 'account-fiat' }, ''),
-      el('p', { class: 'quiet small' },
-        `${lightest === strongest ? `${strongest}` : `${lightest}–${strongest}`} of ${members.length} palm approval${strongest === 1 && lightest === 1 ? '' : 's'} to spend`),
-      el('p', { class: 'account-address' }, wallet.address),
-      el('div', { class: 'row' },
-        button('Send', 'btn brand small', () => setTab('send')),
-        button('Receive', 'btn ghost small', () => setTab('receive')))),
-    el('article', { class: 'account-card muted' },
-      el('header', {}, el('span', { class: 'account-mark big ghost' }, '+'), el('div', {}, el('b', {}, 'Another account'), el('small', {}, 'later'))),
-      el('p', { class: 'quiet small' }, 'Each account joins the same vault and keeps its own signers and thresholds.')),
+        el('span', { class: 'account-mark big ghost' }, '+'),
+        el('div', {}, el('b', {}, 'Add an account'), el('small', {}, 'new network'))),
+      el('p', { class: 'quiet small' }, 'Ethereum, Tron, Solana or Stellar, from this same phrase and the same palm rules.')),
   );
 }
+
+function accountCard(account, data) {
+  const { policy, members, coins } = data;
+  const strongest = Math.max(...policy.rules.map(rule => rule.approvals));
+  const lightest = Math.min(...policy.rules.map(rule => rule.approvals));
+  const bitcoin = account.network === 'bitcoin';
+  return el('article', { class: `account-card${account.network === state.account ? ' active' : ''}` },
+    el('header', {},
+      el('span', { class: 'account-mark big' }, MARKS[account.network] || account.symbol.slice(0, 1)),
+      el('div', {}, el('b', {}, `${account.label} account`), el('small', {}, account.chain)),
+      el('span', { class: 'chip soft' }, bitcoin
+        ? (coins ? `${coins} coin${coins === 1 ? '' : 's'}` : 'empty')
+        : (account.canSend ? 'send and receive' : 'receive only'))),
+    el('p', { class: 'account-balance' }, account.formatted ?? '—', el('span', { class: 'unit' }, account.symbol)),
+    bitcoin ? el('p', { class: 'quiet small', id: 'account-fiat' }, '') : null,
+    el('p', { class: 'quiet small' }, account.canSend
+      ? `${lightest === strongest ? strongest : `${lightest}–${strongest}`} of ${members.length} palm approval${strongest === 1 && lightest === 1 ? '' : 's'} to spend`
+      : 'Receiving and balances today; spending from here comes next.'),
+    el('p', { class: 'account-address' }, account.address),
+    el('div', { class: 'row' },
+      account.canSend ? button('Send', 'btn brand small', () => { selectAccount(account.network); setTab('send'); }) : null,
+      button('Receive', 'btn ghost small', () => { selectAccount(account.network); setTab('receive'); })));
+}
+
+/** Points Send, Receive and the account details at one account. */
+function selectAccount(networkId) {
+  state.account = networkId;
+  if (!state.data) return;
+  renderAccounts(state.data);
+  renderAccountPanes(state.data);
+}
+
+function renderAccountPanes(data) {
+  const accounts = data.accounts || [];
+  const account = accounts.find(item => item.network === state.account) || accounts[0];
+  if (!account) return;
+  for (const node of document.querySelectorAll('.account-name')) node.textContent = `${account.label} account`;
+
+  $('address').textContent = account.address;
+  $('explorer-link').href = account.explorer;
+  $('qr').innerHTML = account.qr || ''; // A QR code this server generated; no external content.
+  $('receive-hint').textContent = account.network === 'bitcoin'
+    ? 'Send test coins here from a testnet4 faucet. They appear after one confirmation, and receiving never needs a palm scan.'
+    : `Send ${account.chain} ${account.symbol} here. The address comes from your phrase, and receiving never needs a palm scan.`;
+  $('receive-note').textContent = account.network === 'bitcoin'
+    ? (data.balance?.txCount ? `${data.balance.txCount} transaction${data.balance.txCount === 1 ? '' : 's'} so far.` : '')
+    : `Balance ${account.formatted ?? 'unknown'} ${account.symbol}.`;
+
+  $('send-form').hidden = !account.canSend;
+  $('send-rule-note').hidden = !account.canSend;
+  $('send-soon').hidden = account.canSend;
+  $('send-soon').textContent = account.canSend ? ''
+    : `Signing for ${account.label} is the next step. This account receives and shows its balance today; the Bitcoin account can already spend under your palm rules.`;
+
+  $('settings-network').textContent = `${account.label} · ${account.chain}`;
+  $('settings-address').textContent = account.address;
+}
+
+/* --------------------------------------------------- adding an account */
+
+function openNewAccount() {
+  if (!state.data) return;
+  const have = new Set((state.data.accounts || []).map(account => account.network));
+  const choices = (state.data.networks || []).filter(network => !have.has(network.id));
+  $('new-account-error').textContent = '';
+  $('network-list').replaceChildren(...(choices.length
+    ? choices.map(network => el('button', { class: 'network-choice', type: 'button', onclick: () => addAccount(network) },
+      el('span', { class: 'account-mark' }, MARKS[network.id] || network.symbol.slice(0, 1)),
+      el('span', { class: 'account-text' }, el('b', {}, network.label), el('small', {}, network.chain)),
+      el('span', { class: 'chip soft' }, network.canSend ? 'send and receive' : 'receive')))
+    : [el('p', { class: 'quiet' }, 'This vault already has an account on every network QuVault supports.')]));
+  $('new-account').showModal();
+}
+
+async function addAccount(network) {
+  $('new-account-error').textContent = '';
+  try {
+    const { operation } = await api('/api/accounts/approval', { network: network.id });
+    $('new-account').close();
+    openApproval(operation, `Adding the ${network.label} account…`);
+  } catch (error) {
+    $('new-account-error').textContent = friendly(error);
+  }
+}
+
+$('add-account').addEventListener('click', openNewAccount);
+$('new-account-cancel').addEventListener('click', () => $('new-account').close());
 
 function renderRequests(container, requests) {
   const { me, labels = {} } = state.data;
@@ -478,7 +575,11 @@ function renderRequests(container, requests) {
   }));
 }
 
-const busyText = op => (op.kind === 'withdraw' ? 'Sending…' : op.kind === 'policy' ? 'Applying the new settings…' : 'Creating the vault…');
+const BUSY = {
+  create: 'Creating the vault…', withdraw: 'Sending…', policy: 'Applying the new settings…',
+  account: 'Adding the account…', recovery: 'Opening your phrase…',
+};
+const busyText = op => BUSY[op.kind] || 'Working…';
 
 function renderHistory(chain, operations) {
   const rows = operations.filter(op => op.kind !== 'create').map(op => el('li', {},
@@ -838,7 +939,7 @@ async function cancelRequest(op) {
 const DETAIL_LABELS = {
   action: 'Action', network: 'Network', to: 'To', amount_sats: 'Amount', fee_sats: 'Fee', fee_rate: 'Fee rate',
   change_sats: 'Change back', spends: 'Coins spent', approvals_required: 'Approvals', rules: 'New settings',
-  approvers: 'Signers', spending_rule: 'Rule', owner_label: 'Your name',
+  approvers: 'Signers', spending_rule: 'Rule', owner_label: 'Your name', derived_from: 'Address from',
 };
 
 function detailRows(details) {
@@ -853,7 +954,10 @@ function detailRows(details) {
 
 async function openApproval(operation, busy) {
   active = { operation, busyText: busy };
-  const kinds = { create: 'Palm approval · new vault', withdraw: 'Palm approval · withdrawal', policy: 'Palm approval · settings' };
+  const kinds = {
+    create: 'Palm approval · new vault', withdraw: 'Palm approval · withdrawal', policy: 'Palm approval · settings',
+    account: 'Palm approval · new account', recovery: 'Palm approval · recovery phrase',
+  };
   $('approval-kind').textContent = kinds[operation.kind] || 'Palm approval';
   $('approval-statement').textContent = operation.statement;
   $('approval-details').replaceChildren(...detailRows(operation.details));
@@ -955,6 +1059,11 @@ async function settled(current, operation) {
     } else if (operation.kind === 'recovery') {
       if (state.recoveryIntent === 'restore') await showRestore(operation);
       else await showPhrase(operation);
+    } else if (operation.kind === 'account') {
+      toast('Deriving the address in this browser…');
+      const account = await device.addAccount(operation);
+      state.account = operation.network;
+      toast(`Account ready: ${account.address.slice(0, 12)}…`);
     } else if (operation.kind === 'policy') {
       toast('New settings are in force.');
     }

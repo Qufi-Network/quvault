@@ -94,9 +94,12 @@
         Settings
       </button>
 
-      <p class="side-label spaced">Accounts</p>
+      <div class="side-head spaced">
+        <p class="side-label">Accounts</p>
+        <button class="add-account" id="add-account" type="button" aria-label="Add an account" title="Add an account">+</button>
+      </div>
       <div id="account-list"></div>
-      <p class="side-note">More accounts can join this vault later. Each keeps its own signers and thresholds.</p>
+      <p class="side-note">Every account comes from the same recovery phrase and answers to the same palm rules.</p>
     </nav>
 
     <div class="panes">
@@ -145,7 +148,7 @@
       <section class="pane" data-pane="send" hidden>
         <header class="pane-head">
           <div>
-            <p class="eyebrow">Bitcoin account</p>
+            <p class="eyebrow account-name">Bitcoin account</p>
             <h1 class="pane-title">Send funds</h1>
           </div>
           <p class="quiet" id="fee-note"></p>
@@ -170,13 +173,14 @@
         </form>
 
         <p class="fine spread" id="send-rule-note"></p>
+        <p class="quiet" id="send-soon" hidden></p>
         <div class="requests" id="send-pending"></div>
       </section>
 
       <section class="pane" data-pane="receive" hidden>
         <header class="pane-head">
           <div>
-            <p class="eyebrow">Bitcoin account</p>
+            <p class="eyebrow account-name">Bitcoin account</p>
             <h1 class="pane-title">Receive funds</h1>
           </div>
         </header>
@@ -190,7 +194,7 @@
               <button class="btn ghost small" id="copy-address" type="button">Copy address</button>
               <a class="btn ghost small" id="explorer-link" target="_blank" rel="noopener">Explorer</a>
             </div>
-            <p class="fine">Send test coins here from a testnet4 faucet. They appear after one confirmation, and receiving never needs a palm scan.</p>
+            <p class="fine" id="receive-hint">Send test coins here from a testnet4 faucet. They appear after one confirmation, and receiving never needs a palm scan.</p>
             <p class="quiet" id="receive-note"></p>
           </div>
         </div>
@@ -199,7 +203,7 @@
       <section class="pane" data-pane="settings" hidden>
         <header class="pane-head">
           <div>
-            <p class="eyebrow">Bitcoin account</p>
+            <p class="eyebrow">Vault</p>
             <h1 class="pane-title">Settings</h1>
           </div>
           <p class="quiet" id="settings-required"></p>
@@ -254,7 +258,7 @@
           </div>
         </section>
         <section class="lane">
-          <header class="lane-head"><h2>Account</h2></header>
+          <header class="lane-head"><h2>Selected account</h2></header>
           <div class="card settings-card">
             <div class="detail-row"><span class="quiet">Network</span><b id="settings-network"></b></div>
             <div class="detail-row"><span class="quiet">Address</span><code id="settings-address"></code></div>
@@ -287,6 +291,18 @@
   </dialog>
 
 
+  <dialog id="new-account" aria-labelledby="new-account-title">
+    <div class="sheet">
+      <p class="eyebrow" id="new-account-title">Add an account</p>
+      <p class="fine">The address comes from the same recovery phrase, derived in this browser on the standard path for each network. Adding one takes a palm approval, like any other change.</p>
+      <div class="network-list" id="network-list"></div>
+      <p class="error" id="new-account-error" role="alert"></p>
+      <div class="sheet-foot">
+        <p class="fine">Sending is live for Bitcoin. The others receive and show balances today.</p>
+        <button class="link" id="new-account-cancel" type="button">Close</button>
+      </div>
+    </div>
+  </dialog>
   <dialog id="phrase" aria-labelledby="phrase-title">
     <div class="sheet">
       <p class="eyebrow seal" id="phrase-title">Recovery phrase</p>

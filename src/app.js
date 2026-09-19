@@ -11,6 +11,7 @@ import {
   createKey, publicKeyOf, addressOf, planSpend, signPlan, isValidAddress, toBtc, verifyAgainstPlan, WalletError,
 } from './bitcoin.js';
 import { DEFAULT_POLICY, PolicyError, describePolicy, requiredFor, requiredToChange, validatePolicy } from './policy.js';
+import { NETWORKS, createBalances, format, networkList } from './networks.js';
 
 const SESSION_COOKIE = 'palmsafe_sid';
 const LOGIN_COOKIE = 'palmsafe_login';
@@ -46,6 +47,11 @@ const SQL = {
   insertClientWallet: `INSERT INTO wallets (user_id, network, address, public_key, custody, unlock_sealed, salt, bound_sub, bound_decision, policy, created_at)
                        VALUES ($1, $2, $3, $4, 'client', $5, $6, $7, $8, $9, $10) ON CONFLICT (user_id) DO NOTHING`,
   setPolicy: 'UPDATE wallets SET policy = $1 WHERE user_id = $2',
+
+  accountsOf: 'SELECT * FROM accounts WHERE wallet_user_id = $1 ORDER BY created_at',
+  accountOn: 'SELECT * FROM accounts WHERE wallet_user_id = $1 AND network = $2',
+  insertAccount: `INSERT INTO accounts (wallet_user_id, network, address, public_key, created_at)
+                  VALUES ($1, $2, $3, $4, $5) ON CONFLICT (wallet_user_id, network) DO NOTHING`,
 
   membersOf: 'SELECT * FROM members WHERE wallet_user_id = $1 ORDER BY is_owner DESC, added_at',
   memberIn: 'SELECT * FROM members WHERE wallet_user_id = $1 AND member_id = $2',
@@ -161,6 +167,7 @@ export function createApp(options) {
 
   const veyns = createVeyns({ issuer, getClientId: () => clientId, backendSecret, now, fetchImpl });
   const chain = createChain({ apiUrl: chainApi, fetchImpl });
+  const balances = createBalances({ fetchImpl });
   const prices = createPrices({ apiUrl: options.priceApi ?? 'https://mempool.space/api', fetchImpl, now });
 
   let vaultKeys = null;
@@ -237,6 +244,8 @@ export function createApp(options) {
     } : null,
     txid: op.txid,
     error: op.error,
+    // Which network a pending "add account" request is for, so the browser knows what to derive.
+    network: op.kind === 'account' && op.payload ? JSON.parse(op.payload).network : null,
     startedBy: op.started_by,
     walletOwner: op.wallet_user_id,
     createdAt: op.created_at,
@@ -409,8 +418,9 @@ export function createApp(options) {
       }
       const { txid } = op.kind === 'create' ? await createWallet(op, decisionId)
         : op.kind === 'policy' ? await applyPolicy(op)
-        // Recovery unlocks nothing here: finishing it simply lets the owner's device open the phrase.
-        : op.kind === 'recovery' ? { txid: null }
+        // Recovery and new accounts do nothing here: finishing them lets the owner's device
+        // open the phrase, or derive the new network's address.
+        : op.kind === 'recovery' || op.kind === 'account' ? { txid: null }
         : await broadcastPlan(op);
       await query('finishOperation', 'done', txid, null, time, op.id);
     } catch (error) {
@@ -498,6 +508,8 @@ export function createApp(options) {
       wallet: wallet ? walletView(wallet) : null,
       policy: wallet ? policyOf(wallet) : null,
       members: members.map(memberView),
+      networks: networkList(),
+      accounts: wallet ? await accountsView(user.id, wallet) : [],
       labels,
       pending: await Promise.all(open.map(withApprovals)),
       history: await Promise.all(closed.map(withApprovals)),
@@ -537,7 +549,7 @@ export function createApp(options) {
   async function unlockFor({ user, params: [id] }) {
     const op = await ownOperation(id, user);
     if (op.wallet_user_id !== user.id) throw new HttpError(403, 'Only the account owner can unlock this wallet.');
-    if (!['create', 'withdraw', 'recovery'].includes(op.kind)) throw new HttpError(409, 'Nothing to unlock for this request.');
+    if (!['create', 'withdraw', 'recovery', 'account'].includes(op.kind)) throw new HttpError(409, 'Nothing to unlock for this request.');
     if (!['running', 'done'].includes(op.status)) throw new HttpError(409, 'This request is still collecting palm approvals.');
 
     const wallet = await one('walletOf', user.id);
@@ -573,6 +585,7 @@ export function createApp(options) {
     await query('insertClientWallet', user.id, network, address, publicKey, payload.unlockSealed, payload.salt,
       user.sub, payload.decisionId, JSON.stringify(DEFAULT_POLICY), time);
     await query('insertMember', user.id, user.id, payload.label || 'Owner', true, time);
+    await query('insertAccount', user.id, 'bitcoin', address, publicKey, time);
     return { wallet: walletView(await one('walletOf', user.id)) };
   }
 
@@ -611,6 +624,77 @@ export function createApp(options) {
       if (!(error instanceof ChainError)) throw error;
       return { usd: null, series: [], error: error.message };
     }
+  }
+
+  /** Every account this vault holds, with its balance read from that network. */
+  async function accountsView(ownerId, wallet) {
+    const rows = await all('accountsOf', ownerId);
+    const accounts = await Promise.all(rows.map(async row => {
+      const network = NETWORKS[row.network];
+      const [amount, qr] = await Promise.all([
+        row.network === 'bitcoin'
+          ? chain.balance(row.address).then(b => b.confirmed + b.pending).catch(() => null)
+          : balances.of(row.network, row.address),
+        QRCode.toString(row.address, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' }).catch(() => null),
+      ]);
+      return {
+        network: row.network,
+        label: network.label,
+        symbol: network.symbol,
+        chain: network.chain,
+        canSend: network.canSend,
+        address: row.address,
+        explorer: network.explorer(row.address),
+        amount,
+        formatted: amount === null ? null : format(amount, row.network),
+        qr,
+        createdAt: row.created_at,
+      };
+    }));
+    // The Bitcoin account made with the wallet comes first, then in the order they were added.
+    return accounts.sort((a, b) => (a.network === 'bitcoin' ? -1 : b.network === 'bitcoin' ? 1 : a.createdAt - b.createdAt));
+  }
+
+  /** Adds an account on another network. The address comes from the same phrase, in the browser. */
+  async function requestAccount({ user, body }) {
+    requirePalmReady();
+    const wallet = await one('walletOf', user.id);
+    if (!wallet) throw new HttpError(409, 'Create the wallet first.');
+    if (wallet.custody !== 'client') throw new HttpError(409, 'This wallet cannot add accounts.');
+    const networkId = String(body.network ?? '');
+    const network = NETWORKS[networkId];
+    if (!network) throw new HttpError(400, 'Choose one of the supported networks.');
+    if (await one('accountOn', user.id, networkId)) throw new HttpError(409, `This vault already has a ${network.label} account.`);
+
+    const members = await all('membersOf', user.id);
+    const statement = `Add a ${network.label} account to my vault`;
+    const details = {
+      action: 'add account',
+      network: `${network.label} ${network.chain}`,
+      derived_from: 'the same recovery phrase',
+      spending_rule: 'the same signers and thresholds as this vault',
+    };
+    const op = await newOperation({
+      walletOwnerId: user.id, user, kind: 'account', statement, details,
+      payload: { network: networkId },
+      required: requiredToChange(policyOf(wallet), members.length),
+    });
+    return { operation: operationView(op, [], user) };
+  }
+
+  /** The browser reports the address it derived for the new network. */
+  async function registerAccount({ user, body }) {
+    const op = await ownOperation(String(body.operationId ?? ''), user);
+    if (op.kind !== 'account' || op.status !== 'done' || op.wallet_user_id !== user.id) {
+      throw new HttpError(409, 'That is not an approved account request.');
+    }
+    const networkId = JSON.parse(op.payload).network;
+    const network = NETWORKS[networkId];
+    const address = String(body.address ?? '').trim();
+    if (!network.valid(address)) throw new HttpError(400, `That does not look like a ${network.label} address.`);
+    if (await one('accountOn', user.id, networkId)) throw new HttpError(409, `This vault already has a ${network.label} account.`);
+    await query('insertAccount', user.id, networkId, address, String(body.publicKey ?? '').slice(0, 130), now());
+    return { ok: true };
   }
 
   async function requestWallet({ user, body }) {
@@ -892,6 +976,8 @@ export function createApp(options) {
     { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/broadcast$/, handler: broadcastSigned, auth: true },
     { method: 'POST', path: '/api/policy', handler: requestPolicy, auth: true },
     { method: 'POST', path: '/api/recovery', handler: requestRecovery, auth: true },
+    { method: 'POST', path: '/api/accounts/approval', handler: requestAccount, auth: true },
+    { method: 'POST', path: '/api/accounts/register', handler: registerAccount, auth: true },
     { method: 'POST', path: '/api/withdrawals', handler: requestWithdrawal, auth: true },
     { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/approval$/, handler: joinOperation, auth: true },
     { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/cancel$/, handler: cancelOperation, auth: true },

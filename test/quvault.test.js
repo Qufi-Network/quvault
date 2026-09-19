@@ -324,6 +324,40 @@ test('a transaction that does not match the approved plan is never sent', async 
   assert.equal(env.world.log.broadcast.length, 1);
 });
 
+test('accounts on other networks are added with a palm, and addresses are checked', async t => {
+  const env = await start(t);
+  const c = await signedIn(env, 'sub-alex');
+  await walletFor(env, c);
+
+  const first = ok(await c.get('/api/wallet'));
+  assert.deepEqual(first.accounts.map(a => a.network), ['bitcoin'], 'the wallet starts with its Bitcoin account');
+  assert.deepEqual(first.networks.map(n => n.id), ['bitcoin', 'ethereum', 'tron', 'solana', 'stellar']);
+  assert.deepEqual(first.networks.filter(n => n.canSend).map(n => n.id), ['bitcoin'], 'only Bitcoin can send today');
+
+  assert.match((await c.post('/api/accounts/approval', { network: 'dogecoin' })).body.error, /supported networks/);
+  const { operation } = ok(await c.post('/api/accounts/approval', { network: 'ethereum' }));
+  assert.equal(operation.statement, 'Add a Ethereum account to my vault');
+  assert.equal(ok(await c.get('/api/wallet')).accounts.length, 1, 'nothing added before the palm');
+
+  const settled = await palmApprove(env, c, operation.id);
+  assert.equal(settled.operation.status, 'done');
+  // The browser derives the address from the same phrase; a wrong-looking one is refused.
+  assert.match((await c.post('/api/accounts/register', { operationId: operation.id, address: 'not-an-address' })).body.error, /does not look like a Ethereum address/);
+  ok(await c.post('/api/accounts/register', {
+    operationId: operation.id, address: '0x9858EfFD232B4033E47d90003D41EC34EcaEda94', publicKey: 'ab'.repeat(33),
+  }));
+
+  const after = ok(await c.get('/api/wallet'));
+  assert.deepEqual(after.accounts.map(a => a.network), ['bitcoin', 'ethereum']);
+  const ethereum = after.accounts[1];
+  assert.equal(ethereum.symbol, 'ETH');
+  assert.equal(ethereum.chain, 'sepolia');
+  assert.equal(ethereum.canSend, false);
+  assert.match(ethereum.explorer, /sepolia\.etherscan\.io/);
+  assert.ok(ethereum.qr.startsWith('<svg'));
+  assert.equal((await c.post('/api/accounts/approval', { network: 'ethereum' })).status, 409, 'one account per network');
+});
+
 test('the recovery phrase needs two palm scans', async t => {
   const env = await start(t);
   const c = await signedIn(env, 'sub-alex');

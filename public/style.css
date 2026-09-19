@@ -633,3 +633,44 @@ dialog::backdrop { background: rgba(2, 5, 12, .72); backdrop-filter: blur(3px); 
   .ledger li { flex-wrap: wrap; gap: 6px 12px; }
   .sheet-foot { flex-direction: column; align-items: flex-start; }
 }
+
+/* Accounts: the sidebar header, the chooser, and which card is selected */
+.side-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.side-head.spaced { margin-top: 22px; }
+.side-head .side-label { margin-bottom: 8px; }
+.add-account {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-right: 6px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-2);
+  font: 400 15px/1 var(--sans);
+  cursor: pointer;
+}
+.add-account:hover { border-color: rgba(23, 105, 255, .45); background: rgba(23, 105, 255, .12); color: #fff; }
+.account-card.active { border-color: rgba(23, 105, 255, .45); }
+.account-card.add { cursor: pointer; text-align: left; font: inherit; color: inherit; }
+.account-card.add:hover { opacity: .9; border-color: rgba(23, 105, 255, .45); }
+
+.network-list { display: grid; gap: 8px; margin: 14px 0 4px; }
+.network-choice {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-2);
+  font: 400 14.5px/1 var(--sans);
+  text-align: left;
+  cursor: pointer;
+}
+.network-choice:hover { border-color: rgba(23, 105, 255, .45); background: rgba(23, 105, 255, .10); color: var(--text); }
+.network-choice .chip { margin-left: auto; }

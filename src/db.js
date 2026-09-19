@@ -97,11 +97,21 @@ const SCHEMA = [
   'ALTER TABLE approvals ADD COLUMN IF NOT EXISTS slot INTEGER NOT NULL DEFAULT 1',
   'DROP INDEX IF EXISTS approvals_one_per_person',
   'CREATE UNIQUE INDEX IF NOT EXISTS approvals_one_per_slot ON approvals (operation_id, user_id, slot)',
+  // v4: one vault, several accounts, one per network, all from the same phrase.
+  `CREATE TABLE IF NOT EXISTS accounts (
+    wallet_user_id TEXT NOT NULL REFERENCES users(id),
+    network        TEXT NOT NULL,
+    address        TEXT NOT NULL,
+    public_key     TEXT NOT NULL,
+    created_at     BIGINT NOT NULL,
+    PRIMARY KEY (wallet_user_id, network)
+  )`,
   `DO $$ BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'operations_kind_v3') THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'operations_kind_v4') THEN
       ALTER TABLE operations DROP CONSTRAINT IF EXISTS operations_kind_check;
-      ALTER TABLE operations ADD CONSTRAINT operations_kind_v3
-        CHECK (kind IN ('create', 'withdraw', 'policy', 'recovery'));
+      ALTER TABLE operations DROP CONSTRAINT IF EXISTS operations_kind_v3;
+      ALTER TABLE operations ADD CONSTRAINT operations_kind_v4
+        CHECK (kind IN ('create', 'withdraw', 'policy', 'recovery', 'account'));
     END IF;
   END $$`,
 ];

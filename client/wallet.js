@@ -11,7 +11,12 @@ import { generateMnemonic, mnemonicToSeedSync, validateMnemonic } from '@scure/b
 import { wordlist } from '@scure/bip39/wordlists/english';
 import { hex } from '@scure/base';
 import { hkdf } from '@noble/hashes/hkdf.js';
-import { sha256 } from '@noble/hashes/sha2.js';
+import { sha256, sha512 } from '@noble/hashes/sha2.js';
+import { keccak_256 } from '@noble/hashes/sha3.js';
+import { hmac } from '@noble/hashes/hmac.js';
+import { base32, base58check } from '@scure/base';
+import { ed25519 } from '@noble/curves/ed25519.js';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
 
 const NETWORK = btc.TEST_NETWORK;
 const PATH = "m/84'/1'/0'/0/0"; // BIP84 testnet: the phrase restores in any standard wallet
@@ -56,6 +61,111 @@ export function accountFrom(mnemonic) {
   const publicKey = node.publicKey;
   const payment = btc.p2wpkh(publicKey, NETWORK);
   return { privateKey: node.privateKey, publicKey, address: payment.address, path: PATH };
+}
+
+/* ------------------------------------------------- the other networks */
+
+/**
+ * One phrase, one address per network, each on that network's standard path — so the same
+ * words restore in Sparrow, MetaMask, Phantom, TronLink or a Stellar wallet.
+ */
+export const NETWORKS = {
+  bitcoin: { label: 'Bitcoin', symbol: 'tBTC', path: "m/84'/1'/0'/0/0", curve: 'secp256k1' },
+  ethereum: { label: 'Ethereum', symbol: 'SepoliaETH', path: "m/44'/60'/0'/0/0", curve: 'secp256k1' },
+  tron: { label: 'Tron', symbol: 'TRX', path: "m/44'/195'/0'/0/0", curve: 'secp256k1' },
+  solana: { label: 'Solana', symbol: 'SOL', path: "m/44'/501'/0'/0'", curve: 'ed25519' },
+  stellar: { label: 'Stellar', symbol: 'XLM', path: "m/44'/148'/0'", curve: 'ed25519' },
+};
+
+/** SLIP-0010 for ed25519: hardened steps only, which is all Solana and Stellar use. */
+function ed25519Node(seed, path) {
+  let I = hmac(sha512, new TextEncoder().encode('ed25519 seed'), seed);
+  let key = I.slice(0, 32);
+  let chain = I.slice(32);
+  for (const part of path.split('/').slice(1)) {
+    const index = (Number.parseInt(part, 10) >>> 0) + 0x80000000;
+    const data = new Uint8Array(37);
+    data.set(key, 1);
+    new DataView(data.buffer).setUint32(33, index >>> 0);
+    I = hmac(sha512, chain, data);
+    key = I.slice(0, 32);
+    chain = I.slice(32);
+  }
+  return key;
+}
+
+const toHex = bytes => [...bytes].map(b => b.toString(16).padStart(2, '0')).join('');
+
+const eip55 = bytes => {
+  const plain = toHex(bytes);
+  const hash = toHex(keccak_256(new TextEncoder().encode(plain)));
+  return `0x${[...plain].map((c, i) => (Number.parseInt(hash[i], 16) >= 8 ? c.toUpperCase() : c)).join('')}`;
+};
+
+/** Stellar strkey: version byte, payload, CRC16-XModem, base32 without padding. */
+function strkey(publicKey) {
+  const payload = new Uint8Array(35);
+  payload[0] = 6 << 3; // account id, the "G" prefix
+  payload.set(publicKey, 1);
+  let crc = 0;
+  for (const byte of payload.subarray(0, 33)) {
+    crc ^= byte << 8;
+    for (let i = 0; i < 8; i++) crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff;
+  }
+  payload[33] = crc & 0xff;
+  payload[34] = (crc >> 8) & 0xff;
+  return base32.encode(payload).replace(/=+$/, '');
+}
+
+const BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+function base58Encode(bytes) {
+  let value = 0n;
+  for (const byte of bytes) value = (value << 8n) + BigInt(byte);
+  let out = '';
+  while (value > 0n) {
+    out = BASE58[Number(value % 58n)] + out;
+    value /= 58n;
+  }
+  for (const byte of bytes) {
+    if (byte !== 0) break;
+    out = `1${out}`;
+  }
+  return out;
+}
+
+/** Every network's address for this phrase. */
+export function accountsFrom(mnemonic) {
+  if (!validateMnemonic(mnemonic, wordlist)) throw new Error('That is not a valid 12-word recovery phrase.');
+  const seed = mnemonicToSeedSync(mnemonic);
+  const master = HDKey.fromMasterSeed(seed);
+  const out = {};
+
+  for (const [id, network] of Object.entries(NETWORKS)) {
+    if (network.curve === 'secp256k1') {
+      const node = master.derive(network.path);
+      if (id === 'bitcoin') {
+        out[id] = { address: btc.p2wpkh(node.publicKey, NETWORK).address, publicKey: toHex(node.publicKey), path: network.path };
+        continue;
+      }
+      const uncompressed = secp256k1.getPublicKey(node.privateKey, false).subarray(1);
+      const hash20 = keccak_256(uncompressed).subarray(-20);
+      out[id] = {
+        address: id === 'ethereum' ? eip55(hash20) : base58check(sha256).encode(new Uint8Array([0x41, ...hash20])),
+        publicKey: toHex(node.publicKey),
+        path: network.path,
+      };
+      continue;
+    }
+    const priv = ed25519Node(seed, network.path);
+    const pub = ed25519.getPublicKey(priv);
+    out[id] = {
+      address: id === 'solana' ? base58Encode(pub) : strkey(pub),
+      publicKey: toHex(pub),
+      path: network.path,
+    };
+    priv.fill(0);
+  }
+  return out;
 }
 
 /**
