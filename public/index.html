@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>QuVault</title>
-  <meta name="description" content="A testnet Bitcoin wallet sealed with post-quantum encryption and spendable only with your palm.">
+  <meta name="description" content="A testnet Bitcoin wallet sealed with post-quantum encryption and spendable only with palm approvals.">
   <link rel="icon" href="/qufi-mark.png" type="image/png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -33,7 +33,7 @@
 
   <main id="view-setup" class="view narrow" hidden>
     <p class="eyebrow">Setup</p>
-    <h1>QuVault needs two things</h1>
+    <h1>QuVault needs a few things</h1>
     <ol class="steps" id="setup-steps"></ol>
     <p class="fine">Restart or redeploy after setting them.</p>
   </main>
@@ -42,10 +42,10 @@
     <section class="pitch">
       <p class="eyebrow">Bitcoin <span id="pitch-network">testnet4</span> · Veyns palm</p>
       <h1>Your coins move<br><em>only for your hand.</em></h1>
-      <p class="lede">The wallet key is created under a palm scan and sealed with post-quantum encryption. Every withdrawal needs a fresh palm approval bound to that exact transaction.</p>
+      <p class="lede">The wallet key is created under a palm scan and sealed with post-quantum encryption. Every withdrawal needs palm approvals bound to that exact transaction — one palm, or several, by your own rules.</p>
       <ul class="facts">
         <li><b>ML-KEM-768 + X25519</b> seal the stored key</li>
-        <li><b>Palm approval</b> releases it, once, per transaction</li>
+        <li><b>Rules by amount</b> decide how many palms a spend needs</li>
         <li><b>Test coins only</b>, no real value</li>
       </ul>
     </section>
@@ -64,11 +64,14 @@
     <p class="lede">A new Bitcoin key is generated on the server and sealed immediately. The palm scan you do now binds the wallet to your account and is recorded with it.</p>
     <ul class="facts">
       <li>Nobody can spend from it without a palm approval</li>
-      <li>The sealed key can only be opened by this server, using post-quantum keys</li>
+      <li>You can add other approvers and amount rules afterwards</li>
       <li>You can receive coins straight away</li>
     </ul>
+    <label for="create-label">Your name on this wallet</label>
+    <input id="create-label" maxlength="40" placeholder="Alex" autocomplete="nickname">
     <button class="btn brand wide" id="create-wallet" type="button">Create wallet with a palm scan</button>
     <p class="error" id="create-error" role="alert"></p>
+    <div id="create-pending"></div>
   </main>
 
   <main id="view-wallet" class="view" hidden>
@@ -90,6 +93,11 @@
         </div>
         <p class="fine">Send test coins here from a testnet4 faucet. They appear after one confirmation.</p>
       </div>
+    </section>
+
+    <section class="lane" id="pending-lane" hidden>
+      <header class="lane-head"><h2>Waiting for approval</h2><p class="quiet">Each approver scans their own palm.</p></header>
+      <div class="requests" id="pending"></div>
     </section>
 
     <section class="lane">
@@ -114,6 +122,18 @@
     </section>
 
     <section class="lane">
+      <header class="lane-head">
+        <h2>Rules and approvers</h2>
+        <button class="btn ghost small" id="edit-rules" type="button">Change rules</button>
+      </header>
+      <div class="card rules">
+        <ul class="rule-list" id="rule-list"></ul>
+        <div class="members" id="member-list"></div>
+        <p class="fine">Your approver code: <code id="my-code"></code> <button class="link" id="copy-code" type="button">Copy</button> — give it to a wallet owner so they can add you.</p>
+      </div>
+    </section>
+
+    <section class="lane">
       <header class="lane-head"><h2>Activity</h2></header>
       <ol class="ledger" id="history"></ol>
     </section>
@@ -124,6 +144,7 @@
       <p class="eyebrow pulseline" id="approval-kind">Palm approval</p>
       <p class="statement" id="approval-statement"></p>
       <dl class="details" id="approval-details"></dl>
+      <p class="quorum" id="approval-quorum"></p>
 
       <div class="wait" id="approval-wait">
         <span class="pulse" aria-hidden="true"></span>
@@ -133,10 +154,41 @@
 
       <p class="error" id="approval-error" role="alert"></p>
       <div class="sheet-foot">
-        <p class="fine">Veyns shows this statement word for word. The signature covers this exact transaction.</p>
+        <p class="fine">Veyns shows this statement word for word. The signature covers this exact action.</p>
         <button class="link" id="approval-cancel" type="button">Cancel</button>
       </div>
     </div>
+  </dialog>
+
+  <dialog id="rules-editor" aria-labelledby="rules-title">
+    <form class="sheet" id="rules-form">
+      <p class="eyebrow" id="rules-title">Spending rules</p>
+      <p class="fine">Each row: amounts up to a limit need that many palm approvals. The last row covers everything above.</p>
+      <div class="rule-rows" id="rule-rows"></div>
+      <button class="link" id="add-rule" type="button">Add a step</button>
+
+      <p class="eyebrow spaced">Approvers</p>
+      <div class="member-rows" id="member-rows"></div>
+      <div class="two">
+        <div>
+          <label for="new-member-code">Add by approver code</label>
+          <input id="new-member-code" autocomplete="off" spellcheck="false" placeholder="their code">
+        </div>
+        <div>
+          <label for="new-member-label">Their name</label>
+          <input id="new-member-label" maxlength="40" placeholder="Bob">
+        </div>
+      </div>
+
+      <p class="error" id="rules-error" role="alert"></p>
+      <div class="sheet-foot">
+        <p class="fine" id="rules-required"></p>
+        <div class="row">
+          <button class="link" id="rules-cancel" type="button">Cancel</button>
+          <button class="btn brand small" type="submit">Propose change</button>
+        </div>
+      </div>
+    </form>
   </dialog>
 
   <p class="toast" id="toast" role="status" aria-live="polite" hidden></p>

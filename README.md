@@ -38,13 +38,32 @@ Fill in `.env`:
 
 Get test coins from a testnet4 faucet, send them to the address on the page, and they appear after one confirmation.
 
+## Rules and approvers
+
+Each wallet carries a list of approvers and a ladder of amount rules, for example:
+
+| Amount | Approvals |
+|---|---|
+| Up to 100,000 sats | 1 palm |
+| Up to 5,000,000 sats | 2 palms |
+| Anything larger | 3 palms |
+
+One approver and one rule is an ordinary personal wallet. Add people by their **approver code**, shown on their own wallet page after they sign in once.
+
+Two things keep the rules honest:
+
+- **Changing the rules is itself palm-approved**, at the strongest quorum the *current* rules ask for. Going from two palms back to one needs two palms.
+- **Every approver signs the same exact action.** The digest covers the statement and all its details, so approvals of different transactions can never add up to a quorum. A request that never gathers its quorum expires after 30 minutes, and any palm requests still waiting at Veyns are cancelled.
+
+Larger amounts can never be set to need fewer approvals than smaller ones, and no rule can ask for more approvals than there are approvers.
+
 ## How a withdrawal works
 
 1. You enter an address and an amount. The server reads your confirmed coins and the current fee rate, then **plans** the spend: exact inputs, exact outputs, exact fee.
 2. The plan is stored and turned into a Veyns action. Its digest covers the statement and every detail.
 3. Veyns sends the request to your phone. You review it and scan your palm.
 4. The server checks the signed decision: your account, this request, this challenge, `amr` contains `veyns:palm`, the digest matches the stored plan, and the scan is fresh.
-5. Only then is the sealed key opened, the **stored plan** signed (coin selection never runs again) and the transaction broadcast. The approval row is claimed in one conditional update, so a decision can be used once and only once.
+5. When the last approval the rules ask for has landed, the sealed key is opened, the **stored plan** is signed (coin selection never runs again) and the transaction is broadcast. Claiming the approval and claiming the right to run the operation are each a single conditional update, so a decision is used once and a transaction is sent once, however many people poll at the same moment.
 6. The key is wiped from memory, and the transaction id is recorded.
 
 A failed broadcast is recorded as failed with the network's own message; no coins move.

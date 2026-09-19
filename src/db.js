@@ -29,14 +29,49 @@ const SCHEMA = [
     bound_decision TEXT NOT NULL,               -- Veyns decision id from the palm scan that created it
     created_at  BIGINT NOT NULL
   )`,
+  // v2 replaced one-approval-per-action with operations that collect a quorum of palm approvals.
+  // Nothing of value was stored under v1: a wallet only ever existed with an approval attached.
+  `DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'approvals' AND column_name = 'kind') THEN
+      DROP TABLE approvals;
+    END IF;
+  END $$`,
+  'ALTER TABLE wallets ADD COLUMN IF NOT EXISTS policy TEXT',
+
+  `CREATE TABLE IF NOT EXISTS members (
+    wallet_user_id TEXT NOT NULL REFERENCES users(id),   -- the wallet this person can approve for
+    member_id      TEXT NOT NULL REFERENCES users(id),
+    label          TEXT NOT NULL,
+    is_owner       BOOLEAN NOT NULL DEFAULT false,
+    added_at       BIGINT NOT NULL,
+    PRIMARY KEY (wallet_user_id, member_id)
+  )`,
+  'CREATE INDEX IF NOT EXISTS members_member ON members (member_id)',
+
+  `CREATE TABLE IF NOT EXISTS operations (
+    id             TEXT PRIMARY KEY,
+    seq            BIGSERIAL,                            -- order of events, when two share a timestamp
+    wallet_user_id TEXT NOT NULL REFERENCES users(id),
+    started_by     TEXT NOT NULL REFERENCES users(id),
+    kind           TEXT NOT NULL CHECK (kind IN ('create', 'withdraw', 'policy')),
+    statement      TEXT NOT NULL,
+    details        TEXT NOT NULL,
+    digest         TEXT NOT NULL,                        -- every approver signs this exact action
+    payload        TEXT,                                 -- the spend plan, or the proposed policy
+    required       INTEGER NOT NULL CHECK (required >= 1),
+    status         TEXT NOT NULL CHECK (status IN ('collecting', 'running', 'done', 'failed', 'cancelled')),
+    txid           TEXT,
+    error          TEXT,
+    created_at     BIGINT NOT NULL,
+    expires_at     BIGINT NOT NULL,
+    closed_at      BIGINT
+  )`,
+  'CREATE INDEX IF NOT EXISTS operations_wallet ON operations (wallet_user_id, status)',
+
   `CREATE TABLE IF NOT EXISTS approvals (
     id           TEXT PRIMARY KEY,              -- also the Veyns idempotency key and operation id
+    operation_id TEXT NOT NULL REFERENCES operations(id),
     user_id      TEXT NOT NULL REFERENCES users(id),
-    kind         TEXT NOT NULL CHECK (kind IN ('create', 'withdraw')),
-    statement    TEXT NOT NULL,
-    details      TEXT NOT NULL,
-    digest       TEXT NOT NULL,
-    plan         TEXT,                          -- withdrawals: the exact inputs, outputs and fee approved
     status       TEXT NOT NULL CHECK (status IN ('open', 'approved', 'failed', 'cancelled')),
     request_id   TEXT,
     challenge    TEXT,
@@ -44,12 +79,12 @@ const SCHEMA = [
     decision_id  TEXT,
     acked        BOOLEAN NOT NULL DEFAULT false,
     proof_id     TEXT UNIQUE,                   -- one palm decision settles one approval
-    txid         TEXT,
     error        TEXT,
     created_at   BIGINT NOT NULL,
     closed_at    BIGINT
   )`,
-  'CREATE INDEX IF NOT EXISTS approvals_user ON approvals (user_id, status)',
+  'CREATE UNIQUE INDEX IF NOT EXISTS approvals_one_per_person ON approvals (operation_id, user_id)',
+  'CREATE INDEX IF NOT EXISTS approvals_operation ON approvals (operation_id, status)',
 ];
 
 const INT8 = 20; // Timestamps are BIGINT; read them back as numbers.

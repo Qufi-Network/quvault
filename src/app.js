@@ -8,12 +8,14 @@ import { createVeyns, actionDigest, isFresh, randomId, HttpError } from './veyns
 import { serverKeys, seal, open as openSealed } from './vault.js';
 import { createChain, ChainError } from './chain.js';
 import { createKey, publicKeyOf, addressOf, planSpend, signPlan, isValidAddress, toBtc, WalletError } from './bitcoin.js';
+import { DEFAULT_POLICY, PolicyError, describePolicy, requiredFor, requiredToChange, validatePolicy } from './policy.js';
 
 const SESSION_COOKIE = 'palmsafe_sid';
 const LOGIN_COOKIE = 'palmsafe_login';
 const SESSION_SECONDS = 7 * 24 * 3600;
 const LOGIN_SECONDS = 300;
 const PALM_REQUEST_SECONDS = 300;
+const OPERATION_SECONDS = 1800; // how long a quorum has to come together
 
 const STATIC_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -25,6 +27,7 @@ const STATIC_TYPES = {
 
 const SQL = {
   userBySub: 'SELECT * FROM users WHERE sub = $1',
+  userById: 'SELECT * FROM users WHERE id = $1',
   insertUser: 'INSERT INTO users (id, sub, created_at) VALUES ($1, $2, $3) ON CONFLICT (sub) DO NOTHING',
 
   insertSession: 'INSERT INTO sessions (id_hash, user_id, expires_at) VALUES ($1, $2, $3)',
@@ -36,29 +39,46 @@ const SQL = {
   purgeLogins: 'DELETE FROM login_nonces WHERE expires_at <= $1',
 
   walletOf: 'SELECT * FROM wallets WHERE user_id = $1',
-  insertWallet: `INSERT INTO wallets (user_id, network, address, public_key, sealed_key, bound_sub, bound_decision, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (user_id) DO NOTHING`,
+  insertWallet: `INSERT INTO wallets (user_id, network, address, public_key, sealed_key, bound_sub, bound_decision, policy, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (user_id) DO NOTHING`,
+  setPolicy: 'UPDATE wallets SET policy = $1 WHERE user_id = $2',
 
+  membersOf: 'SELECT * FROM members WHERE wallet_user_id = $1 ORDER BY is_owner DESC, added_at',
+  memberIn: 'SELECT * FROM members WHERE wallet_user_id = $1 AND member_id = $2',
+  walletsForMember: 'SELECT wallet_user_id FROM members WHERE member_id = $1',
+  insertMember: `INSERT INTO members (wallet_user_id, member_id, label, is_owner, added_at) VALUES ($1, $2, $3, $4, $5)
+                 ON CONFLICT (wallet_user_id, member_id) DO UPDATE SET label = EXCLUDED.label`,
+  deleteMember: 'DELETE FROM members WHERE wallet_user_id = $1 AND member_id = $2 AND is_owner = false',
+
+  insertOperation: `INSERT INTO operations (id, wallet_user_id, started_by, kind, statement, details, digest, payload, required, status, created_at, expires_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'collecting', $10, $11)`,
+  operationById: 'SELECT * FROM operations WHERE id = $1',
+  openOperationsFor: `SELECT * FROM operations WHERE wallet_user_id = ANY($1) AND status IN ('collecting', 'running') ORDER BY seq`,
+  closedOperationsFor: `SELECT * FROM operations WHERE wallet_user_id = ANY($1) AND status IN ('done', 'failed', 'cancelled')
+                        ORDER BY seq DESC LIMIT 12`,
+  openOperationOfKind: `SELECT * FROM operations WHERE wallet_user_id = $1 AND kind = $2 AND status = 'collecting' ORDER BY seq DESC LIMIT 1`,
+  startRunning: `UPDATE operations SET status = 'running' WHERE id = $1 AND status = 'collecting'`,
+  finishOperation: 'UPDATE operations SET status = $1, txid = $2, error = $3, closed_at = $4 WHERE id = $5',
+  cancelOperation: `UPDATE operations SET status = 'cancelled', error = $1, closed_at = $2 WHERE id = $3 AND status = 'collecting'`,
+  expireOperations: `UPDATE operations SET status = 'failed', error = 'Not enough palm approvals in time.', closed_at = $1
+                     WHERE status = 'collecting' AND expires_at <= $1 RETURNING id`,
+
+  approvalsOf: `SELECT a.*, u.id AS member_id FROM approvals a JOIN users u ON u.id = a.user_id WHERE a.operation_id = $1`,
   approvalById: 'SELECT * FROM approvals WHERE id = $1',
+  myApproval: 'SELECT * FROM approvals WHERE operation_id = $1 AND user_id = $2',
   ownApproval: 'SELECT * FROM approvals WHERE id = $1 AND user_id = $2',
-  openApprovalOf: `SELECT * FROM approvals WHERE user_id = $1 AND kind = $2 AND status = 'open' ORDER BY created_at DESC LIMIT 1`,
-  insertApproval: `INSERT INTO approvals (id, user_id, kind, statement, details, digest, plan, status, created_at)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, 'open', $8)`,
-  cancelOpenApprovals: `UPDATE approvals SET status = 'cancelled', closed_at = $1
-                        WHERE user_id = $2 AND kind = $3 AND status = 'open' RETURNING id, request_id`,
+  insertApproval: `INSERT INTO approvals (id, operation_id, user_id, status, created_at) VALUES ($1, $2, $3, 'open', $4)`,
+  countApproved: `SELECT count(*)::int AS n FROM approvals WHERE operation_id = $1 AND status = 'approved'`,
   closeApproval: `UPDATE approvals SET status = $1, error = $2, closed_at = $3 WHERE id = $4 AND status = 'open'`,
   claimApproval: `UPDATE approvals SET status = 'approved', proof_id = $1, closed_at = $2 WHERE id = $3 AND status = 'open'`,
+  cancelApprovalsOf: `UPDATE approvals SET status = 'cancelled', closed_at = $1 WHERE operation_id = $2 AND status = 'open' RETURNING request_id`,
   setPalmRequest: `UPDATE approvals SET request_id = $1, challenge = $2, approval_url = $3 WHERE id = $4 AND status = 'open'`,
   setDecision: 'UPDATE approvals SET decision_id = $1 WHERE id = $2',
   markAcked: 'UPDATE approvals SET acked = true WHERE id = $1',
-  setTxid: 'UPDATE approvals SET txid = $1 WHERE id = $2',
-  setFailure: `UPDATE approvals SET status = 'failed', error = $1 WHERE id = $2`,
-  recentWithdrawals: `SELECT id, statement, status, txid, error, plan, created_at FROM approvals
-                      WHERE user_id = $1 AND kind = 'withdraw' AND status IN ('approved', 'failed')
-                      ORDER BY created_at DESC LIMIT 10`,
 };
 
 const sha256 = value => crypto.createHash('sha256').update(value).digest('base64url');
+const fmtSats = n => Number(n).toLocaleString('en-US');
 
 function parseCookies(header = '') {
   const cookies = {};
@@ -171,19 +191,9 @@ export function createApp(options) {
     return (await database()).transaction(raw => fn((name, ...params) => raw(SQL[name], params)));
   }
 
-  /* --------------------------------------------------------------- views */
+  const policyOf = wallet => (wallet?.policy ? JSON.parse(wallet.policy) : DEFAULT_POLICY);
 
-  const approvalView = (a, remoteStatus = null) => ({
-    id: a.id,
-    kind: a.kind,
-    statement: a.statement,
-    details: JSON.parse(a.details),
-    status: a.status,
-    error: a.error,
-    txid: a.txid,
-    remoteStatus,
-    approvalUrl: a.status === 'open' ? a.approval_url : null,
-  });
+  /* --------------------------------------------------------------- views */
 
   const walletView = w => ({
     address: w.address,
@@ -193,12 +203,36 @@ export function createApp(options) {
     protection: 'ML-KEM-768 + X25519 + AES-256-GCM',
   });
 
+  const memberView = m => ({ id: m.member_id, label: m.label, owner: m.is_owner });
+
+  const operationView = (op, approvals, me) => ({
+    id: op.id,
+    kind: op.kind,
+    statement: op.statement,
+    details: JSON.parse(op.details),
+    status: op.status,
+    required: op.required,
+    approvedBy: approvals.filter(a => a.status === 'approved').map(a => a.user_id),
+    approvals: approvals.map(a => ({ id: a.id, userId: a.user_id, status: a.status, error: a.error })),
+    mine: approvals.find(a => a.user_id === me?.id) ? {
+      id: approvals.find(a => a.user_id === me.id).id,
+      status: approvals.find(a => a.user_id === me.id).status,
+      approvalUrl: approvals.find(a => a.user_id === me.id).status === 'open'
+        ? approvals.find(a => a.user_id === me.id).approval_url : null,
+    } : null,
+    txid: op.txid,
+    error: op.error,
+    startedBy: op.started_by,
+    walletOwner: op.wallet_user_id,
+    createdAt: op.created_at,
+    expiresAt: op.expires_at,
+  });
+
   /* ------------------------------------------------------------- helpers */
 
   const requireConfigured = () => {
     if (!clientId) throw new HttpError(409, 'Set VEYNS_CLIENT_ID first.');
   };
-
   const requirePalmReady = () => {
     if (!veyns.palmEnabled()) throw new HttpError(503, 'Palm approvals are not set up: add VEYNS_BACKEND_SECRET.');
   };
@@ -219,42 +253,117 @@ export function createApp(options) {
   }
 
   const approvalSubject = sub => (sub.startsWith('pairwise:') ? sub : `pairwise:${clientId}:${sub}`);
-  const failApproval = (id, message) => query('closeApproval', 'failed', message, now(), id);
+  let subjectForm = null; // which naming Veyns accepted, remembered per instance
 
-  /** Builds the exact action a palm scan will sign, replacing any earlier open one of the same kind. */
-  async function newApproval(user, kind, statement, details, plan = null) {
+  /** Asks Veyns for a palm request, trying both ways the service has accepted a subject. */
+  async function createPalmRequest(a, user, op) {
+    const forms = [
+      { name: 'pairwise', subject: approvalSubject(user.sub), key: a.id },
+      { name: 'plain', subject: user.sub, key: `${a.id}-plain` },
+    ].filter(form => (subjectForm ? form.name === subjectForm : true));
+    if (forms.length === 2 && forms[0].subject === forms[1].subject) forms.pop();
+
+    const refusals = [];
+    for (const form of forms) {
+      try {
+        const remote = await veyns.backend('/v1/approvals', {
+          subject: form.subject,
+          idempotency_key: form.key,
+          expires_in: PALM_REQUEST_SECONDS,
+          action: { statement: op.statement, details: JSON.parse(op.details) },
+        }, { 'idempotency-key': form.key });
+        subjectForm = form.name;
+        return remote;
+      } catch (error) {
+        if (error.status !== 400) throw error;
+        refusals.push(`${form.name} (${form.subject.length} characters): ${error.message}`);
+      }
+    }
+    subjectForm = null;
+    throw new HttpError(400, `Veyns refused the palm request both ways. ${refusals.join(' — ')} `
+      + 'Check that this account has its palm scanner connected and is admitted to the palm pilot.');
+  }
+
+  /** Ends operations whose quorum never arrived. Runs before every signed-in request. */
+  async function expireOperations() {
+    const time = now();
+    const closed = await transaction(async q => {
+      const rows = [];
+      for (const op of (await q('expireOperations', time)).rows) {
+        rows.push(...(await q('cancelApprovalsOf', time, op.id)).rows);
+      }
+      return rows;
+    });
+    cancelRemote(closed);
+  }
+
+  async function walletsVisibleTo(user) {
+    const memberships = await all('walletsForMember', user.id);
+    const ids = new Set(memberships.map(m => m.wallet_user_id));
+    ids.add(user.id); // your own wallet, even before any member row exists
+    return [...ids];
+  }
+
+  /** The people who may approve for this wallet, and what a spend of `sats` needs. */
+  async function quorumFor(walletOwnerId, sats) {
+    const wallet = await one('walletOf', walletOwnerId);
+    const members = await all('membersOf', walletOwnerId);
+    const policy = policyOf(wallet);
+    const { approvals, rule } = requiredFor(policy, sats);
+    return { wallet, members, policy, required: Math.min(approvals, Math.max(1, members.length)), rule };
+  }
+
+  async function newOperation({ walletOwnerId, user, kind, statement, details, payload = null, required = 1 }) {
     const id = randomId(16);
     const time = now();
     const replaced = await transaction(async q => {
-      const closed = (await q('cancelOpenApprovals', time, user.id, kind)).rows;
-      await q('insertApproval', id, user.id, kind, statement, JSON.stringify(details),
-        actionDigest(statement, details), plan && JSON.stringify(plan), time);
+      const previous = (await q('openOperationOfKind', walletOwnerId, kind)).rows[0];
+      let closed = [];
+      if (previous) {
+        await q('cancelOperation', 'Replaced by a newer request.', time, previous.id);
+        closed = (await q('cancelApprovalsOf', time, previous.id)).rows;
+      }
+      await q('insertOperation', id, walletOwnerId, user.id, kind, statement, JSON.stringify(details),
+        actionDigest(statement, details), payload && JSON.stringify(payload), required, time, time + OPERATION_SECONDS);
       return closed;
     });
     cancelRemote(replaced);
-    return one('approvalById', id);
+    return one('operationById', id);
   }
 
-  /* -------------------------------------------------- the two palm actions */
+  /* ------------------------------------------ what a finished quorum does */
 
-  /** Creates the wallet key, sealed to this server, and binds it to the palm-verified account. */
-  async function createWallet(a, user, decisionId) {
-    if (await one('walletOf', user.id)) throw new HttpError(409, 'This account already has a wallet.');
+  async function createWallet(op, decisionId) {
+    const owner = await one('userById', op.wallet_user_id);
+    if (await one('walletOf', owner.id)) throw new HttpError(409, 'This account already has a wallet.');
     const keys = vault();
     const privateKey = createKey();
     const publicKey = publicKeyOf(privateKey);
     const address = addressOf(publicKey);
-    await query('insertWallet', user.id, network, address, publicKey.toString('hex'),
-      seal(privateKey, keys), user.sub, decisionId, now());
+    await query('insertWallet', owner.id, network, address, publicKey.toString('hex'),
+      seal(privateKey, keys), owner.sub, decisionId, JSON.stringify(DEFAULT_POLICY), now());
     privateKey.fill(0);
-    return one('walletOf', user.id);
+    await query('insertMember', owner.id, owner.id, JSON.parse(op.details).owner_label || 'Owner', true, now());
+    return { txid: null };
   }
 
-  /** Signs exactly the approved plan with the unsealed key and broadcasts it. */
-  async function broadcastApproved(a, user) {
-    const wallet = await one('walletOf', user.id);
+  async function applyPolicy(op) {
+    const payload = JSON.parse(op.payload);
+    const time = now();
+    await transaction(async q => {
+      await q('setPolicy', JSON.stringify({ rules: payload.rules }), op.wallet_user_id);
+      for (const member of payload.members) {
+        await q('insertMember', op.wallet_user_id, member.id, member.label, member.owner, time);
+      }
+      for (const id of payload.removed ?? []) await q('deleteMember', op.wallet_user_id, id);
+    });
+    return { txid: null };
+  }
+
+  async function broadcastPlan(op) {
+    const wallet = await one('walletOf', op.wallet_user_id);
     if (!wallet) throw new HttpError(409, 'This account has no wallet.');
-    const plan = JSON.parse(a.plan);
+    const plan = JSON.parse(op.payload);
     const privateKey = openSealed(wallet.sealed_key, vault());
     let signed;
     try {
@@ -262,9 +371,22 @@ export function createApp(options) {
     } finally {
       privateKey.fill(0);
     }
-    const txid = await chain.broadcast(signed.hex);
-    await query('setTxid', txid, a.id);
-    return txid;
+    return { txid: await chain.broadcast(signed.hex) };
+  }
+
+  /** Runs the operation once the last needed approval has landed. */
+  async function runOperation(op, decisionId) {
+    const time = now();
+    try {
+      const { txid } = op.kind === 'create' ? await createWallet(op, decisionId)
+        : op.kind === 'policy' ? await applyPolicy(op)
+        : await broadcastPlan(op);
+      await query('finishOperation', 'done', txid, null, time, op.id);
+    } catch (error) {
+      const known = error instanceof HttpError || error instanceof ChainError || error instanceof WalletError;
+      if (!known) log.error(error);
+      await query('finishOperation', 'failed', null, known ? error.message : 'The action could not be completed.', time, op.id);
+    }
   }
 
   /* ------------------------------------------------------------ handlers */
@@ -280,7 +402,6 @@ export function createApp(options) {
       requirePalmSignin,
       network,
       vaultReady: Boolean(walletSeed),
-      // Which environment variable the database came from; never its value.
       databaseVariable: options.databaseVariable ?? (databaseUrl ? 'local' : null),
       databaseCandidates: options.databaseCandidates ?? [],
     };
@@ -325,28 +446,35 @@ export function createApp(options) {
     return { ok: true };
   }
 
-  /** Wallet, balance, coins and history. Bitcoin service trouble is reported, never fatal. */
+  /** Everything the page shows: the wallet you own, what you can approve for, and the rules. */
   async function getWallet({ user }) {
-    const wallet = await one('walletOf', user.id);
-    const openCreate = await one('openApprovalOf', user.id, 'create');
-    const withdrawals = (await all('recentWithdrawals', user.id)).map(w => ({
-      id: w.id,
-      statement: w.statement,
-      status: w.status,
-      txid: w.txid,
-      error: w.error,
-      at: w.created_at,
-      explorer: w.txid ? chain.explorerTx(w.txid) : null,
-    }));
-    if (!wallet) {
-      return { wallet: null, openApproval: openCreate ? approvalView(openCreate) : null, withdrawals };
+    const visible = await walletsVisibleTo(user);
+    const [wallet, members, open, closed] = await Promise.all([
+      one('walletOf', user.id),
+      all('membersOf', user.id),
+      all('openOperationsFor', visible),
+      all('closedOperationsFor', visible),
+    ]);
+
+    const withApprovals = async op => operationView(op, await all('approvalsOf', op.id), user);
+    const labels = {};
+    for (const id of visible) {
+      for (const m of await all('membersOf', id)) labels[m.member_id] = m.label;
     }
 
-    const view = { wallet: walletView(wallet), openApproval: null, withdrawals };
-    const openWithdraw = await one('openApprovalOf', user.id, 'withdraw');
-    if (openWithdraw) view.openApproval = approvalView(openWithdraw);
+    const view = {
+      me: { id: user.id, code: user.id },
+      wallet: wallet ? walletView(wallet) : null,
+      policy: wallet ? policyOf(wallet) : null,
+      members: members.map(memberView),
+      labels,
+      pending: await Promise.all(open.map(withApprovals)),
+      history: await Promise.all(closed.map(withApprovals)),
+    };
+
+    if (!wallet) return view;
     try {
-      const [balance, utxos, history, feeRate, qr] = await Promise.all([
+      const [balance, utxos, txs, feeRate, qr] = await Promise.all([
         chain.balance(wallet.address),
         chain.spendableUtxos(wallet.address),
         chain.history(wallet.address),
@@ -356,7 +484,7 @@ export function createApp(options) {
       view.balance = balance;
       view.spendable = utxos.reduce((sum, u) => sum + u.value, 0);
       view.coins = utxos.length;
-      view.history = history.map(h => ({ ...h, explorer: chain.explorerTx(h.txid) }));
+      view.chainHistory = txs.map(h => ({ ...h, explorer: chain.explorerTx(h.txid) }));
       view.feeRate = feeRate;
       view.qr = qr;
     } catch (error) {
@@ -366,17 +494,65 @@ export function createApp(options) {
     return view;
   }
 
-  /** Step one of owning a wallet: a palm scan that creates and binds the key. */
-  async function requestWallet({ user }) {
+  async function requestWallet({ user, body }) {
     requirePalmReady();
     vault();
     if (await one('walletOf', user.id)) throw new HttpError(409, 'This account already has a wallet.');
+    const label = String(body.label ?? 'Owner').replace(/\s+/g, ' ').trim().slice(0, 40) || 'Owner';
     const statement = `Create a ${network} Bitcoin wallet that only my palm can spend from`;
-    const details = { action: 'create wallet', network, spending_rule: 'palm approval required for every withdrawal' };
-    return { approval: approvalView(await newApproval(user, 'create', statement, details)) };
+    const details = { action: 'create wallet', network, owner_label: label, spending_rule: 'palm approval required for every withdrawal' };
+    const op = await newOperation({ walletOwnerId: user.id, user, kind: 'create', statement, details, required: 1 });
+    return { operation: operationView(op, [], user) };
   }
 
-  /** Step two: plan an exact spend, to be signed only after a palm scan. */
+  /** Proposes new rules and/or approvers. The change itself is palm-approved. */
+  async function requestPolicy({ user, body }) {
+    requirePalmReady();
+    const wallet = await one('walletOf', user.id);
+    if (!wallet) throw new HttpError(409, 'Create the wallet first.');
+    const current = await all('membersOf', user.id);
+
+    const keep = new Map(current.map(m => [m.member_id, { id: m.member_id, label: m.label, owner: m.is_owner }]));
+    for (const id of body.remove ?? []) {
+      const member = keep.get(String(id));
+      if (!member) continue;
+      if (member.owner) throw new HttpError(400, 'The owner cannot be removed.');
+      keep.delete(String(id));
+    }
+    for (const entry of body.add ?? []) {
+      const code = String(entry.code ?? '').trim();
+      const label = String(entry.label ?? '').replace(/\s+/g, ' ').trim().slice(0, 40);
+      if (!label) throw new HttpError(400, 'Give each approver a name.');
+      const person = await one('userById', code);
+      if (!person) throw new HttpError(400, `No one has the approver code "${code}". They must sign in to QuVault once first.`);
+      keep.set(person.id, { id: person.id, label, owner: person.id === user.id });
+    }
+
+    const members = [...keep.values()];
+    if (!members.some(m => m.owner)) throw new HttpError(400, 'The owner must stay an approver.');
+    let policy;
+    try {
+      // Accept either a bare list of rules or a whole policy object.
+      const proposed = Array.isArray(body.rules) ? { rules: body.rules } : body.rules ?? policyOf(wallet);
+      policy = validatePolicy(proposed, members.length);
+    } catch (error) {
+      if (error instanceof PolicyError) throw new HttpError(400, error.message);
+      throw error;
+    }
+
+    const removed = current.filter(m => !keep.has(m.member_id)).map(m => m.member_id);
+    const summary = describePolicy(policy, members);
+    const statement = `Change the spending rules of my ${network} wallet`;
+    const details = { action: 'change spending rules', network, rules: summary, approvers: members.length };
+    const required = requiredToChange(policyOf(wallet), current.length);
+    const op = await newOperation({
+      walletOwnerId: user.id, user, kind: 'policy', statement, details,
+      payload: { rules: policy.rules, members, removed }, required,
+    });
+    return { operation: operationView(op, [], user), policy, members };
+  }
+
+  /** Plans an exact spend and works out how many palms it needs. */
   async function requestWithdrawal({ user, body }) {
     requirePalmReady();
     const wallet = await one('walletOf', user.id);
@@ -398,6 +574,8 @@ export function createApp(options) {
       throw error;
     }
 
+    const leaving = plan.sentSats + plan.feeSats;
+    const { members, required, rule } = await quorumFor(user.id, leaving);
     const statement = `Send ${toBtc(plan.sentSats)} tBTC to ${to}`;
     const details = {
       action: 'withdraw',
@@ -408,30 +586,41 @@ export function createApp(options) {
       fee_rate: `${plan.feeRate} sat/vB`,
       spends: plan.inputs.map(i => `${i.txid}:${i.index}`).join(' '),
       change_sats: plan.changeSats,
+      approvals_required: `${required} of ${members.length} approver${members.length === 1 ? '' : 's'}`,
     };
-    return { approval: approvalView(await newApproval(user, 'withdraw', statement, details, plan)), plan };
+    const op = await newOperation({ walletOwnerId: user.id, user, kind: 'withdraw', statement, details, payload: plan, required });
+    return { operation: operationView(op, [], user), plan, rule };
   }
 
-  /** Sends the request to the person's Veyns app; only a palm scan can approve it. */
-  async function startPalm({ user, params: [id] }) {
-    requirePalmReady();
-    const a = await ownApproval(id, user);
-    if (a.status !== 'open') throw new HttpError(409, 'This approval is already closed.');
-    if (a.request_id) return { approval: approvalView(a) };
+  async function ownOperation(id, user) {
+    const op = await one('operationById', id);
+    if (!op) throw new HttpError(404, 'Request not found.');
+    const allowed = op.wallet_user_id === user.id || await one('memberIn', op.wallet_user_id, user.id);
+    if (!allowed) throw new HttpError(404, 'Request not found.');
+    return op;
+  }
 
-    const remote = await veyns.backend('/v1/approvals', {
-      subject: approvalSubject(user.sub),
-      idempotency_key: a.id,
-      expires_in: PALM_REQUEST_SECONDS,
-      action: { statement: a.statement, details: JSON.parse(a.details) },
-    }, { 'idempotency-key': a.id });
-    if (remote.action?.digest !== a.digest) {
-      await failApproval(a.id, 'Veyns described a different action.');
-      cancelRemote([remote]);
-      throw new HttpError(502, 'Veyns described a different action. Nothing was approved.');
+  /** Puts your name to a pending request: creates your own approval row. */
+  async function joinOperation({ user, params: [id] }) {
+    requirePalmReady();
+    const op = await ownOperation(id, user);
+    if (op.status !== 'collecting') throw new HttpError(409, 'This request is no longer collecting approvals.');
+    if (op.expires_at <= now()) throw new HttpError(409, 'This request has expired.');
+    if (op.kind !== 'create') {
+      const member = await one('memberIn', op.wallet_user_id, user.id);
+      if (!member) throw new HttpError(403, 'You are not an approver for this wallet.');
+    } else if (op.wallet_user_id !== user.id) {
+      throw new HttpError(403, 'Only the owner can create this wallet.');
     }
-    await query('setPalmRequest', remote.request_id, remote.challenge, remote.approval_url, a.id);
-    return { approval: approvalView(await one('approvalById', a.id)) };
+
+    const existing = await one('myApproval', op.id, user.id);
+    if (existing) {
+      if (existing.status === 'approved') throw new HttpError(409, 'You have already approved this.');
+      if (existing.status === 'open') return { approval: { id: existing.id, status: existing.status } };
+    }
+    const approvalId = randomId(16);
+    await query('insertApproval', approvalId, op.id, user.id, now());
+    return { approval: { id: approvalId, status: 'open' } };
   }
 
   async function ownApproval(id, user) {
@@ -440,13 +629,45 @@ export function createApp(options) {
     return a;
   }
 
+  async function startPalm({ user, params: [id] }) {
+    requirePalmReady();
+    const a = await ownApproval(id, user);
+    if (a.status !== 'open') throw new HttpError(409, 'This approval is already closed.');
+    if (a.request_id) return { approval: { id: a.id, status: a.status, approvalUrl: a.approval_url } };
+    const op = await one('operationById', a.operation_id);
+    if (op.status !== 'collecting') throw new HttpError(409, 'This request is no longer collecting approvals.');
+
+    const remote = await createPalmRequest(a, user, op);
+    if (remote.action?.digest !== op.digest) {
+      await query('closeApproval', 'failed', 'Veyns described a different action.', now(), a.id);
+      cancelRemote([remote]);
+      throw new HttpError(502, 'Veyns described a different action. Nothing was approved.');
+    }
+    await query('setPalmRequest', remote.request_id, remote.challenge, remote.approval_url, a.id);
+    return { approval: { id: a.id, status: 'open', approvalUrl: remote.approval_url } };
+  }
+
   async function cancelApproval({ user, params: [id] }) {
     const a = await ownApproval(id, user);
     if (a.status === 'open') {
       await query('closeApproval', 'cancelled', null, now(), a.id);
       cancelRemote([a]);
     }
-    return { approval: approvalView(await one('approvalById', a.id)) };
+    return { ok: true };
+  }
+
+  async function cancelOperation({ user, params: [id] }) {
+    const op = await ownOperation(id, user);
+    if (op.started_by !== user.id && op.wallet_user_id !== user.id) {
+      throw new HttpError(403, 'Only the person who started this, or the wallet owner, can cancel it.');
+    }
+    const time = now();
+    const closed = await transaction(async q => {
+      await q('cancelOperation', 'Cancelled.', time, op.id);
+      return (await q('cancelApprovalsOf', time, op.id)).rows;
+    });
+    cancelRemote(closed);
+    return { ok: true };
   }
 
   async function readApproval({ user, params: [id] }) {
@@ -456,20 +677,25 @@ export function createApp(options) {
     if (a.status === 'open' && a.request_id) {
       const remote = await veyns.backend(`/v1/approvals/${encodeURIComponent(a.request_id)}`);
       remoteStatus = remote.status;
-      if (remote.status === 'approved') {
-        await settlePalm(a, user, remote);
-      } else if (!['pending', 'verifying'].includes(remote.status)) {
-        await failApproval(a.id, `The palm approval was ${remote.status}.`);
+      if (remote.status === 'approved') await settlePalm(a, user, remote);
+      else if (!['pending', 'verifying'].includes(remote.status)) {
+        await query('closeApproval', 'failed', `The palm approval was ${remote.status}.`, now(), a.id);
       }
       a = await one('approvalById', a.id);
     }
     if (a.decision_id && !a.acked) await acknowledge(a);
-    return { approval: approvalView(await one('approvalById', a.id), remoteStatus) };
+
+    const op = await one('operationById', a.operation_id);
+    return {
+      approval: { id: a.id, status: a.status, error: a.error, remoteStatus, approvalUrl: a.status === 'open' ? a.approval_url : null },
+      operation: operationView(op, await all('approvalsOf', op.id), user),
+    };
   }
 
-  /** Checks the signed palm decision, then performs the action it authorised. */
+  /** Checks the signed palm decision, records it, and runs the operation when the quorum is complete. */
   async function settlePalm(a, user, remote) {
-    const fail = reason => failApproval(a.id, `Palm decision rejected: ${reason}.`);
+    const fail = reason => query('closeApproval', 'failed', `Palm decision rejected: ${reason}.`, now(), a.id);
+    const op = await one('operationById', a.operation_id);
     let claims;
     try {
       claims = await veyns.verifyToken(remote.decision);
@@ -483,24 +709,22 @@ export function createApp(options) {
       : claims.request_nonce !== a.challenge ? 'different challenge'
       : claims.veyns_intent !== 'action' ? 'not an approval'
       : !(claims.amr || []).includes('veyns:palm') ? 'not a palm scan'
-      : claims.veyns_action?.digest !== a.digest ? 'different action'
+      : claims.veyns_action?.digest !== op.digest ? 'different action'
       : !isFresh(claims.auth_time, a.created_at, now()) ? 'not fresh'
       : typeof remote.decision_id !== 'string' ? 'missing decision id'
       : null;
     if (problem) return fail(problem);
+    if (op.status !== 'collecting') return fail('the request is no longer collecting approvals');
 
     await query('setDecision', remote.decision_id, a.id);
-    // One decision, one action: whoever claims the approval row performs it.
-    if ((await query('claimApproval', `decision:${remote.decision_id}`, now(), a.id)).count !== 1) return;
-    try {
-      if (a.kind === 'create') await createWallet(a, user, remote.decision_id);
-      else await broadcastApproved(a, user);
-    } catch (error) {
-      const message = error instanceof HttpError || error instanceof ChainError || error instanceof WalletError
-        ? error.message : 'The action could not be completed.';
-      if (!(error instanceof HttpError || error instanceof ChainError || error instanceof WalletError)) log.error(error);
-      await query('setFailure', message, a.id);
-    }
+    // Record this approval and, if it completes the quorum, claim the right to run the operation.
+    const mine = await transaction(async q => {
+      if ((await q('claimApproval', `decision:${remote.decision_id}`, now(), a.id)).count !== 1) return false;
+      const { n } = (await q('countApproved', op.id)).rows[0];
+      if (n < op.required) return false;
+      return (await q('startRunning', op.id)).count === 1;
+    });
+    if (mine) await runOperation(op, remote.decision_id);
   }
 
   async function acknowledge(a) {
@@ -522,7 +746,10 @@ export function createApp(options) {
     { method: 'POST', path: '/api/logout', handler: logout },
     { method: 'GET', path: '/api/wallet', handler: getWallet, auth: true },
     { method: 'POST', path: '/api/wallet/approval', handler: requestWallet, auth: true },
+    { method: 'POST', path: '/api/policy', handler: requestPolicy, auth: true },
     { method: 'POST', path: '/api/withdrawals', handler: requestWithdrawal, auth: true },
+    { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/approval$/, handler: joinOperation, auth: true },
+    { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/cancel$/, handler: cancelOperation, auth: true },
     { method: 'GET', path: /^\/api\/approvals\/([\w-]{8,64})$/, handler: readApproval, auth: true },
     { method: 'POST', path: /^\/api\/approvals\/([\w-]{8,64})\/palm$/, handler: startPalm, auth: true },
     { method: 'POST', path: /^\/api\/approvals\/([\w-]{8,64})\/cancel$/, handler: cancelApproval, auth: true },
@@ -599,6 +826,7 @@ export function createApp(options) {
         throw new HttpError(403, `Open the wallet at ${publicOrigin}.`);
       }
       const cookies = parseCookies(req.headers.cookie);
+      if (route.auth && cookies[SESSION_COOKIE]) await expireOperations();
       const ctx = {
         params: route.params,
         cookies,

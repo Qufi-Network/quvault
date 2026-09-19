@@ -1,7 +1,7 @@
 const $ = id => document.getElementById(id);
 
 const VIEWS = ['loading', 'setup', 'signin', 'create', 'wallet'];
-const state = { config: null, wallet: null, loginNonce: null };
+const state = { config: null, data: null, loginNonce: null };
 let active = null; // the approval currently shown in the sheet
 
 /* ------------------------------------------------------------ helpers */
@@ -23,16 +23,20 @@ function el(tag, attrs = {}, ...children) {
     if (value == null || value === false) continue;
     if (key === 'class') node.className = value;
     else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
+    // Through the style object, not a style attribute, which the page's security policy blocks.
+    else if (key === 'style') Object.assign(node.style, value);
     else node.setAttribute(key, value);
   }
   node.append(...children.flat().filter(child => child != null && child !== false));
   return node;
 }
 
+const button = (label, className, onClick) => el('button', { type: 'button', class: className, onclick: onClick }, label);
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const btc = sats => (sats / 1e8).toFixed(8);
 const fmtSats = sats => Number(sats).toLocaleString('en-US');
 const shortId = id => `${id.slice(0, 10)}…${id.slice(-6)}`;
+const when = seconds => new Date(seconds * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
 function friendly(error) {
   if (error?.code === 'popup_blocked') return 'Your browser blocked the Veyns window. Allow pop-ups for this site, then try again.';
@@ -104,8 +108,10 @@ async function refresh() {
     if (error.status === 401) return showSignin();
     throw error;
   }
-  state.wallet = data;
+  state.data = data;
   if (!data.wallet) {
+    $('my-code').textContent = data.me.code;
+    renderRequests($('create-pending'), data.pending);
     show('create');
     return;
   }
@@ -132,7 +138,6 @@ async function showSignin() {
   $('signin-browser').hidden = state.config.requirePalmSignin;
   $('signin-browser').disabled = $('signin-palm').disabled = true;
   try {
-    // Both must be ready before the click: the Veyns window has to open straight from the gesture.
     const [{ nonce }] = await Promise.all([api('/api/login/start', {}), loadSdk()]);
     state.loginNonce = nonce;
     $('signin-browser').disabled = $('signin-palm').disabled = false;
@@ -175,7 +180,7 @@ $('signin-browser').addEventListener('click', () => signIn('browser'));
 $('signin-palm').addEventListener('click', () => signIn('palm'));
 $('signout').addEventListener('click', async () => {
   await api('/api/logout', {}).catch(() => {});
-  state.wallet = null;
+  state.data = null;
   await showSignin();
 });
 
@@ -193,7 +198,6 @@ async function sha256Base64Url(text) {
   return btoa(String.fromCharCode(...digest)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-/** The same code + PKCE flow veyns.js runs in its pop-up, but in this tab. */
 async function signInWithRedirect(method, nonce) {
   const { issuer, clientId, redirectUri } = state.config;
   const verifier = randomToken(48);
@@ -259,8 +263,8 @@ $('create-wallet').addEventListener('click', async () => {
   $('create-error').textContent = '';
   $('create-wallet').disabled = true;
   try {
-    const { approval } = await api('/api/wallet/approval', {});
-    openApproval(approval, 'Creating the vault…');
+    const { operation } = await api('/api/wallet/approval', { label: $('create-label').value });
+    openApproval(operation, 'Creating the vault…');
   } catch (error) {
     $('create-error').textContent = friendly(error);
   } finally {
@@ -269,10 +273,11 @@ $('create-wallet').addEventListener('click', async () => {
 });
 
 function renderWallet(data) {
-  const { wallet, balance, spendable, coins, history, feeRate, qr, chainError, openApproval: pending } = data;
+  const { wallet, balance, spendable, coins, chainHistory, feeRate, qr, chainError, policy, members, me } = data;
   $('address').textContent = wallet.address;
   $('explorer-link').href = wallet.explorer;
   if (qr) $('qr').innerHTML = qr; // A QR code this server generated; no external content.
+  $('my-code').textContent = me.code;
 
   $('balance').textContent = btc(balance ? balance.confirmed + balance.pending : 0);
   const notes = [];
@@ -284,39 +289,73 @@ function renderWallet(data) {
   $('chain-error').textContent = chainError || '';
   $('fee-note').textContent = feeRate ? `Network suggests ${feeRate} sat/vB` : '';
 
-  renderHistory(history || [], data.withdrawals || []);
-  if (pending && !active) openApproval(pending, pending.kind === 'create' ? 'Creating the vault…' : 'Sending…');
+  $('rule-list').replaceChildren(...policy.rules.map(rule => el('li', {},
+    el('span', {}, rule.upToSats === null ? 'Any larger amount' : `Up to ${fmtSats(rule.upToSats)} sats`),
+    el('b', {}, `${rule.approvals} palm${rule.approvals === 1 ? '' : 's'}`))));
+  $('member-list').replaceChildren(...members.map(m => el('span', { class: 'member' },
+    m.label, m.owner ? el('small', {}, 'owner') : null, m.id === me.id ? el('small', {}, 'you') : null)));
+
+  renderRequests($('pending'), data.pending);
+  $('pending-lane').hidden = data.pending.length === 0;
+  renderHistory(chainHistory || [], data.history || []);
 }
 
-function renderHistory(chain, withdrawals) {
-  const failed = withdrawals.filter(w => w.status === 'failed').map(w => el('li', {},
-    el('span', { class: 'what' }, w.statement, el('small', {}, w.error || 'Failed')),
-    el('time', {}, new Date(w.at * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })),
-    el('span', { class: 'amt failed' }, 'failed')));
+/** One card per request waiting for palms, with who has approved so far. */
+function renderRequests(container, requests) {
+  const { me, labels = {} } = state.data;
+  container.replaceChildren(...requests.map(op => {
+    const done = op.approvedBy.length;
+    const mine = op.mine;
+    const actions = el('div', { class: 'row' });
+    if (op.status === 'collecting' && (!mine || mine.status !== 'approved')) {
+      actions.append(button('Approve with palm', 'btn brand small', () => approveRequest(op)));
+    } else if (mine?.status === 'approved') {
+      actions.append(el('span', { class: 'quiet' }, 'You approved. Waiting for the others.'));
+    }
+    if (op.startedBy === me.id || op.walletOwner === me.id) {
+      actions.append(button('Cancel', 'btn ghost small', () => cancelRequest(op)));
+    }
+    return el('article', { class: 'request' },
+      el('p', { class: 'request-what' }, op.statement),
+      el('p', { class: 'quiet small' }, [
+        `${done} of ${op.required} approval${op.required === 1 ? '' : 's'}`,
+        done ? `by ${op.approvedBy.map(id => labels[id] || 'someone').join(', ')}` : null,
+        op.status === 'running' ? 'running' : null,
+      ].filter(Boolean).join(' · ')),
+      el('div', { class: 'meter', 'aria-hidden': 'true' }, el('span', { style: { width: `${Math.min(100, (done / op.required) * 100)}%` } })),
+      actions);
+  }));
+}
 
-  const rows = chain.map(tx => {
-    const incoming = tx.deltaSats > 0;
-    return el('li', {},
-      el('span', { class: 'what' },
-        incoming ? 'Received' : 'Sent',
-        el('small', {}, shortId(tx.txid), tx.confirmed ? '' : ' · waiting for confirmation')),
-      el('time', {}, tx.at ? new Date(tx.at * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'pending'),
-      el('a', { class: `amt ${incoming ? 'plus' : 'minus'}`, href: tx.explorer, target: '_blank', rel: 'noopener' },
-        `${incoming ? '+' : '−'}${btc(Math.abs(tx.deltaSats))}`));
-  });
+function renderHistory(chain, operations) {
+  const rows = operations.filter(op => op.kind !== 'create').map(op => el('li', {},
+    el('span', { class: 'what' }, op.statement,
+      el('small', {}, op.error || (op.txid ? shortId(op.txid) : op.status))),
+    el('time', {}, when(op.createdAt)),
+    el('span', { class: `amt ${op.status === 'done' ? '' : 'failed'}` }, op.status === 'done' ? 'approved' : op.status)));
 
-  const all = [...failed, ...rows];
+  const received = chain.map(tx => el('li', {},
+    el('span', { class: 'what' }, tx.deltaSats > 0 ? 'Received' : 'Sent',
+      el('small', {}, shortId(tx.txid), tx.confirmed ? '' : ' · waiting for confirmation')),
+    el('time', {}, tx.at ? when(tx.at) : 'pending'),
+    el('a', { class: `amt ${tx.deltaSats > 0 ? 'plus' : 'minus'}`, href: tx.explorer, target: '_blank', rel: 'noopener' },
+      `${tx.deltaSats > 0 ? '+' : '−'}${btc(Math.abs(tx.deltaSats))}`)));
+
+  const all = [...rows, ...received];
   $('history').replaceChildren(...(all.length ? all : [el('li', { class: 'empty' }, 'Nothing yet.')]));
 }
 
-$('copy-address').addEventListener('click', async () => {
+$('copy-address').addEventListener('click', () => copy($('address').textContent, 'Address copied.'));
+$('copy-code').addEventListener('click', () => copy($('my-code').textContent, 'Approver code copied.'));
+
+async function copy(text, message) {
   try {
-    await navigator.clipboard.writeText($('address').textContent);
-    toast('Address copied.');
+    await navigator.clipboard.writeText(text);
+    toast(message);
   } catch {
-    toast('Select the address and copy it.');
+    toast('Select it and copy manually.');
   }
-});
+}
 
 $('send-max').addEventListener('change', event => {
   $('send-amount').disabled = event.target.checked;
@@ -330,12 +369,12 @@ $('send-form').addEventListener('submit', async event => {
   if (submit) submit.disabled = true;
   try {
     const max = $('send-max').checked;
-    const { approval } = await api('/api/withdrawals', {
+    const { operation } = await api('/api/withdrawals', {
       to: $('send-to').value.trim(),
       amount: max ? 'max' : Number($('send-amount').value),
       ...($('send-fee').value ? { feeRate: Number($('send-fee').value) } : {}),
     });
-    openApproval(approval, 'Sending…');
+    openApproval(operation, 'Sending…');
   } catch (error) {
     $('send-error').textContent = friendly(error);
   } finally {
@@ -343,11 +382,98 @@ $('send-form').addEventListener('submit', async event => {
   }
 });
 
+async function approveRequest(op) {
+  openApproval(op, op.kind === 'withdraw' ? 'Sending…' : op.kind === 'policy' ? 'Applying the new rules…' : 'Creating the vault…');
+}
+
+async function cancelRequest(op) {
+  if (!confirm(`Cancel this request?\n\n${op.statement}`)) return;
+  await api(`/api/operations/${op.id}/cancel`, {}).catch(error => toast(friendly(error)));
+  refresh().catch(() => {});
+}
+
+/* ---------------------------------------------------------- the rules */
+
+let editing = null;
+
+$('edit-rules').addEventListener('click', () => {
+  const { policy, members, me } = state.data;
+  editing = {
+    rules: policy.rules.map(r => ({ ...r })),
+    members: members.map(m => ({ ...m })),
+    removed: [],
+    meId: me.id,
+  };
+  $('rules-error').textContent = '';
+  $('new-member-code').value = '';
+  $('new-member-label').value = '';
+  drawEditor();
+  $('rules-editor').showModal();
+});
+
+function drawEditor() {
+  $('rule-rows').replaceChildren(...editing.rules.map((rule, index) => {
+    const last = index === editing.rules.length - 1;
+    return el('div', { class: 'rule-row' },
+      el('input', {
+        inputmode: 'numeric', placeholder: last ? 'any amount' : 'limit in sats',
+        value: rule.upToSats === null ? '' : String(rule.upToSats), disabled: last,
+        oninput: event => { rule.upToSats = event.target.value === '' ? null : Number(event.target.value); },
+      }),
+      el('input', {
+        inputmode: 'numeric', value: String(rule.approvals), class: 'narrow',
+        oninput: event => { rule.approvals = Number(event.target.value); },
+      }),
+      el('span', { class: 'quiet small' }, 'palms'),
+      editing.rules.length > 1 ? button('Remove', 'link', () => {
+        editing.rules.splice(index, 1);
+        editing.rules.at(-1).upToSats = null;
+        drawEditor();
+      }) : null);
+  }));
+
+  $('member-rows').replaceChildren(...editing.members.map(member => el('div', { class: 'member-row' },
+    el('span', {}, member.label, member.owner ? el('small', {}, 'owner') : null),
+    member.owner ? null : button('Remove', 'link', () => {
+      editing.removed.push(member.id);
+      editing.members = editing.members.filter(m => m.id !== member.id);
+      drawEditor();
+    }))));
+
+  const required = Math.max(1, ...state.data.policy.rules.map(r => r.approvals));
+  $('rules-required').textContent = `This change needs ${Math.min(required, state.data.members.length)} palm approval${required === 1 ? '' : 's'}.`;
+}
+
+$('add-rule').addEventListener('click', () => {
+  const last = editing.rules.at(-1);
+  editing.rules.splice(editing.rules.length - 1, 0, { upToSats: last.upToSats ?? 100000, approvals: last.approvals });
+  drawEditor();
+});
+
+$('rules-cancel').addEventListener('click', () => $('rules-editor').close());
+
+$('rules-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  $('rules-error').textContent = '';
+  const add = [];
+  if ($('new-member-code').value.trim()) {
+    add.push({ code: $('new-member-code').value.trim(), label: $('new-member-label').value.trim() });
+  }
+  try {
+    const { operation } = await api('/api/policy', { rules: editing.rules, add, remove: editing.removed });
+    $('rules-editor').close();
+    openApproval(operation, 'Applying the new rules…');
+  } catch (error) {
+    $('rules-error').textContent = friendly(error);
+  }
+});
+
 /* ----------------------------------------------------------- approval */
 
 const DETAIL_LABELS = {
   action: 'Action', network: 'Network', to: 'To', amount_sats: 'Amount', fee_sats: 'Fee', fee_rate: 'Fee rate',
-  change_sats: 'Change back', spends: 'Coins spent', spending_rule: 'Rule',
+  change_sats: 'Change back', spends: 'Coins spent', approvals_required: 'Approvals', rules: 'New rules',
+  approvers: 'Approvers', spending_rule: 'Rule', owner_label: 'Your name',
 };
 
 function detailRows(details) {
@@ -360,26 +486,34 @@ function detailRows(details) {
   });
 }
 
-async function openApproval(approval, busyText) {
-  active = { approval, busyText };
-  $('approval-kind').textContent = approval.kind === 'create' ? 'Palm approval · new vault' : 'Palm approval · withdrawal';
-  $('approval-statement').textContent = approval.statement;
-  $('approval-details').replaceChildren(...detailRows(approval.details));
+/** Opens the sheet and asks Veyns for this person's palm request. */
+async function openApproval(operation, busyText) {
+  active = { operation, busyText };
+  const kinds = { create: 'Palm approval · new vault', withdraw: 'Palm approval · withdrawal', policy: 'Palm approval · rules' };
+  $('approval-kind').textContent = kinds[operation.kind] || 'Palm approval';
+  $('approval-statement').textContent = operation.statement;
+  $('approval-details').replaceChildren(...detailRows(operation.details));
+  $('approval-quorum').textContent = operation.required > 1
+    ? `This needs ${operation.required} approvals. ${operation.approvedBy.length} so far.` : '';
   $('approval-error').textContent = '';
+  $('approval-wait').hidden = false;
   $('approval-wait-text').textContent = 'Sending the request to your Veyns app…';
   $('approval-open').hidden = true;
   $('approval-cancel').textContent = 'Cancel';
   $('approval').showModal();
 
   try {
-    const result = await api(`/api/approvals/${approval.id}/palm`, {});
-    if (active?.approval.id !== approval.id) return;
-    active.approval = result.approval;
+    const { approval } = await api(`/api/operations/${operation.id}/approval`, {});
+    if (active?.operation.id !== operation.id) return;
+    active.approval = approval;
+    const started = await api(`/api/approvals/${approval.id}/palm`, {});
+    if (active?.operation.id !== operation.id) return;
+    active.approval = started.approval;
     $('approval-wait-text').textContent = 'Open Veyns on your phone, check the request and scan your palm.';
-    $('approval-open').hidden = !result.approval.approvalUrl;
+    $('approval-open').hidden = !started.approval.approvalUrl;
     pollApproval(active);
   } catch (error) {
-    if (active?.approval.id === approval.id) closedWith(friendly(error));
+    if (active?.operation.id === operation.id) closedWith(friendly(error));
   }
 }
 
@@ -390,7 +524,7 @@ function closedWith(message) {
 }
 
 $('approval-open').addEventListener('click', () => {
-  if (active?.approval.approvalUrl) window.open(active.approval.approvalUrl, 'veyns-approval', 'popup=yes,width=420,height=640,noopener');
+  if (active?.approval?.approvalUrl) window.open(active.approval.approvalUrl, 'veyns-approval', 'popup=yes,width=420,height=640,noopener');
 });
 
 async function pollApproval(current) {
@@ -399,11 +533,11 @@ async function pollApproval(current) {
     await wait(2500);
     if (active !== current) return;
     try {
-      const { approval } = await api(`/api/approvals/${current.approval.id}`);
+      const { approval, operation } = await api(`/api/approvals/${current.approval.id}`);
       if (active !== current) return;
       if (approval.status === 'approved') {
         $('approval-wait-text').textContent = current.busyText;
-        return settled(current, approval);
+        return settled(current, operation);
       }
       if (approval.status === 'failed') return closedWith(approval.error || 'The approval failed.');
       if (approval.status !== 'open') return closedWith('The approval ended.');
@@ -419,15 +553,22 @@ async function pollApproval(current) {
   }
 }
 
-function settled(current, approval) {
+function settled(current, operation) {
   if (active !== current) return;
   active = null;
   $('approval').close();
   $('approval-wait').hidden = false;
-  if (approval.kind === 'create') toast('Vault created. Its key is sealed and only your palm can spend from it.');
-  else if (approval.txid) toast(`Sent. Transaction ${shortId(approval.txid)} is on the network.`);
+
+  if (operation.status === 'failed') toast(operation.error || 'The action failed.');
+  else if (operation.status !== 'done') {
+    const left = operation.required - operation.approvedBy.length;
+    toast(`Approved. Waiting for ${left} more palm approval${left === 1 ? '' : 's'}.`);
+  } else if (operation.kind === 'create') toast('Vault created. Its key is sealed and only palm approvals can spend from it.');
+  else if (operation.kind === 'policy') toast('New rules are in force.');
+  else if (operation.txid) toast(`Sent. Transaction ${shortId(operation.txid)} is on the network.`);
   else toast('Approved.');
-  if (approval.kind === 'withdraw') {
+
+  if (operation.kind === 'withdraw' && operation.status === 'done') {
     $('send-form').reset();
     $('send-amount').disabled = false;
   }
@@ -439,8 +580,7 @@ async function dismissApproval() {
   active = null;
   $('approval').close();
   $('approval-wait').hidden = false;
-  if (!current) return;
-  await api(`/api/approvals/${current.approval.id}/cancel`, {}).catch(() => {});
+  if (current?.approval) await api(`/api/approvals/${current.approval.id}/cancel`, {}).catch(() => {});
   refresh().catch(() => {});
 }
 
@@ -449,14 +589,15 @@ $('approval').addEventListener('cancel', event => {
   event.preventDefault();
   dismissApproval();
 });
+$('rules-editor').addEventListener('cancel', () => { editing = null; });
 
 /* -------------------------------------------------------------- start */
 
 $('retry').addEventListener('click', boot);
 
-// Coins arrive without telling us: check every 20 seconds while the wallet is on screen.
+// Coins arrive, and other people approve, without telling us: check every 15 seconds.
 setInterval(() => {
-  if (state.wallet?.wallet && !active && !document.hidden) refresh().catch(() => {});
-}, 20_000);
+  if (state.data && !active && !$('rules-editor').open && !document.hidden) refresh().catch(() => {});
+}, 15_000);
 
 boot();

@@ -254,6 +254,73 @@ input:focus { border-color: var(--brand); outline: none; }
 .send .btn { margin-top: 20px; }
 .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
+/* Requests waiting for palms */
+.requests { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr)); gap: 14px; }
+.request {
+  display: grid;
+  gap: 10px;
+  padding: 18px;
+  background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--brand);
+  border-radius: 12px;
+}
+.request-what { font-size: 15px; overflow-wrap: anywhere; }
+.small { font-size: 13px; }
+.meter { height: 4px; border-radius: 999px; background: var(--ink-2); overflow: hidden; }
+.meter span { display: block; height: 100%; background: linear-gradient(90deg, var(--brand), var(--brand-soft)); }
+
+/* Rules and approvers */
+.rules { display: grid; gap: 16px; }
+.rule-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.rule-list li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 12px;
+  background: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 14px;
+}
+.rule-list b { font-weight: 600; color: var(--brand-soft); font-family: var(--mono); font-size: 13px; }
+.members { display: flex; flex-wrap: wrap; gap: 8px; }
+.member {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 14px;
+}
+.member small, .member-row small {
+  font: 500 9.5px/1 var(--mono);
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.rules code { font: 400 12.5px/1.5 var(--mono); color: var(--brand-soft); }
+
+.rule-rows, .member-rows { display: grid; gap: 10px; margin: 14px 0; }
+.rule-row { display: grid; grid-template-columns: 1fr 76px auto auto; gap: 10px; align-items: center; }
+.rule-row input { min-height: 40px; font-size: 14px; }
+.rule-row input:disabled { color: var(--muted); }
+.member-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+  background: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 14px;
+}
+.eyebrow.spaced { margin-top: 22px; }
+.quorum { margin: -8px 0 16px; font-size: 13.5px; color: var(--brand-soft); }
+
 .ledger { list-style: none; margin: 0; padding: 0; }
 .ledger li {
   display: flex;
