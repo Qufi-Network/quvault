@@ -1,7 +1,15 @@
 const $ = id => document.getElementById(id);
 
 const VIEWS = ['loading', 'setup', 'signin', 'create', 'wallet'];
-const state = { config: null, data: null, loginNonce: null };
+const TABS = ['dashboard', 'send', 'receive', 'settings'];
+const RANGES = [
+  { key: 'day', label: 'Day', seconds: 86_400 },
+  { key: 'week', label: 'Week', seconds: 7 * 86_400 },
+  { key: 'month', label: 'Month', seconds: 30 * 86_400 },
+  { key: 'max', label: '3M', seconds: 120 * 86_400 },
+];
+
+const state = { config: null, data: null, price: null, range: 'week', loginNonce: null, draft: null };
 let active = null; // the approval currently shown in the sheet
 
 /* ------------------------------------------------------------ helpers */
@@ -35,6 +43,7 @@ const button = (label, className, onClick) => el('button', { type: 'button', cla
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const btc = sats => (sats / 1e8).toFixed(8);
 const fmtSats = sats => Number(sats).toLocaleString('en-US');
+const usd = value => `$${Math.round(value).toLocaleString('en-US')}`;
 const shortId = id => `${id.slice(0, 10)}…${id.slice(-6)}`;
 const when = seconds => new Date(seconds * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
@@ -132,7 +141,26 @@ function showSetup() {
   show('setup');
 }
 
-/* ------------------------------------------------------------ sign-in */
+/* ------------------------------------------------------- dashboard tabs */
+
+function setTab(name, { remember = true } = {}) {
+  const tab = TABS.includes(name) ? name : 'dashboard';
+  for (const pane of document.querySelectorAll('.pane')) pane.hidden = pane.dataset.pane !== tab;
+  for (const node of document.querySelectorAll('.side .tab')) {
+    const active = node.dataset.tab === tab;
+    node.classList.toggle('active', active);
+    node.setAttribute('aria-current', active ? 'page' : 'false');
+  }
+  if (tab === 'dashboard') loadPrice();
+  if (remember && location.hash.slice(1) !== tab) history.replaceState(null, '', `#${tab}`);
+}
+
+for (const node of document.querySelectorAll('.side .tab')) {
+  node.addEventListener('click', () => setTab(node.dataset.tab));
+}
+addEventListener('hashchange', () => setTab(location.hash.slice(1), { remember: false }));
+
+/* ------------------------------------------------------ sign-in */
 
 async function showSignin() {
   show('signin');
@@ -273,208 +301,78 @@ $('create-wallet').addEventListener('click', async () => {
   }
 });
 
-/* ------------------------------------------------------- dashboard tabs */
-
-const TABS = ['dashboard', 'vault', 'send', 'receive'];
-
-function setTab(name, { remember = true } = {}) {
-  const tab = TABS.includes(name) ? name : 'dashboard';
-  if (tab === 'dashboard') loadChart();
-  for (const pane of document.querySelectorAll('.pane')) pane.hidden = pane.dataset.pane !== tab;
-  for (const node of document.querySelectorAll('.side .tab')) {
-    const active = node.dataset.tab === tab;
-    node.classList.toggle('active', active);
-    node.setAttribute('aria-current', active ? 'page' : 'false');
-  }
-  if (remember && location.hash.slice(1) !== tab) history.replaceState(null, '', `#${tab}`);
-}
-
-for (const node of document.querySelectorAll('.side .tab')) {
-  node.addEventListener('click', () => setTab(node.dataset.tab));
-}
-for (const node of document.querySelectorAll('[data-goto]')) {
-  node.addEventListener('click', () => setTab(node.dataset.goto));
-}
-
-/**
- * The price chart. The server fetches the data and this draws it, so no third-party code
- * ever runs on the page holding your wallet session.
- */
-let chartLoaded = false;
-async function loadChart({ force = false } = {}) {
-  if (chartLoaded && !force) return;
-  chartLoaded = true;
-  try {
-    const price = await api('/api/price');
-    if (price.error || !price.series?.length) {
-      $('chart-note').textContent = price.error || 'No price data right now.';
-      return;
-    }
-    drawChart(price);
-  } catch (error) {
-    chartLoaded = false;
-    $('chart-note').textContent = friendly(error);
-  }
-}
-
-function drawChart(price) {
-  const NS = 'http://www.w3.org/2000/svg';
-  const points = price.series;
-  const width = 960;
-  const height = 320;
-  const pad = { top: 18, right: 62, bottom: 22, left: 10 };
-  const low = Math.min(...points.map(p => p.usd));
-  const high = Math.max(...points.map(p => p.usd));
-  const span = high - low || 1;
-  const x = i => pad.left + (i / (points.length - 1)) * (width - pad.left - pad.right);
-  const y = usd => pad.top + (1 - (usd - low) / span) * (height - pad.top - pad.bottom);
-
-  const line = points.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p.usd).toFixed(1)}`).join(' ');
-  const area = `${line} L${x(points.length - 1).toFixed(1)},${height - pad.bottom} L${x(0).toFixed(1)},${height - pad.bottom} Z`;
-
-  const svg = document.createElementNS(NS, 'svg');
-  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-  svg.setAttribute('class', 'price-chart');
-  svg.setAttribute('role', 'img');
-  svg.setAttribute('aria-label', `Bitcoin price over the last week, between ${Math.round(low)} and ${Math.round(high)} US dollars`);
-
-  const gradient = document.createElementNS(NS, 'linearGradient');
-  gradient.setAttribute('id', 'priceFade');
-  gradient.setAttribute('x1', '0'); gradient.setAttribute('y1', '0');
-  gradient.setAttribute('x2', '0'); gradient.setAttribute('y2', '1');
-  for (const [offset, opacity] of [['0', '.42'], ['1', '0']]) {
-    const stop = document.createElementNS(NS, 'stop');
-    stop.setAttribute('offset', offset);
-    stop.setAttribute('stop-color', '#1769ff');
-    stop.setAttribute('stop-opacity', opacity);
-    gradient.append(stop);
-  }
-  const defs = document.createElementNS(NS, 'defs');
-  defs.append(gradient);
-  svg.append(defs);
-
-  // Four horizontal guides, labelled on the right.
-  for (let i = 0; i <= 3; i++) {
-    const usd = low + (span * i) / 3;
-    const gy = y(usd);
-    const guide = document.createElementNS(NS, 'line');
-    guide.setAttribute('x1', pad.left); guide.setAttribute('x2', width - pad.right);
-    guide.setAttribute('y1', gy); guide.setAttribute('y2', gy);
-    guide.setAttribute('class', 'chart-guide');
-    const label = document.createElementNS(NS, 'text');
-    label.setAttribute('x', width - pad.right + 8);
-    label.setAttribute('y', gy + 4);
-    label.setAttribute('class', 'chart-label');
-    label.textContent = `$${Math.round(usd).toLocaleString('en-US')}`;
-    svg.append(guide, label);
-  }
-
-  for (const [d, className] of [[area, 'chart-area'], [line, 'chart-line']]) {
-    const path = document.createElementNS(NS, 'path');
-    path.setAttribute('d', d);
-    path.setAttribute('class', className);
-    svg.append(path);
-  }
-
-  const last = document.createElementNS(NS, 'circle');
-  last.setAttribute('cx', x(points.length - 1));
-  last.setAttribute('cy', y(points.at(-1).usd));
-  last.setAttribute('r', '4');
-  last.setAttribute('class', 'chart-dot');
-  svg.append(last);
-
-  const change = price.change24h;
-  $('chart').replaceChildren(
-    el('div', { class: 'chart-head' },
-      el('p', { class: 'chart-price' }, `$${Math.round(price.usd).toLocaleString('en-US')}`),
-      change === null ? null : el('span', { class: `chart-change ${change >= 0 ? 'up' : 'down'}` },
-        `${change >= 0 ? '+' : ''}${change.toFixed(2)}% · 24h`),
-      el('span', { class: 'quiet small' }, 'BTC/USD · last 7 days')),
-    svg);
-  $('chart-note').textContent = `Price data from mempool.space, fetched by this server. Updated ${when(price.at)}.`;
-}
-$('account-btc').addEventListener('click', () => {
-  $('account-btc').classList.add('active');
-  setTab('vault');
-});
-addEventListener('hashchange', () => setTab(location.hash.slice(1), { remember: false }));
-
 function renderWallet(data) {
   const { wallet, balance, spendable, coins, chainHistory, feeRate, qr, chainError, policy, members, me } = data;
+  const total = balance ? balance.confirmed + balance.pending : 0;
+  const myName = members.find(m => m.id === me.id)?.label || 'there';
+  const hour = new Date().getHours();
+  $('greeting').textContent = `Good ${hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening'}, ${myName}.`;
+  $('greeting-note').textContent = `Here is the summary of your ${1} account.`;
+
+  // Receive
   $('address').textContent = wallet.address;
   $('explorer-link').href = wallet.explorer;
   if (qr) $('qr').innerHTML = qr; // A QR code this server generated; no external content.
-  $('my-code').textContent = me.code;
-  $('account-network').textContent = wallet.network;
-  $('account-btc').classList.add('active');
-
-  const total = balance ? balance.confirmed + balance.pending : 0;
-  $('account-balance').textContent = btc(total);
   $('receive-note').textContent = balance?.txCount ? `${balance.txCount} transaction${balance.txCount === 1 ? '' : 's'} so far.` : '';
 
-  // What the rules will ask for, said plainly on the sending screen.
-  const steps = policy.rules.map(rule => (rule.upToSats === null
-    ? `anything larger needs ${rule.approvals} palm${rule.approvals === 1 ? '' : 's'}`
-    : `up to ${fmtSats(rule.upToSats)} sats needs ${rule.approvals} palm${rule.approvals === 1 ? '' : 's'}`));
-  $('send-rule-note').textContent = `Your rules: ${steps.join(' · ')}.`;
-
+  // Totals
   $('balance').textContent = btc(total);
   const notes = [];
   if (balance?.pending) notes.push(`${fmtSats(balance.pending)} sats still unconfirmed`);
   if (coins) notes.push(`${coins} spendable coin${coins === 1 ? '' : 's'} (${fmtSats(spendable)} sats)`);
-  else if (balance && !balance.txCount) notes.push('No coins yet — open Receive Funds for your address.');
+  else if (balance && !balance.txCount) notes.push('No coins yet — open Receive funds for your address.');
   notes.push(`Key sealed with ${wallet.protection}`);
   $('balance-note').textContent = notes.join(' · ');
   $('chain-error').textContent = chainError || '';
   $('fee-note').textContent = feeRate ? `Network suggests ${feeRate} sat/vB` : '';
 
-  $('rule-list').replaceChildren(...policy.rules.map(rule => el('li', {},
-    el('span', {}, rule.upToSats === null ? 'Any larger amount' : `Up to ${fmtSats(rule.upToSats)} sats`),
-    el('b', {}, `${rule.approvals} palm${rule.approvals === 1 ? '' : 's'}`))));
-  $('member-list').replaceChildren(...members.map(m => el('span', { class: 'member' },
-    m.label, m.owner ? el('small', {}, 'owner') : null, m.id === me.id ? el('small', {}, 'you') : null)));
+  const steps = policy.rules.map(rule => (rule.upToSats === null
+    ? `anything larger needs ${rule.approvals} of ${members.length}`
+    : `up to ${fmtSats(rule.upToSats)} sats needs ${rule.approvals} of ${members.length}`));
+  $('send-rule-note').textContent = `Your thresholds: ${steps.join(' · ')}.`;
+  $('accounts-note').textContent = `${members.length} signer${members.length === 1 ? '' : 's'} on this vault`;
 
-  renderAccounts(data);
+  renderAccounts(data, total);
+  renderSettings(data);
   renderRequests($('pending'), data.pending);
   renderRequests($('send-pending'), data.pending.filter(op => op.kind === 'withdraw'));
-  renderRequests($('dash-pending'), data.pending);
   $('pending-lane').hidden = data.pending.length === 0;
-  $('dash-pending-lane').hidden = data.pending.length === 0;
   renderHistory(chainHistory || [], data.history || []);
+  paintFiat();
 }
 
-/** One card per account. Bitcoin is the first; others can join the same vault later. */
-function renderAccounts(data) {
-  const { wallet, balance, coins, spendable, policy } = data;
-  const total = balance ? balance.confirmed + balance.pending : 0;
+/** The sidebar list and the account cards: one Bitcoin account today, more later. */
+function renderAccounts(data, total) {
+  const { wallet, policy, members, coins } = data;
   const strongest = Math.max(...policy.rules.map(rule => rule.approvals));
+  const lightest = Math.min(...policy.rules.map(rule => rule.approvals));
 
-  const card = el('article', { class: 'account-card' },
-    el('header', {},
-      el('span', { class: 'account-mark big' }, '₿'),
-      el('div', {},
-        el('b', {}, 'Bitcoin'),
-        el('small', {}, wallet.network)),
-      el('span', { class: 'chip soft' }, coins ? `${coins} coin${coins === 1 ? '' : 's'}` : 'empty')),
-    el('p', { class: 'account-balance' }, btc(total), el('span', { class: 'unit' }, 'tBTC')),
-    el('p', { class: 'quiet small' }, [
-      balance?.pending ? `${fmtSats(balance.pending)} sats unconfirmed` : null,
-      coins ? `${fmtSats(spendable)} sats spendable` : null,
-      `spending needs ${policy.rules[0].approvals}–${strongest} palm${strongest === 1 ? '' : 's'}`,
-    ].filter(Boolean).join(' · ')),
-    el('p', { class: 'account-address' }, wallet.address),
-    el('div', { class: 'row' },
-      button('Send', 'btn brand small', () => setTab('send')),
-      button('Receive', 'btn ghost small', () => setTab('receive'))));
+  $('account-list').replaceChildren(
+    el('button', { class: 'account active', type: 'button', onclick: () => setTab('dashboard') },
+      el('span', { class: 'account-mark' }, '₿'),
+      el('span', { class: 'account-text' }, el('b', {}, 'Bitcoin account'), el('small', {}, `tBTC ${btc(total)}`))),
+  );
 
-  const soon = el('article', { class: 'account-card muted' },
-    el('header', {}, el('span', { class: 'account-mark big ghost' }, '+'), el('div', {}, el('b', {}, 'Another account'), el('small', {}, 'later'))),
-    el('p', { class: 'quiet small' }, 'Each account joins the same vault and keeps its own approvers and amount rules.'));
-
-  $('accounts').replaceChildren(card, soon);
+  $('accounts').replaceChildren(
+    el('article', { class: 'account-card' },
+      el('header', {},
+        el('span', { class: 'account-mark big' }, '₿'),
+        el('div', {}, el('b', {}, 'Bitcoin account'), el('small', {}, wallet.network)),
+        el('span', { class: 'chip soft' }, coins ? `${coins} coin${coins === 1 ? '' : 's'}` : 'empty')),
+      el('p', { class: 'account-balance' }, btc(total), el('span', { class: 'unit' }, 'tBTC')),
+      el('p', { class: 'quiet small', id: 'account-fiat' }, ''),
+      el('p', { class: 'quiet small' },
+        `${lightest === strongest ? `${strongest}` : `${lightest}–${strongest}`} of ${members.length} palm approval${strongest === 1 && lightest === 1 ? '' : 's'} to spend`),
+      el('p', { class: 'account-address' }, wallet.address),
+      el('div', { class: 'row' },
+        button('Send', 'btn brand small', () => setTab('send')),
+        button('Receive', 'btn ghost small', () => setTab('receive')))),
+    el('article', { class: 'account-card muted' },
+      el('header', {}, el('span', { class: 'account-mark big ghost' }, '+'), el('div', {}, el('b', {}, 'Another account'), el('small', {}, 'later'))),
+      el('p', { class: 'quiet small' }, 'Each account joins the same vault and keeps its own signers and thresholds.')),
+  );
 }
 
-/** One card per request waiting for palms, with who has approved so far. */
 function renderRequests(container, requests) {
   const { me, labels = {} } = state.data;
   container.replaceChildren(...requests.map(op => {
@@ -482,7 +380,7 @@ function renderRequests(container, requests) {
     const mine = op.mine;
     const actions = el('div', { class: 'row' });
     if (op.status === 'collecting' && (!mine || mine.status !== 'approved')) {
-      actions.append(button('Approve with palm', 'btn brand small', () => approveRequest(op)));
+      actions.append(button('Approve with palm', 'btn brand small', () => openApproval(op, busyText(op))));
     } else if (mine?.status === 'approved') {
       actions.append(el('span', { class: 'quiet' }, 'You approved. Waiting for the others.'));
     }
@@ -501,10 +399,11 @@ function renderRequests(container, requests) {
   }));
 }
 
+const busyText = op => (op.kind === 'withdraw' ? 'Sending…' : op.kind === 'policy' ? 'Applying the new settings…' : 'Creating the vault…');
+
 function renderHistory(chain, operations) {
   const rows = operations.filter(op => op.kind !== 'create').map(op => el('li', {},
-    el('span', { class: 'what' }, op.statement,
-      el('small', {}, op.error || (op.txid ? shortId(op.txid) : op.status))),
+    el('span', { class: 'what' }, op.statement, el('small', {}, op.error || (op.txid ? shortId(op.txid) : op.status))),
     el('time', {}, when(op.createdAt)),
     el('span', { class: `amt ${op.status === 'done' ? '' : 'failed'}` }, op.status === 'done' ? 'approved' : op.status)));
 
@@ -531,6 +430,241 @@ async function copy(text, message) {
   }
 }
 
+/* ----------------------------------------------------------- settings */
+
+/** The editable copy of signers and thresholds, rebuilt whenever the server view changes. */
+function renderSettings(data) {
+  const { policy, members, me, wallet } = data;
+  state.draft = {
+    rules: policy.rules.map(rule => ({ ...rule })),
+    members: members.map(member => ({ ...member })),
+    removed: [],
+  };
+  $('my-code').textContent = me.code;
+  $('settings-network').textContent = wallet.network;
+  $('settings-address').textContent = wallet.address;
+  $('settings-protection').textContent = wallet.protection;
+  const changeCost = Math.min(Math.max(...policy.rules.map(rule => rule.approvals)), members.length);
+  $('settings-required').textContent = `Changes here need ${changeCost} palm approval${changeCost === 1 ? '' : 's'}`;
+  drawSettings();
+}
+
+function drawSettings() {
+  const draft = state.draft;
+  const count = draft.members.length;
+
+  $('signer-rows').replaceChildren(...draft.members.map(member => el('div', { class: 'member-row' },
+    el('span', {}, member.label, member.owner ? el('small', {}, 'owner') : null, member.id === state.data.me.id ? el('small', {}, 'you') : null),
+    member.owner ? el('span', { class: 'quiet small' }, 'cannot be removed') : button('Remove', 'link', () => {
+      draft.removed.push(member.id);
+      draft.members = draft.members.filter(m => m.id !== member.id);
+      for (const rule of draft.rules) rule.approvals = Math.min(rule.approvals, draft.members.length);
+      drawSettings();
+    }))));
+
+  // Quick pick: the common "M of N" choices for every amount.
+  const presets = [];
+  for (let m = 1; m <= count; m++) presets.push(m);
+  $('presets').replaceChildren(
+    el('span', { class: 'quiet small' }, 'Every amount:'),
+    ...presets.map(m => button(`${m} of ${count}`, `chip pick${draft.rules.length === 1 && draft.rules[0].approvals === m ? ' on' : ''}`, () => {
+      draft.rules = [{ upToSats: null, approvals: m }];
+      drawSettings();
+    })));
+
+  $('rule-rows').replaceChildren(...draft.rules.map((rule, index) => {
+    const last = index === draft.rules.length - 1;
+    const select = el('select', {
+      onchange: event => { rule.approvals = Number(event.target.value); drawSettings(); },
+    }, ...Array.from({ length: count }, (_, i) => el('option', { value: String(i + 1), selected: rule.approvals === i + 1 }, `${i + 1} of ${count}`)));
+    return el('div', { class: 'rule-row' },
+      el('span', { class: 'quiet small' }, last ? 'Any larger amount' : 'Amounts up to'),
+      last ? el('span', { class: 'quiet small' }, '') : el('input', {
+        inputmode: 'numeric', value: rule.upToSats === null ? '' : String(rule.upToSats), placeholder: 'sats',
+        oninput: event => { rule.upToSats = event.target.value === '' ? null : Number(event.target.value); },
+      }),
+      select,
+      draft.rules.length > 1 ? button('Remove', 'link', () => {
+        draft.rules.splice(index, 1);
+        draft.rules.at(-1).upToSats = null;
+        drawSettings();
+      }) : el('span', {}));
+  }));
+
+  const same = JSON.stringify(draft.rules) === JSON.stringify(state.data.policy.rules)
+    && draft.removed.length === 0
+    && draft.members.length === state.data.members.length;
+  $('save-settings').disabled = same;
+  $('change-cost').textContent = same
+    ? 'Nothing changed yet.'
+    : `Proposing this asks every required signer for a palm scan.`;
+}
+
+$('add-rule').addEventListener('click', () => {
+  const draft = state.draft;
+  const last = draft.rules.at(-1);
+  draft.rules.splice(draft.rules.length - 1, 0, { upToSats: 100_000, approvals: Math.min(last.approvals, draft.members.length) });
+  drawSettings();
+});
+
+$('add-member').addEventListener('click', () => {
+  const code = $('new-member-code').value.trim();
+  const label = $('new-member-label').value.trim();
+  $('rules-error').textContent = '';
+  if (!code || !label) {
+    $('rules-error').textContent = 'Enter both the approver code and a name.';
+    return;
+  }
+  state.draft.members.push({ id: code, label, owner: false, isNew: true });
+  $('new-member-code').value = '';
+  $('new-member-label').value = '';
+  drawSettings();
+});
+
+$('save-settings').addEventListener('click', async () => {
+  $('rules-error').textContent = '';
+  const draft = state.draft;
+  const add = draft.members.filter(m => m.isNew).map(m => ({ code: m.id, label: m.label }));
+  try {
+    const { operation } = await api('/api/policy', { rules: draft.rules, add, remove: draft.removed });
+    openApproval(operation, 'Applying the new settings…');
+  } catch (error) {
+    $('rules-error').textContent = friendly(error);
+  }
+});
+
+/* -------------------------------------------------------------- price */
+
+let priceLoaded = false;
+async function loadPrice({ force = false } = {}) {
+  if (priceLoaded && !force) return;
+  priceLoaded = true;
+  try {
+    const price = await api('/api/price');
+    if (price.error || !price.series?.length) {
+      $('chart-note').textContent = price.error || 'No price data right now.';
+      return;
+    }
+    state.price = price;
+    paintPrice();
+  } catch (error) {
+    priceLoaded = false;
+    $('chart-note').textContent = friendly(error);
+  }
+}
+
+function paintPrice() {
+  const price = state.price;
+  if (!price) return;
+  $('price-now').textContent = usd(price.usd);
+  const change = price.change24h;
+  $('price-change').textContent = change === null ? '—' : `${change >= 0 ? '+' : ''}${change.toFixed(2)}% in 24h`;
+  $('price-change').className = change >= 0 ? 'up' : 'down';
+  $('chart-note').textContent = `Bitcoin price from mempool.space, fetched by this server. Updated ${when(price.at)}.`;
+  drawRanges();
+  drawChart();
+  paintFiat();
+}
+
+/** Test coins are worth nothing; the figure is what the same amount of real bitcoin would be. */
+function paintFiat() {
+  const price = state.price;
+  const data = state.data;
+  if (!price || !data?.balance) return;
+  const total = data.balance.confirmed + data.balance.pending;
+  const value = (total / 1e8) * price.usd;
+  const text = `${usd(value)} if these were real coins`;
+  $('balance-fiat').textContent = text;
+  const card = $('account-fiat');
+  if (card) card.textContent = text;
+}
+
+function drawRanges() {
+  $('ranges').replaceChildren(...RANGES.map(range => button(range.label, `chip pick${state.range === range.key ? ' on' : ''}`, () => {
+    state.range = range.key;
+    drawRanges();
+    drawChart();
+  })));
+}
+
+function drawChart() {
+  const price = state.price;
+  if (!price?.series?.length) return;
+  const range = RANGES.find(r => r.key === state.range) ?? RANGES[1];
+  const latest = price.series.at(-1).t;
+  const points = price.series.filter(point => point.t >= latest - range.seconds);
+  if (points.length < 2) return;
+
+  const NS = 'http://www.w3.org/2000/svg';
+  const width = 960;
+  const height = 280;
+  const pad = { top: 16, right: 64, bottom: 24, left: 8 };
+  const low = Math.min(...points.map(p => p.usd));
+  const high = Math.max(...points.map(p => p.usd));
+  const span = high - low || 1;
+  const x = i => pad.left + (i / (points.length - 1)) * (width - pad.left - pad.right);
+  const y = value => pad.top + (1 - (value - low) / span) * (height - pad.top - pad.bottom);
+
+  const line = points.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p.usd).toFixed(1)}`).join(' ');
+  const area = `${line} L${x(points.length - 1).toFixed(1)},${height - pad.bottom} L${x(0).toFixed(1)},${height - pad.bottom} Z`;
+
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.setAttribute('class', 'price-chart');
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', `Bitcoin price, ${range.label.toLowerCase()}, between ${Math.round(low)} and ${Math.round(high)} US dollars`);
+
+  const gradient = document.createElementNS(NS, 'linearGradient');
+  gradient.setAttribute('id', 'priceFade');
+  gradient.setAttribute('x1', '0'); gradient.setAttribute('y1', '0');
+  gradient.setAttribute('x2', '0'); gradient.setAttribute('y2', '1');
+  for (const [offset, opacity] of [['0', '.42'], ['1', '0']]) {
+    const stop = document.createElementNS(NS, 'stop');
+    stop.setAttribute('offset', offset);
+    stop.setAttribute('stop-color', '#1769ff');
+    stop.setAttribute('stop-opacity', opacity);
+    gradient.append(stop);
+  }
+  const defs = document.createElementNS(NS, 'defs');
+  defs.append(gradient);
+  svg.append(defs);
+
+  for (let i = 0; i <= 3; i++) {
+    const value = low + (span * i) / 3;
+    const gy = y(value);
+    const guide = document.createElementNS(NS, 'line');
+    guide.setAttribute('x1', pad.left); guide.setAttribute('x2', width - pad.right);
+    guide.setAttribute('y1', gy); guide.setAttribute('y2', gy);
+    guide.setAttribute('class', 'chart-guide');
+    const label = document.createElementNS(NS, 'text');
+    label.setAttribute('x', width - pad.right + 8);
+    label.setAttribute('y', gy + 4);
+    label.setAttribute('class', 'chart-label');
+    label.textContent = usd(value);
+    svg.append(guide, label);
+  }
+
+  for (const [d, className] of [[area, 'chart-area'], [line, 'chart-line']]) {
+    const path = document.createElementNS(NS, 'path');
+    path.setAttribute('d', d);
+    path.setAttribute('class', className);
+    svg.append(path);
+  }
+
+  const dot = document.createElementNS(NS, 'circle');
+  dot.setAttribute('cx', x(points.length - 1));
+  dot.setAttribute('cy', y(points.at(-1).usd));
+  dot.setAttribute('r', '4');
+  dot.setAttribute('class', 'chart-dot');
+  svg.append(dot);
+
+  const first = new Date(points[0].t * 1000).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  const lastDay = new Date(points.at(-1).t * 1000).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  $('chart').replaceChildren(svg, el('p', { class: 'chart-axis' }, el('span', {}, first), el('span', {}, lastDay)));
+}
+
+/* ------------------------------------------------------------ sending */
+
 $('send-max').addEventListener('change', event => {
   $('send-amount').disabled = event.target.checked;
   if (event.target.checked) $('send-amount').value = '';
@@ -556,98 +690,18 @@ $('send-form').addEventListener('submit', async event => {
   }
 });
 
-async function approveRequest(op) {
-  openApproval(op, op.kind === 'withdraw' ? 'Sending…' : op.kind === 'policy' ? 'Applying the new rules…' : 'Creating the vault…');
-}
-
 async function cancelRequest(op) {
   if (!confirm(`Cancel this request?\n\n${op.statement}`)) return;
   await api(`/api/operations/${op.id}/cancel`, {}).catch(error => toast(friendly(error)));
   refresh().catch(() => {});
 }
 
-/* ---------------------------------------------------------- the rules */
-
-let editing = null;
-
-$('edit-rules').addEventListener('click', () => {
-  const { policy, members, me } = state.data;
-  editing = {
-    rules: policy.rules.map(r => ({ ...r })),
-    members: members.map(m => ({ ...m })),
-    removed: [],
-    meId: me.id,
-  };
-  $('rules-error').textContent = '';
-  $('new-member-code').value = '';
-  $('new-member-label').value = '';
-  drawEditor();
-  $('rules-editor').showModal();
-});
-
-function drawEditor() {
-  $('rule-rows').replaceChildren(...editing.rules.map((rule, index) => {
-    const last = index === editing.rules.length - 1;
-    return el('div', { class: 'rule-row' },
-      el('input', {
-        inputmode: 'numeric', placeholder: last ? 'any amount' : 'limit in sats',
-        value: rule.upToSats === null ? '' : String(rule.upToSats), disabled: last,
-        oninput: event => { rule.upToSats = event.target.value === '' ? null : Number(event.target.value); },
-      }),
-      el('input', {
-        inputmode: 'numeric', value: String(rule.approvals), class: 'narrow',
-        oninput: event => { rule.approvals = Number(event.target.value); },
-      }),
-      el('span', { class: 'quiet small' }, 'palms'),
-      editing.rules.length > 1 ? button('Remove', 'link', () => {
-        editing.rules.splice(index, 1);
-        editing.rules.at(-1).upToSats = null;
-        drawEditor();
-      }) : null);
-  }));
-
-  $('member-rows').replaceChildren(...editing.members.map(member => el('div', { class: 'member-row' },
-    el('span', {}, member.label, member.owner ? el('small', {}, 'owner') : null),
-    member.owner ? null : button('Remove', 'link', () => {
-      editing.removed.push(member.id);
-      editing.members = editing.members.filter(m => m.id !== member.id);
-      drawEditor();
-    }))));
-
-  const required = Math.max(1, ...state.data.policy.rules.map(r => r.approvals));
-  $('rules-required').textContent = `This change needs ${Math.min(required, state.data.members.length)} palm approval${required === 1 ? '' : 's'}.`;
-}
-
-$('add-rule').addEventListener('click', () => {
-  const last = editing.rules.at(-1);
-  editing.rules.splice(editing.rules.length - 1, 0, { upToSats: last.upToSats ?? 100000, approvals: last.approvals });
-  drawEditor();
-});
-
-$('rules-cancel').addEventListener('click', () => $('rules-editor').close());
-
-$('rules-form').addEventListener('submit', async event => {
-  event.preventDefault();
-  $('rules-error').textContent = '';
-  const add = [];
-  if ($('new-member-code').value.trim()) {
-    add.push({ code: $('new-member-code').value.trim(), label: $('new-member-label').value.trim() });
-  }
-  try {
-    const { operation } = await api('/api/policy', { rules: editing.rules, add, remove: editing.removed });
-    $('rules-editor').close();
-    openApproval(operation, 'Applying the new rules…');
-  } catch (error) {
-    $('rules-error').textContent = friendly(error);
-  }
-});
-
 /* ----------------------------------------------------------- approval */
 
 const DETAIL_LABELS = {
   action: 'Action', network: 'Network', to: 'To', amount_sats: 'Amount', fee_sats: 'Fee', fee_rate: 'Fee rate',
-  change_sats: 'Change back', spends: 'Coins spent', approvals_required: 'Approvals', rules: 'New rules',
-  approvers: 'Approvers', spending_rule: 'Rule', owner_label: 'Your name',
+  change_sats: 'Change back', spends: 'Coins spent', approvals_required: 'Approvals', rules: 'New settings',
+  approvers: 'Signers', spending_rule: 'Rule', owner_label: 'Your name',
 };
 
 function detailRows(details) {
@@ -660,10 +714,9 @@ function detailRows(details) {
   });
 }
 
-/** Opens the sheet and asks Veyns for this person's palm request. */
-async function openApproval(operation, busyText) {
-  active = { operation, busyText };
-  const kinds = { create: 'Palm approval · new vault', withdraw: 'Palm approval · withdrawal', policy: 'Palm approval · rules' };
+async function openApproval(operation, busy) {
+  active = { operation, busyText: busy };
+  const kinds = { create: 'Palm approval · new vault', withdraw: 'Palm approval · withdrawal', policy: 'Palm approval · settings' };
   $('approval-kind').textContent = kinds[operation.kind] || 'Palm approval';
   $('approval-statement').textContent = operation.statement;
   $('approval-details').replaceChildren(...detailRows(operation.details));
@@ -737,8 +790,8 @@ function settled(current, operation) {
   else if (operation.status !== 'done') {
     const left = operation.required - operation.approvedBy.length;
     toast(`Approved. Waiting for ${left} more palm approval${left === 1 ? '' : 's'}.`);
-  } else if (operation.kind === 'create') toast('Vault created. Its key is sealed and only palm approvals can spend from it.');
-  else if (operation.kind === 'policy') toast('New rules are in force.');
+  } else if (operation.kind === 'create') toast('Vault created. Only palm approvals can spend from it.');
+  else if (operation.kind === 'policy') toast('New settings are in force.');
   else if (operation.txid) toast(`Sent. Transaction ${shortId(operation.txid)} is on the network.`);
   else toast('Approved.');
 
@@ -763,7 +816,6 @@ $('approval').addEventListener('cancel', event => {
   event.preventDefault();
   dismissApproval();
 });
-$('rules-editor').addEventListener('cancel', () => { editing = null; });
 
 /* -------------------------------------------------------------- start */
 
@@ -771,7 +823,10 @@ $('retry').addEventListener('click', boot);
 
 // Coins arrive, and other people approve, without telling us: check every 15 seconds.
 setInterval(() => {
-  if (state.data && !active && !$('rules-editor').open && !document.hidden) refresh().catch(() => {});
+  if (state.data && !active && !document.hidden) refresh().catch(() => {});
 }, 15_000);
+setInterval(() => {
+  if (state.data && !document.hidden) loadPrice({ force: true }).catch(() => {});
+}, 120_000);
 
 boot();

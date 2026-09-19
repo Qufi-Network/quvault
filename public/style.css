@@ -326,6 +326,48 @@ input:focus { border-color: var(--brand); outline: none; }
 .account-card.muted { opacity: .62; }
 .chip.soft { color: var(--text-2); border-color: var(--line); }
 
+/* Dashboard total card, ranges and settings */
+.total { display: grid; gap: 16px; }
+.total-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+.total-head .amount { margin: 0 0 6px; font-size: clamp(34px, 5vw, 52px); }
+.total-change { text-align: right; }
+.total-change .chart-price { margin-bottom: 6px; }
+#price-change.up { color: var(--ok); }
+#price-change.down { color: var(--danger); }
+
+.ranges { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip.pick {
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-2);
+  font: 500 12px/1 var(--sans);
+  cursor: pointer;
+}
+.chip.pick:hover { border-color: var(--brand); color: var(--text); }
+.chip.pick.on { background: rgba(23, 105, 255, .18); border-color: rgba(23, 105, 255, .5); color: #fff; }
+.presets { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.chart-axis { display: flex; justify-content: space-between; font: 400 11px/1 var(--mono); color: var(--muted); }
+
+.settings-card { display: grid; gap: 14px; }
+.settings-card .two { margin: 0; }
+.detail-row { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.detail-row:last-child { border-bottom: 0; }
+.detail-row code { overflow-wrap: anywhere; text-align: right; }
+.lane.no-top { padding-top: 8px; border-top: 0; }
+
+select {
+  min-height: 42px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--ink-2);
+  color: var(--text);
+  font: 400 14px/1 var(--sans);
+}
+.rule-row { grid-template-columns: minmax(96px, auto) minmax(0, 1fr) 140px auto; }
+
 .chart-card { display: grid; gap: 12px; }
 .chart { display: grid; gap: 10px; min-height: 260px; }
 .chart-head { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }

@@ -102,11 +102,12 @@ export function createPrices({ apiUrl, fetchImpl = globalThis.fetch, now = () =>
     async latest() {
       if (cache.data && now() - cache.at < ttl) return cache.data;
       const [current, history] = await Promise.all([get('/v1/prices'), get('/v1/historical-price?currency=USD')]);
+      // Keep the long series: the dashboard slices it into day, week, month and year.
       const series = (history.prices || [])
         .filter(point => Number.isFinite(point.USD) && point.USD > 0)
         .map(point => ({ t: point.time, usd: point.USD }))
         .sort((a, b) => a.t - b.t)
-        .slice(-168); // about a week, hourly
+        .slice(-3000);
       const dayAgo = series.find(point => point.t >= (series.at(-1)?.t ?? 0) - 86_400)?.usd ?? series[0]?.usd;
       const usd = current.USD ?? series.at(-1)?.usd ?? null;
       cache = { at: now(), data: { usd, at: current.time ?? now(), change24h: dayAgo ? ((usd - dayAgo) / dayAgo) * 100 : null, series } };

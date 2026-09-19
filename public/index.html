@@ -76,98 +76,64 @@
 
   <main id="view-wallet" class="shell" hidden>
     <nav class="side" aria-label="Wallet sections">
-      <p class="side-label">Wallet</p>
+      <p class="side-label">Menu</p>
       <button class="tab" data-tab="dashboard" type="button">
-        <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="2.5" width="6.5" height="8" rx="1.5"/><rect x="11" y="2.5" width="6.5" height="5" rx="1.5"/><rect x="2.5" y="12.5" width="6.5" height="5" rx="1.5"/><rect x="11" y="9.5" width="6.5" height="8" rx="1.5"/></svg>
+        <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="M10 3v7l4.5 3"/></svg>
         Dashboard
-      </button>
-      <button class="tab" data-tab="vault" type="button">
-        <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="4" width="15" height="12" rx="2.5"/><circle cx="10" cy="10" r="2.6"/></svg>
-        Vault
       </button>
       <button class="tab" data-tab="send" type="button">
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 15.5V4.5"/><path d="M5.5 9 10 4.5 14.5 9"/></svg>
-        Send Funds
+        Send funds
       </button>
       <button class="tab" data-tab="receive" type="button">
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4.5v11"/><path d="M14.5 11 10 15.5 5.5 11"/></svg>
-        Receive Funds
+        Receive funds
+      </button>
+      <button class="tab" data-tab="settings" type="button">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="2.6"/><path d="M10 2.6v2M10 15.4v2M17.4 10h-2M4.6 10h-2M15.2 4.8l-1.4 1.4M6.2 13.8l-1.4 1.4M15.2 15.2l-1.4-1.4M6.2 6.2 4.8 4.8"/></svg>
+        Settings
       </button>
 
       <p class="side-label spaced">Accounts</p>
-      <button class="account" data-tab="vault" type="button" id="account-btc">
-        <span class="account-mark">₿</span>
-        <span class="account-text">
-          <b>BTC</b>
-          <small id="account-network">testnet4</small>
-        </span>
-        <span class="account-amount" id="account-balance">0.00000000</span>
-      </button>
-      <p class="side-note">More accounts can join this vault later. Each keeps its own rules.</p>
+      <div id="account-list"></div>
+      <p class="side-note">More accounts can join this vault later. Each keeps its own signers and thresholds.</p>
     </nav>
 
     <div class="panes">
       <section class="pane" data-pane="dashboard">
         <header class="pane-head">
           <div>
-            <p class="eyebrow">Overview</p>
-            <h1 class="pane-title">Dashboard</h1>
+            <h1 class="pane-title" id="greeting">Good day.</h1>
+            <p class="quiet" id="greeting-note"></p>
           </div>
-          <div class="row">
-            <button class="btn brand small" data-goto="send" type="button">Send</button>
-            <button class="btn ghost small" data-goto="receive" type="button">Receive</button>
-          </div>
+          <div class="ranges" id="ranges" role="group" aria-label="Chart range"></div>
         </header>
 
-        <div class="accounts" id="accounts"></div>
-
-        <section class="lane" id="dash-pending-lane" hidden>
-          <header class="lane-head"><h2>Needs your palm</h2></header>
-          <div class="requests" id="dash-pending"></div>
-        </section>
-
-        <section class="lane">
-          <header class="lane-head">
-            <h2>Bitcoin price</h2>
-            <a class="link" href="https://www.tradingview.com/chart/?symbol=BITSTAMP%3ABTCUSD" target="_blank" rel="noopener noreferrer">Open on TradingView</a>
-          </header>
-          <div class="card chart-card">
-            <div id="chart" class="chart"></div>
-            <p class="fine" id="chart-note">Loading the price…</p>
+        <div class="card total">
+          <div class="total-head">
+            <div>
+              <p class="amount"><span id="balance">0.00000000</span><span class="unit">tBTC</span></p>
+              <p class="eyebrow">Total balance · <span id="balance-fiat">&mdash;</span></p>
+            </div>
+            <div class="total-change">
+              <p class="chart-price" id="price-now">&mdash;</p>
+              <p class="eyebrow"><span id="price-change">&mdash;</span> · bitcoin price</p>
+            </div>
           </div>
-        </section>
-      </section>
-
-      <section class="pane" data-pane="vault" hidden>
-        <header class="pane-head">
-          <div>
-            <p class="eyebrow">Bitcoin account</p>
-            <h1 class="pane-title">Vault</h1>
-          </div>
-        </header>
-
-        <div class="balance card">
-          <p class="eyebrow">Balance</p>
-          <p class="amount"><span id="balance">0.00000000</span><span class="unit">tBTC</span></p>
+          <div id="chart" class="chart"></div>
+          <p class="fine" id="chart-note">Loading the price…</p>
           <p class="quiet" id="balance-note"></p>
           <p class="error" id="chain-error" role="alert"></p>
         </div>
 
         <section class="lane" id="pending-lane" hidden>
-          <header class="lane-head"><h2>Waiting for approval</h2><p class="quiet">Each approver scans their own palm.</p></header>
+          <header class="lane-head"><h2>Waiting for approval</h2><p class="quiet">Each signer scans their own palm.</p></header>
           <div class="requests" id="pending"></div>
         </section>
 
         <section class="lane">
-          <header class="lane-head">
-            <h2>Rules and approvers</h2>
-            <button class="btn ghost small" id="edit-rules" type="button">Change rules</button>
-          </header>
-          <div class="card rules">
-            <ul class="rule-list" id="rule-list"></ul>
-            <div class="members" id="member-list"></div>
-            <p class="fine">Your approver code: <code id="my-code"></code> <button class="link" id="copy-code" type="button">Copy</button> — give it to a wallet owner so they can add you.</p>
-          </div>
+          <header class="lane-head"><h2>Accounts</h2><p class="quiet" id="accounts-note"></p></header>
+          <div class="accounts" id="accounts"></div>
         </section>
 
         <section class="lane">
@@ -180,7 +146,7 @@
         <header class="pane-head">
           <div>
             <p class="eyebrow">Bitcoin account</p>
-            <h1 class="pane-title">Send Funds</h1>
+            <h1 class="pane-title">Send funds</h1>
           </div>
           <p class="quiet" id="fee-note"></p>
         </header>
@@ -211,7 +177,7 @@
         <header class="pane-head">
           <div>
             <p class="eyebrow">Bitcoin account</p>
-            <h1 class="pane-title">Receive Funds</h1>
+            <h1 class="pane-title">Receive funds</h1>
           </div>
         </header>
 
@@ -228,6 +194,61 @@
             <p class="quiet" id="receive-note"></p>
           </div>
         </div>
+      </section>
+
+      <section class="pane" data-pane="settings" hidden>
+        <header class="pane-head">
+          <div>
+            <p class="eyebrow">Bitcoin account</p>
+            <h1 class="pane-title">Settings</h1>
+          </div>
+          <p class="quiet" id="settings-required"></p>
+        </header>
+
+        <section class="lane no-top">
+          <header class="lane-head"><h2>Signers</h2><p class="quiet">Everyone who can approve with their palm.</p></header>
+          <div class="card settings-card">
+            <div class="member-rows" id="signer-rows"></div>
+            <div class="two">
+              <div>
+                <label for="new-member-code">Add by approver code</label>
+                <input id="new-member-code" autocomplete="off" spellcheck="false" placeholder="their code">
+              </div>
+              <div>
+                <label for="new-member-label">Their name</label>
+                <input id="new-member-label" maxlength="40" placeholder="Bob">
+              </div>
+            </div>
+            <button class="btn ghost small" id="add-member" type="button">Add signer</button>
+            <p class="fine">Your approver code: <code id="my-code"></code> <button class="link" id="copy-code" type="button">Copy</button> — give it to an account owner so they can add you.</p>
+          </div>
+        </section>
+
+        <section class="lane">
+          <header class="lane-head">
+            <h2>Approval threshold</h2>
+            <p class="quiet">How many palm prints each amount needs.</p>
+          </header>
+          <div class="card settings-card">
+            <div class="presets" id="presets"></div>
+            <div class="rule-rows" id="rule-rows"></div>
+            <button class="link" id="add-rule" type="button">Add an amount step</button>
+            <p class="error" id="rules-error" role="alert"></p>
+            <div class="sheet-foot">
+              <p class="fine" id="change-cost"></p>
+              <button class="btn brand small" id="save-settings" type="button">Propose changes</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="lane">
+          <header class="lane-head"><h2>Account</h2></header>
+          <div class="card settings-card">
+            <div class="detail-row"><span class="quiet">Network</span><b id="settings-network"></b></div>
+            <div class="detail-row"><span class="quiet">Address</span><code id="settings-address"></code></div>
+            <div class="detail-row"><span class="quiet">Key protection</span><b id="settings-protection"></b></div>
+          </div>
+        </section>
       </section>
     </div>
   </main>
@@ -253,36 +274,6 @@
     </div>
   </dialog>
 
-  <dialog id="rules-editor" aria-labelledby="rules-title">
-    <form class="sheet" id="rules-form">
-      <p class="eyebrow" id="rules-title">Spending rules</p>
-      <p class="fine">Each row: amounts up to a limit need that many palm approvals. The last row covers everything above.</p>
-      <div class="rule-rows" id="rule-rows"></div>
-      <button class="link" id="add-rule" type="button">Add a step</button>
-
-      <p class="eyebrow spaced">Approvers</p>
-      <div class="member-rows" id="member-rows"></div>
-      <div class="two">
-        <div>
-          <label for="new-member-code">Add by approver code</label>
-          <input id="new-member-code" autocomplete="off" spellcheck="false" placeholder="their code">
-        </div>
-        <div>
-          <label for="new-member-label">Their name</label>
-          <input id="new-member-label" maxlength="40" placeholder="Bob">
-        </div>
-      </div>
-
-      <p class="error" id="rules-error" role="alert"></p>
-      <div class="sheet-foot">
-        <p class="fine" id="rules-required"></p>
-        <div class="row">
-          <button class="link" id="rules-cancel" type="button">Cancel</button>
-          <button class="btn brand small" type="submit">Propose change</button>
-        </div>
-      </div>
-    </form>
-  </dialog>
 
   <p class="toast" id="toast" role="status" aria-live="polite" hidden></p>
 </body>
