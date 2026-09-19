@@ -114,6 +114,22 @@ const SCHEMA = [
         CHECK (kind IN ('create', 'withdraw', 'policy', 'recovery', 'account'));
     END IF;
   END $$`,
+
+  /*
+   * v5: a wallet made before the key moved into the browser can be moved in, which is its
+   * own kind of operation. Older wallets also predate the accounts table, so the Bitcoin
+   * account every wallet has is filled in from the wallet itself.
+   */
+  `DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'operations_kind_v5') THEN
+      ALTER TABLE operations DROP CONSTRAINT IF EXISTS operations_kind_v4;
+      ALTER TABLE operations ADD CONSTRAINT operations_kind_v5
+        CHECK (kind IN ('create', 'withdraw', 'policy', 'recovery', 'account', 'upgrade'));
+    END IF;
+  END $$`,
+  `INSERT INTO accounts (wallet_user_id, network, address, public_key, created_at)
+   SELECT user_id, 'bitcoin', address, public_key, created_at FROM wallets
+   ON CONFLICT (wallet_user_id, network) DO NOTHING`,
 ];
 
 const INT8 = 20; // Timestamps are BIGINT; read them back as numbers.

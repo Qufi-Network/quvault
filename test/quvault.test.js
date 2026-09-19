@@ -25,7 +25,7 @@ function mockWorld(clock) {
   const jwk = { ...publicKey.export({ format: 'jwk' }), kid: 'k1', alg: 'ES256', use: 'sig' };
   const requests = new Map();
   const log = { created: [], acks: [], cancelled: [], broadcast: [] };
-  const chain = { utxos: [], feeRate: 2, broadcastError: null };
+  const chain = { utxos: [], feeRate: 2, broadcastError: null, pending: 0 };
   const b64 = value => Buffer.from(JSON.stringify(value)).toString('base64url');
   const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
@@ -51,7 +51,7 @@ function mockWorld(clock) {
       if (rest === '/v1/fees/recommended') return json(200, { halfHourFee: chain.feeRate, hourFee: chain.feeRate });
       if (rest.startsWith('/address/')) {
         const funded = chain.utxos.reduce((sum, u) => sum + u.value, 0);
-        return json(200, { chain_stats: { funded_txo_sum: funded, spent_txo_sum: 0, tx_count: chain.utxos.length }, mempool_stats: { funded_txo_sum: 0, spent_txo_sum: 0, tx_count: 0 } });
+        return json(200, { chain_stats: { funded_txo_sum: funded, spent_txo_sum: 0, tx_count: chain.utxos.length }, mempool_stats: { funded_txo_sum: chain.pending, spent_txo_sum: 0, tx_count: chain.pending ? 1 : 0 } });
       }
       if (rest === '/tx' && method === 'POST') {
         if (chain.broadcastError) return new Response(chain.broadcastError, { status: 400 });
@@ -147,7 +147,7 @@ async function start(t, overrides = {}) {
     return { get: path => call('GET', path), post: (path, body = {}) => call('POST', path, body) };
   }
 
-  return { world, client, advance: seconds => { time += seconds; } };
+  return { world, client, app, advance: seconds => { time += seconds; } };
 }
 
 function ok(response) {

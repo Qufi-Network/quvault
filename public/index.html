@@ -8,7 +8,7 @@
   <link rel="icon" href="/qufi-mark.png" type="image/png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
   <link rel="stylesheet" href="/style.css">
   <script src="/app.js" type="module"></script>
 </head>
@@ -61,9 +61,10 @@
   <main id="view-create" class="view narrow" hidden>
     <p class="eyebrow">First step</p>
     <h1>Create your vault</h1>
-    <p class="lede">A new Bitcoin key is generated on the server and sealed immediately. The palm scan you do now binds the wallet to your account and is recorded with it.</p>
+    <p class="lede">A new key is made in this browser and never leaves it. The palm scan you do now binds the vault to your account and releases the secret that encrypts the key on this device.</p>
     <ul class="facts">
       <li>Nobody can spend from it without a palm approval</li>
+      <li>Twelve words restore it anywhere, shown only after two palm scans</li>
       <li>You can add other approvers and amount rules afterwards</li>
       <li>You can receive coins straight away</li>
     </ul>
@@ -111,6 +112,18 @@
           </div>
           <div class="ranges" id="ranges" role="group" aria-label="Chart range"></div>
         </header>
+
+        <section class="lane no-top" id="legacy-lane" hidden>
+          <div class="card notice">
+            <div class="notice-body">
+              <p class="eyebrow">Older vault</p>
+              <h2>This vault still signs on the server</h2>
+              <p class="quiet">It was made before the key moved into your browser, so it has no recovery phrase — and nothing for an Ethereum, Tron, Solana or Stellar address to come from. Moving it in makes a phrase here, sweeps every confirmed coin to the new address, and retires the key the server holds.</p>
+              <p class="error" id="legacy-error" role="alert"></p>
+            </div>
+            <button class="btn brand" id="legacy-move" type="button">Move this vault into this browser</button>
+          </div>
+        </section>
 
         <div class="card total">
           <div class="total-head">
@@ -252,6 +265,7 @@
             <div class="row">
               <button class="btn ghost small" id="show-phrase" type="button">Show recovery phrase</button>
               <button class="btn ghost small" id="restore-device" type="button">Restore on this device</button>
+              <button class="btn brand small" id="move-vault" type="button" hidden>Move this vault into this browser</button>
             </div>
             <p class="fine">The key lives in this browser and never reaches the server. Showing or restoring the phrase takes two palm scans, one per hand.</p>
             <p class="error" id="device-error" role="alert"></p>

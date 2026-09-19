@@ -322,8 +322,8 @@ const device = {
     return api(`/api/operations/${operationId}/unlock`, {});
   },
 
-  /** Makes the phrase, stores it encrypted, and registers only the public details. */
-  async create(operation) {
+  /** Makes the phrase and stores it encrypted, here and nowhere else. */
+  async makeKey(operation) {
     const [{ random }, unlocked] = await Promise.all([api('/api/random'), this.unlockFor(operation.id)]);
     const mnemonic = makeMnemonic({
       serverRandom: fromBase64(random),
@@ -332,12 +332,33 @@ const device = {
     const account = accountFrom(mnemonic);
     const blob = await encryptMnemonic(mnemonic, unlocked.unlock, unlocked.salt);
     await saveRecord({ blob, salt: unlocked.salt, address: account.address, publicKey: toHex(account.publicKey), createdAt: Date.now() });
+    this.record = await loadRecord();
+    return account;
+  },
+
+  /** A new vault: the server is told only the address and the public key. */
+  async create(operation) {
+    const account = await this.makeKey(operation);
     await api('/api/wallet/register', {
       operationId: operation.id,
       address: account.address,
       publicKey: toHex(account.publicKey),
     });
     return account;
+  },
+
+  /**
+   * A vault made before keys lived here: this browser makes and saves the new key first,
+   * then the server sweeps the old address and retires the key it was holding.
+   */
+  async moveIn(operation) {
+    const account = await this.makeKey(operation);
+    const result = await api('/api/wallet/upgrade', {
+      operationId: operation.id,
+      address: account.address,
+      publicKey: toHex(account.publicKey),
+    });
+    return { ...result, account };
   },
 
   /** Signs an approved withdrawal and hands the raw transaction back for broadcasting. */
@@ -429,6 +450,7 @@ function renderWallet(data) {
   renderAccounts(data);
   renderSettings(data);
   renderAccountPanes(data);
+  $('legacy-lane').hidden = wallet.custody === 'client';
   renderRequests($('pending'), data.pending);
   renderRequests($('send-pending'), data.pending.filter(op => op.kind === 'withdraw'));
   $('pending-lane').hidden = data.pending.length === 0;
@@ -523,9 +545,17 @@ function renderAccountPanes(data) {
 
 function openNewAccount() {
   if (!state.data) return;
+  $('new-account-error').textContent = '';
+  // A vault that still signs on the server has no phrase for another network to come from.
+  if (state.data.wallet?.custody !== 'client') {
+    $('network-list').replaceChildren(
+      el('p', { class: 'quiet' }, 'This vault was made before keys lived in the browser, so it has no recovery phrase for other networks to come from. Move it into this browser and the four other accounts become available.'),
+      button('Move this vault into this browser', 'btn brand wide', () => startMove($('new-account-error'))));
+    $('new-account').showModal();
+    return;
+  }
   const have = new Set((state.data.accounts || []).map(account => account.network));
   const choices = (state.data.networks || []).filter(network => !have.has(network.id));
-  $('new-account-error').textContent = '';
   $('network-list').replaceChildren(...(choices.length
     ? choices.map(network => el('button', { class: 'network-choice', type: 'button', onclick: () => addAccount(network) },
       el('span', { class: 'account-mark' }, MARKS[network.id] || network.symbol.slice(0, 1)),
@@ -548,6 +578,22 @@ async function addAccount(network) {
 
 $('add-account').addEventListener('click', openNewAccount);
 $('new-account-cancel').addEventListener('click', () => $('new-account').close());
+
+/* ------------------------------------------- moving an older vault in */
+
+async function startMove(errorNode) {
+  errorNode.textContent = '';
+  try {
+    const { operation } = await api('/api/wallet/upgrade/approval', {});
+    $('new-account').close();
+    openApproval(operation, 'Moving the vault into this browser…');
+  } catch (error) {
+    errorNode.textContent = friendly(error);
+  }
+}
+
+$('legacy-move').addEventListener('click', () => startMove($('legacy-error')));
+$('move-vault').addEventListener('click', () => startMove($('device-error')));
 
 function renderRequests(container, requests) {
   const { me, labels = {} } = state.data;
@@ -577,7 +623,7 @@ function renderRequests(container, requests) {
 
 const BUSY = {
   create: 'Creating the vault…', withdraw: 'Sending…', policy: 'Applying the new settings…',
-  account: 'Adding the account…', recovery: 'Opening your phrase…',
+  account: 'Adding the account…', recovery: 'Opening your phrase…', upgrade: 'Moving the vault into this browser…',
 };
 const busyText = op => BUSY[op.kind] || 'Working…';
 
@@ -625,12 +671,16 @@ function renderSettings(data) {
   $('settings-address').textContent = wallet.address;
   $('settings-protection').textContent = wallet.protection;
 
+  const legacy = wallet.custody !== 'client';
   const holds = device.holdsKeyFor(wallet);
-  $('device-state').textContent = holds
-    ? 'This browser holds the key for this wallet. The server has never seen it.'
-    : 'This browser does not hold the key. Restore it here with your twelve words, or use the browser that made the wallet.';
-  $('show-phrase').hidden = !holds;
-  $('restore-device').hidden = holds;
+  $('device-state').textContent = legacy
+    ? 'This vault was made before keys lived in the browser: its key is sealed on the server, so there is no recovery phrase and no other-network accounts.'
+    : holds
+      ? 'This browser holds the key for this wallet. The server has never seen it.'
+      : 'This browser does not hold the key. Restore it here with your twelve words, or use the browser that made the wallet.';
+  $('show-phrase').hidden = legacy || !holds;
+  $('restore-device').hidden = legacy || holds;
+  $('move-vault').hidden = !legacy;
   const changeCost = Math.min(Math.max(...policy.rules.map(rule => rule.approvals)), members.length);
   $('settings-required').textContent = `Changes here need ${changeCost} palm approval${changeCost === 1 ? '' : 's'}`;
   drawSettings();
@@ -957,6 +1007,7 @@ async function openApproval(operation, busy) {
   const kinds = {
     create: 'Palm approval · new vault', withdraw: 'Palm approval · withdrawal', policy: 'Palm approval · settings',
     account: 'Palm approval · new account', recovery: 'Palm approval · recovery phrase',
+    upgrade: 'Palm approval · moving the vault',
   };
   $('approval-kind').textContent = kinds[operation.kind] || 'Palm approval';
   $('approval-statement').textContent = operation.statement;
@@ -1059,6 +1110,12 @@ async function settled(current, operation) {
     } else if (operation.kind === 'recovery') {
       if (state.recoveryIntent === 'restore') await showRestore(operation);
       else await showPhrase(operation);
+    } else if (operation.kind === 'upgrade') {
+      toast('Making your key in this browser…');
+      const { txid, sweptSats } = await device.moveIn(operation);
+      toast(txid
+        ? `Vault moved. ${fmtSats(sweptSats)} sats are on their way to the new address (${shortId(txid)}).`
+        : 'Vault moved. The key is in this browser now — write the phrase down in Settings.');
     } else if (operation.kind === 'account') {
       toast('Deriving the address in this browser…');
       const account = await device.addAccount(operation);

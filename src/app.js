@@ -47,6 +47,9 @@ const SQL = {
   insertClientWallet: `INSERT INTO wallets (user_id, network, address, public_key, custody, unlock_sealed, salt, bound_sub, bound_decision, policy, created_at)
                        VALUES ($1, $2, $3, $4, 'client', $5, $6, $7, $8, $9, $10) ON CONFLICT (user_id) DO NOTHING`,
   setPolicy: 'UPDATE wallets SET policy = $1 WHERE user_id = $2',
+  moveWalletToBrowser: `UPDATE wallets SET address = $1, public_key = $2, custody = 'client', unlock_sealed = $3,
+                        salt = $4, sealed_key = NULL WHERE user_id = $5 AND custody = 'server'`,
+  setBitcoinAccount: `UPDATE accounts SET address = $1, public_key = $2 WHERE wallet_user_id = $3 AND network = 'bitcoin'`,
 
   accountsOf: 'SELECT * FROM accounts WHERE wallet_user_id = $1 ORDER BY created_at',
   accountOn: 'SELECT * FROM accounts WHERE wallet_user_id = $1 AND network = $2',
@@ -69,6 +72,7 @@ const SQL = {
   openOperationOfKind: `SELECT * FROM operations WHERE wallet_user_id = $1 AND kind = $2 AND status = 'collecting' ORDER BY seq DESC LIMIT 1`,
   startRunning: `UPDATE operations SET status = 'running' WHERE id = $1 AND status = 'collecting'`,
   finishOperation: 'UPDATE operations SET status = $1, txid = $2, error = $3, closed_at = $4 WHERE id = $5',
+  setOperationTxid: 'UPDATE operations SET txid = $1 WHERE id = $2 AND txid IS NULL',
   cancelOperation: `UPDATE operations SET status = 'cancelled', error = $1, closed_at = $2 WHERE id = $3 AND status = 'collecting'`,
   expireOperations: `UPDATE operations SET status = 'failed', error = 'Not enough palm approvals in time.', closed_at = $1
                      WHERE status = 'collecting' AND expires_at <= $1 RETURNING id`,
@@ -378,6 +382,19 @@ export function createApp(options) {
     return { txid: null };
   }
 
+  /**
+   * Moving a vault made before the key lived in the browser: the palm quorum is in, so mint
+   * the unlock secret the browser's new encrypted copy will need. The old key is only retired
+   * once the browser has reported its new address and the coins have been swept to it.
+   */
+  async function prepareUpgrade(op) {
+    const unlock = crypto.randomBytes(32);
+    const payload = { unlockSealed: seal(unlock, vault()), salt: crypto.randomBytes(16).toString('base64') };
+    unlock.fill(0);
+    await query('setPayload', JSON.stringify(payload), op.id);
+    return { txid: null };
+  }
+
   async function applyPolicy(op) {
     const payload = JSON.parse(op.payload);
     const time = now();
@@ -420,6 +437,7 @@ export function createApp(options) {
         : op.kind === 'policy' ? await applyPolicy(op)
         // Recovery and new accounts do nothing here: finishing them lets the owner's device
         // open the phrase, or derive the new network's address.
+        : op.kind === 'upgrade' ? await prepareUpgrade(op)
         : op.kind === 'recovery' || op.kind === 'account' ? { txid: null }
         : await broadcastPlan(op);
       await query('finishOperation', 'done', txid, null, time, op.id);
@@ -549,7 +567,7 @@ export function createApp(options) {
   async function unlockFor({ user, params: [id] }) {
     const op = await ownOperation(id, user);
     if (op.wallet_user_id !== user.id) throw new HttpError(403, 'Only the account owner can unlock this wallet.');
-    if (!['create', 'withdraw', 'recovery', 'account'].includes(op.kind)) throw new HttpError(409, 'Nothing to unlock for this request.');
+    if (!['create', 'withdraw', 'recovery', 'account', 'upgrade'].includes(op.kind)) throw new HttpError(409, 'Nothing to unlock for this request.');
     if (!['running', 'done'].includes(op.status)) throw new HttpError(409, 'This request is still collecting palm approvals.');
 
     const wallet = await one('walletOf', user.id);
@@ -559,6 +577,12 @@ export function createApp(options) {
       return { unlock: openSealed(payload.unlockSealed, vault()).toString('base64'), salt: payload.salt, label: payload.label };
     }
     if (!wallet) throw new HttpError(409, 'This account has no wallet.');
+    if (op.kind === 'upgrade') {
+      // The secret for the key this browser is about to make, not the one being retired.
+      if (wallet.custody === 'client') throw new HttpError(409, 'This vault already lives in your browser.');
+      const payload = JSON.parse(op.payload);
+      return { unlock: openSealed(payload.unlockSealed, vault()).toString('base64'), salt: payload.salt };
+    }
     if (wallet.custody !== 'client') throw new HttpError(409, 'This wallet signs on the server.');
     return {
       unlock: openSealed(wallet.unlock_sealed, vault()).toString('base64'),
@@ -628,7 +652,12 @@ export function createApp(options) {
 
   /** Every account this vault holds, with its balance read from that network. */
   async function accountsView(ownerId, wallet) {
-    const rows = await all('accountsOf', ownerId);
+    let rows = await all('accountsOf', ownerId);
+    if (!rows.some(row => row.network === 'bitcoin')) {
+      // A vault made before accounts existed still has the Bitcoin account it was created as.
+      await query('insertAccount', ownerId, 'bitcoin', wallet.address, wallet.public_key, wallet.created_at);
+      rows = await all('accountsOf', ownerId);
+    }
     const accounts = await Promise.all(rows.map(async row => {
       const network = NETWORKS[row.network];
       const [amount, qr] = await Promise.all([
@@ -660,7 +689,9 @@ export function createApp(options) {
     requirePalmReady();
     const wallet = await one('walletOf', user.id);
     if (!wallet) throw new HttpError(409, 'Create the wallet first.');
-    if (wallet.custody !== 'client') throw new HttpError(409, 'This wallet cannot add accounts.');
+    if (wallet.custody !== 'client') {
+      throw new HttpError(409, 'This vault was made before keys lived in the browser, so it has no recovery phrase for other networks to come from. Move it into this browser first.');
+    }
     const networkId = String(body.network ?? '');
     const network = NETWORKS[networkId];
     if (!network) throw new HttpError(400, 'Choose one of the supported networks.');
@@ -695,6 +726,87 @@ export function createApp(options) {
     if (await one('accountOn', user.id, networkId)) throw new HttpError(409, `This vault already has a ${network.label} account.`);
     await query('insertAccount', user.id, networkId, address, String(body.publicKey ?? '').slice(0, 130), now());
     return { ok: true };
+  }
+
+  /** Asks for the palm approvals that move a server-held vault into the owner's browser. */
+  async function requestUpgrade({ user }) {
+    requirePalmReady();
+    vault();
+    const wallet = await one('walletOf', user.id);
+    if (!wallet) throw new HttpError(409, 'Create the wallet first.');
+    if (wallet.custody === 'client') throw new HttpError(409, 'This vault already lives in your browser.');
+    const members = await all('membersOf', user.id);
+    const statement = 'Move this vault into my browser and retire the key held on the server';
+    const details = {
+      action: 'move key to browser',
+      network,
+      from: wallet.address,
+      coins: 'every confirmed coin is swept to the new address',
+      spending_rule: 'the same signers and thresholds keep applying',
+    };
+    const op = await newOperation({
+      walletOwnerId: user.id, user, kind: 'upgrade', statement, details,
+      required: requiredToChange(policyOf(wallet), members.length),
+    });
+    return { operation: operationView(op, [], user) };
+  }
+
+  /**
+   * The browser has made its key and saved it; now the server sweeps the old address with the
+   * key it still holds, and only then swaps the wallet over and forgets that key for good.
+   */
+  async function completeUpgrade({ user, body }) {
+    const op = await ownOperation(String(body.operationId ?? ''), user);
+    if (op.kind !== 'upgrade' || op.status !== 'done' || op.wallet_user_id !== user.id) {
+      throw new HttpError(409, 'That is not an approved move.');
+    }
+    const wallet = await one('walletOf', user.id);
+    if (!wallet) throw new HttpError(409, 'This account has no wallet.');
+    if (wallet.custody === 'client') return { wallet: walletView(wallet), txid: op.txid, sweptSats: 0 };
+
+    const address = String(body.address ?? '').trim();
+    const publicKey = String(body.publicKey ?? '').trim();
+    if (!isValidAddress(address)) throw new HttpError(400, `That is not a valid ${network} address.`);
+    if (!/^[0-9a-f]{66}$/i.test(publicKey)) throw new HttpError(400, 'That public key does not look right.');
+    if (addressOf(Buffer.from(publicKey, 'hex')) !== address) throw new HttpError(400, 'The address does not match the public key.');
+    if (address === wallet.address) throw new HttpError(400, 'The new address has to be a different one.');
+
+    let txid = null;
+    let sweptSats = 0;
+    try {
+      const [balance, utxos, feeRate] = await Promise.all([
+        chain.balance(wallet.address), chain.spendableUtxos(wallet.address), chain.feeRate(),
+      ]);
+      // An unconfirmed coin cannot be spent yet, and the old key is about to be destroyed.
+      if (balance.pending > 0) {
+        throw new HttpError(409, 'A payment here is still waiting for its first confirmation. Move the vault once it lands.');
+      }
+      if (utxos.length) {
+        const oldPublicKey = Buffer.from(wallet.public_key, 'hex');
+        const plan = planSpend({ publicKey: oldPublicKey, utxos, toAddress: address, amountSats: 'max', feeRate });
+        const privateKey = openSealed(wallet.sealed_key, vault());
+        try {
+          txid = await chain.broadcast(signPlan({ privateKey, publicKey: oldPublicKey, plan }).hex);
+        } finally {
+          privateKey.fill(0);
+        }
+        sweptSats = plan.sentSats;
+      }
+    } catch (error) {
+      if (error instanceof HttpError) throw error;
+      if (error instanceof ChainError || error instanceof WalletError) throw new HttpError(409, `The coins could not be moved: ${error.message}`);
+      throw error;
+    }
+
+    const payload = JSON.parse(op.payload);
+    await transaction(async q => {
+      const moved = await q('moveWalletToBrowser', address, publicKey, payload.unlockSealed, payload.salt, user.id);
+      if (!moved.count) throw new HttpError(409, 'This vault has already been moved.');
+      await q('setBitcoinAccount', address, publicKey, user.id);
+      await q('insertAccount', user.id, 'bitcoin', address, publicKey, now());
+    });
+    if (txid) await query('setOperationTxid', txid, op.id);
+    return { wallet: walletView(await one('walletOf', user.id)), txid, sweptSats };
   }
 
   async function requestWallet({ user, body }) {
@@ -760,7 +872,9 @@ export function createApp(options) {
     requirePalmReady();
     const wallet = await one('walletOf', user.id);
     if (!wallet) throw new HttpError(409, 'Create the wallet first.');
-    if (wallet.custody !== 'client') throw new HttpError(409, 'This wallet has no recovery phrase: it signs on the server.');
+    if (wallet.custody !== 'client') {
+      throw new HttpError(409, 'This vault signs on the server and has no recovery phrase. Move it into this browser to get one.');
+    }
     const statement = `Show the recovery phrase for my ${network} wallet`;
     const details = {
       action: 'reveal recovery phrase',
@@ -972,6 +1086,8 @@ export function createApp(options) {
     { method: 'GET', path: '/api/wallet', handler: getWallet, auth: true },
     { method: 'POST', path: '/api/wallet/approval', handler: requestWallet, auth: true },
     { method: 'POST', path: '/api/wallet/register', handler: registerWallet, auth: true },
+    { method: 'POST', path: '/api/wallet/upgrade/approval', handler: requestUpgrade, auth: true },
+    { method: 'POST', path: '/api/wallet/upgrade', handler: completeUpgrade, auth: true },
     { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/unlock$/, handler: unlockFor, auth: true },
     { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/broadcast$/, handler: broadcastSigned, auth: true },
     { method: 'POST', path: '/api/policy', handler: requestPolicy, auth: true },
@@ -1087,6 +1203,8 @@ export function createApp(options) {
   return {
     server,
     handle: safeHandle,
+    // For tests and maintenance scripts; nothing in a request path reaches for this.
+    db: database,
     async close() {
       await new Promise(resolve => {
         server.close(resolve);
