@@ -171,10 +171,30 @@ async function palmApprove(env, c, operationId, overrides) {
   return ok(await c.get(`/api/approvals/${approval.id}`));
 }
 
+/**
+ * Stands in for the owner's browser: after the palm scan it takes the unlock secret,
+ * makes its own key, and registers only the address and public key.
+ */
 async function walletFor(env, c) {
   const { operation } = ok(await c.post('/api/wallet/approval', { label: 'Owner' }));
   await palmApprove(env, c, operation.id);
+  const unlocked = ok(await c.post(`/api/operations/${operation.id}/unlock`, {}));
+  c.unlock = unlocked.unlock;
+  c.salt = unlocked.salt;
+  c.key = createKey();
+  c.publicKey = publicKeyOf(c.key);
+  c.address = addressOf(c.publicKey);
+  ok(await c.post('/api/wallet/register', {
+    operationId: operation.id, address: c.address, publicKey: c.publicKey.toString('hex'),
+  }));
   return ok(await c.get('/api/wallet')).wallet;
+}
+
+/** The browser signing an approved plan and handing back the raw transaction. */
+async function signAndSend(env, c, operationId) {
+  const { plan } = ok(await c.post(`/api/operations/${operationId}/unlock`, {}));
+  const signed = signPlan({ privateKey: c.key, publicKey: c.publicKey, plan });
+  return ok(await c.post(`/api/operations/${operationId}/broadcast`, { hex: signed.hex }));
 }
 
 /** Adds an approver and sets the amount rules, through the palm-approved policy change. */
@@ -232,8 +252,21 @@ test('creating the wallet needs a palm scan, and binds the key to that account',
 
   const settled = await palmApprove(env, c, operation.id);
   assert.equal(settled.operation.status, 'done');
+  assert.equal(ok(await c.get('/api/wallet')).wallet, null, 'still no wallet: the browser has not made a key yet');
+
+  const unlocked = ok(await c.post(`/api/operations/${operation.id}/unlock`, {}));
+  assert.ok(unlocked.unlock && unlocked.salt, 'the browser gets its unlock secret and salt');
+  const key = createKey();
+  const publicKey = publicKeyOf(key);
+  const address = addressOf(publicKey);
+
+  // The address must match the public key, and the public key must look like one.
+  assert.equal((await c.post('/api/wallet/register', { operationId: operation.id, address, publicKey: 'nope' })).status, 400);
+  assert.equal((await c.post('/api/wallet/register', { operationId: operation.id, address: DEST, publicKey: publicKey.toString('hex') })).status, 400);
+  ok(await c.post('/api/wallet/register', { operationId: operation.id, address, publicKey: publicKey.toString('hex') }));
+
   const view = ok(await c.get('/api/wallet'));
-  assert.match(view.wallet.address, /^tb1q/);
+  assert.equal(view.wallet.address, address);
   assert.deepEqual(view.members, [{ id: c.id, label: 'Alex', owner: true }]);
   assert.deepEqual(view.policy.rules, [{ upToSats: null, approvals: 1 }]);
   assert.equal(env.world.log.acks.length, 1);
@@ -241,6 +274,74 @@ test('creating the wallet needs a palm scan, and binds the key to that account',
   assert.equal((await c.post('/api/wallet/approval', {})).status, 409);
   const other = await signedIn(env, 'sub-omar');
   assert.notEqual((await walletFor(env, other)).address, view.wallet.address);
+});
+
+test('the server keeps no key: it never receives one and cannot sign', async t => {
+  const env = await start(t);
+  const c = await signedIn(env, 'sub-alex');
+  await walletFor(env, c);
+  env.world.chain.utxos = [{ txid: '9'.repeat(64), vout: 0, value: 300_000 }];
+
+  const { operation } = ok(await c.post('/api/withdrawals', { to: DEST, amount: 70_000 }));
+  const settled = await palmApprove(env, c, operation.id);
+  assert.equal(settled.operation.status, 'running', 'approved, and now waiting for the owner to sign');
+  assert.equal(env.world.log.broadcast.length, 0, 'the server did not sign anything itself');
+
+  const sent = await signAndSend(env, c, operation.id);
+  assert.ok(sent.txid);
+  assert.equal(env.world.log.broadcast.length, 1);
+  assert.equal(ok(await c.get('/api/wallet')).history[0].txid, sent.txid);
+});
+
+test('a transaction that does not match the approved plan is never sent', async t => {
+  const env = await start(t);
+  const c = await signedIn(env, 'sub-alex');
+  await walletFor(env, c);
+  const other = await signedIn(env, 'sub-omar');
+  env.world.chain.utxos = [{ txid: '8'.repeat(64), vout: 0, value: 300_000 }];
+
+  const { operation, plan } = ok(await c.post('/api/withdrawals', { to: DEST, amount: 70_000 }));
+  assert.equal((await c.post(`/api/operations/${operation.id}/unlock`, {})).status, 409, 'no unlock before the palms');
+  assert.equal((await c.post(`/api/operations/${operation.id}/broadcast`, { hex: '00' })).status, 409, 'no sending before the palms');
+  await palmApprove(env, c, operation.id);
+  assert.equal((await other.post(`/api/operations/${operation.id}/unlock`, {})).status, 404, 'nobody else can unlock it');
+
+  // Sign a transaction that pays somewhere else.
+  const sneaky = signPlan({
+    privateKey: c.key,
+    publicKey: c.publicKey,
+    plan: { ...plan, outputs: [{ address: addressOf(publicKeyOf(createKey())), sats: plan.outputs[0].sats }, plan.outputs[1]] },
+  });
+  const refused = await c.post(`/api/operations/${operation.id}/broadcast`, { hex: sneaky.hex });
+  assert.equal(refused.status, 400);
+  assert.match(refused.body.error, /different amounts|different coins/);
+  assert.match((await c.post(`/api/operations/${operation.id}/broadcast`, { hex: 'not hex at all' })).body.error, /not a readable/);
+  assert.equal(env.world.log.broadcast.length, 0, 'nothing reached the network');
+
+  const sent = await signAndSend(env, c, operation.id);
+  assert.equal(env.world.log.broadcast.length, 1);
+  assert.equal(ok(await c.post(`/api/operations/${operation.id}/broadcast`, { hex: '00' })).txid, sent.txid, 'repeats return the same result');
+  assert.equal(env.world.log.broadcast.length, 1);
+});
+
+test('the recovery phrase needs two palm scans', async t => {
+  const env = await start(t);
+  const c = await signedIn(env, 'sub-alex');
+  await walletFor(env, c);
+
+  const { operation } = ok(await c.post('/api/recovery', {}));
+  assert.equal(operation.required, 2);
+  assert.match(operation.details.scans, /two palm scans/);
+
+  const first = await palmApprove(env, c, operation.id);
+  assert.equal(first.operation.status, 'collecting', 'one hand is not enough');
+  assert.equal((await c.post(`/api/operations/${operation.id}/unlock`, {})).status, 409);
+
+  const second = await palmApprove(env, c, operation.id);
+  assert.equal(second.operation.status, 'done');
+  const unlocked = ok(await c.post(`/api/operations/${operation.id}/unlock`, {}));
+  assert.equal(unlocked.unlock, c.unlock, 'the same unlock secret opens the phrase on this device');
+  assert.equal((await c.post(`/api/operations/${operation.id}/approval`, {})).status, 409, 'no third scan');
 });
 
 test('a decision that is not a palm scan never creates a wallet', async t => {
@@ -269,8 +370,9 @@ test('a withdrawal is planned, signed only after the palm scan, and broadcast ex
   assert.equal(operation.details.approvals_required, '1 of 1 approver');
   assert.equal(env.world.log.broadcast.length, 0, 'nothing is broadcast before the palm scan');
 
-  const settled = await palmApprove(env, c, operation.id);
-  assert.equal(settled.operation.status, 'done');
+  const approved = await palmApprove(env, c, operation.id);
+  assert.equal(approved.operation.status, 'running', 'approved, waiting for the owner to sign');
+  const settled = { operation: { ...approved.operation, ...(await signAndSend(env, c, operation.id)) } };
   assert.ok(settled.operation.txid);
   assert.equal(env.world.log.broadcast.length, 1);
 
@@ -305,7 +407,8 @@ test('a bigger amount needs two palms, from two different people', async t => {
   // Small: one palm is enough.
   const small = ok(await alex.post('/api/withdrawals', { to: DEST, amount: 50_000 }));
   assert.equal(small.operation.required, 1);
-  assert.equal((await palmApprove(env, alex, small.operation.id)).operation.status, 'done');
+  assert.equal((await palmApprove(env, alex, small.operation.id)).operation.status, 'running');
+  await signAndSend(env, alex, small.operation.id);
   assert.equal(env.world.log.broadcast.length, 1);
 
   // Large: Alex alone is not enough; Bob completes it.
@@ -322,9 +425,10 @@ test('a bigger amount needs two palms, from two different people', async t => {
   assert.equal((await alex.post(`/api/operations/${big.operation.id}/approval`, {})).status, 409, 'one person cannot approve twice');
 
   const second = await palmApprove(env, bob, big.operation.id);
-  assert.equal(second.operation.status, 'done');
+  assert.equal(second.operation.status, 'running', 'both palms in; now the owner device signs');
+  const sent = await signAndSend(env, alex, big.operation.id);
   assert.equal(env.world.log.broadcast.length, 2);
-  assert.equal(ok(await bob.get('/api/wallet')).history[0].txid, second.operation.txid, 'the approver sees it too');
+  assert.equal(ok(await bob.get('/api/wallet')).history[0].txid, sent.txid, 'the approver sees it too');
 });
 
 test('only approvers can approve, and the rules cannot be weakened alone', async t => {
@@ -400,10 +504,12 @@ test('a failed broadcast is reported and never marked as sent', async t => {
   env.world.chain.broadcastError = 'sendrawtransaction RPC error: txn-mempool-conflict';
 
   const { operation } = ok(await c.post('/api/withdrawals', { to: DEST, amount: 40_000 }));
-  const settled = await palmApprove(env, c, operation.id);
-  assert.equal(settled.operation.status, 'failed');
-  assert.match(settled.operation.error, /txn-mempool-conflict/);
-  assert.equal(settled.operation.txid, null);
+  await palmApprove(env, c, operation.id);
+  const { plan } = ok(await c.post(`/api/operations/${operation.id}/unlock`, {}));
+  const signed = signPlan({ privateKey: c.key, publicKey: c.publicKey, plan });
+  const rejected = await c.post(`/api/operations/${operation.id}/broadcast`, { hex: signed.hex });
+  assert.equal(rejected.status, 502);
+  assert.match(rejected.body.error, /txn-mempool-conflict/);
   assert.equal(ok(await c.get('/api/wallet')).history[0].status, 'failed');
 });
 

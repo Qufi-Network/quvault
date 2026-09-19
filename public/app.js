@@ -1,3 +1,8 @@
+import {
+  accountFrom, clearRecord, decryptMnemonic, encryptMnemonic, fromBase64, jitterFrom,
+  loadRecord, makeMnemonic, saveRecord, signPlan,
+} from '/vendor/wallet.js';
+
 const $ = id => document.getElementById(id);
 
 const VIEWS = ['loading', 'setup', 'signin', 'create', 'wallet'];
@@ -118,6 +123,7 @@ async function refresh() {
     throw error;
   }
   state.data = data;
+  await device.load();
   if (!data.wallet) {
     $('my-code').textContent = data.me.code;
     renderRequests($('create-pending'), data.pending);
@@ -286,6 +292,79 @@ async function finishRedirectSignIn() {
   await api('/api/login/finish', { token: tokens.id_token });
 }
 
+/* ------------------------------------------------- the key, on this device */
+
+/**
+ * Everything that touches key material happens here, in the browser. The server only ever
+ * sees an address, a public key, and a signed transaction it can check against the plan.
+ */
+const device = {
+  record: null,
+
+  async load() {
+    try {
+      this.record = (await loadRecord()) ?? null;
+    } catch {
+      this.record = null;
+    }
+    return this.record;
+  },
+
+  /** True when this browser holds the key for the wallet the server knows about. */
+  holdsKeyFor(wallet) {
+    return Boolean(this.record && wallet && this.record.address === wallet.address);
+  },
+
+  async unlockFor(operationId) {
+    return api(`/api/operations/${operationId}/unlock`, {});
+  },
+
+  /** Makes the phrase, stores it encrypted, and registers only the public details. */
+  async create(operation) {
+    const [{ random }, unlocked] = await Promise.all([api('/api/random'), this.unlockFor(operation.id)]);
+    const mnemonic = makeMnemonic({
+      serverRandom: fromBase64(random),
+      jitter: jitterFrom([operation.id, unlocked.salt, screen.width, screen.height]),
+    });
+    const account = accountFrom(mnemonic);
+    const blob = await encryptMnemonic(mnemonic, unlocked.unlock, unlocked.salt);
+    await saveRecord({ blob, salt: unlocked.salt, address: account.address, publicKey: toHex(account.publicKey), createdAt: Date.now() });
+    await api('/api/wallet/register', {
+      operationId: operation.id,
+      address: account.address,
+      publicKey: toHex(account.publicKey),
+    });
+    return account;
+  },
+
+  /** Signs an approved withdrawal and hands the raw transaction back for broadcasting. */
+  async send(operation) {
+    if (!this.record) throw new Error('This browser does not hold the key for this wallet.');
+    const unlocked = await this.unlockFor(operation.id);
+    const mnemonic = await decryptMnemonic(this.record.blob, unlocked.unlock, this.record.salt);
+    const signed = signPlan(mnemonic, unlocked.plan, this.record.address);
+    return api(`/api/operations/${operation.id}/broadcast`, { hex: signed.hex });
+  },
+
+  async phrase(operation) {
+    if (!this.record) throw new Error('This browser does not hold the key for this wallet.');
+    const unlocked = await this.unlockFor(operation.id);
+    return decryptMnemonic(this.record.blob, unlocked.unlock, this.record.salt);
+  },
+
+  /** Puts an existing phrase back on this device, after the two-scan ceremony. */
+  async restore(operation, mnemonic, expectedAddress) {
+    const account = accountFrom(mnemonic);
+    if (account.address !== expectedAddress) throw new Error('Those words belong to a different wallet.');
+    const unlocked = await this.unlockFor(operation.id);
+    const blob = await encryptMnemonic(mnemonic, unlocked.unlock, unlocked.salt);
+    await saveRecord({ blob, salt: unlocked.salt, address: account.address, publicKey: toHex(account.publicKey), createdAt: Date.now() });
+    this.record = await loadRecord();
+  },
+};
+
+const toHex = bytes => [...bytes].map(b => b.toString(16).padStart(2, '0')).join('');
+
 /* -------------------------------------------------------- the wallet */
 
 $('create-wallet').addEventListener('click', async () => {
@@ -321,7 +400,7 @@ function renderWallet(data) {
   if (balance?.pending) notes.push(`${fmtSats(balance.pending)} sats still unconfirmed`);
   if (coins) notes.push(`${coins} spendable coin${coins === 1 ? '' : 's'} (${fmtSats(spendable)} sats)`);
   else if (balance && !balance.txCount) notes.push('No coins yet — open Receive funds for your address.');
-  notes.push(`Key sealed with ${wallet.protection}`);
+  notes.push(device.holdsKeyFor(wallet) ? 'Key held in this browser only' : 'Key not on this device — restore it in Settings');
   $('balance-note').textContent = notes.join(' · ');
   $('chain-error').textContent = chainError || '';
   $('fee-note').textContent = feeRate ? `Network suggests ${feeRate} sat/vB` : '';
@@ -444,6 +523,13 @@ function renderSettings(data) {
   $('settings-network').textContent = wallet.network;
   $('settings-address').textContent = wallet.address;
   $('settings-protection').textContent = wallet.protection;
+
+  const holds = device.holdsKeyFor(wallet);
+  $('device-state').textContent = holds
+    ? 'This browser holds the key for this wallet. The server has never seen it.'
+    : 'This browser does not hold the key. Restore it here with your twelve words, or use the browser that made the wallet.';
+  $('show-phrase').hidden = !holds;
+  $('restore-device').hidden = holds;
   const changeCost = Math.min(Math.max(...policy.rules.map(rule => rule.approvals)), members.length);
   $('settings-required').textContent = `Changes here need ${changeCost} palm approval${changeCost === 1 ? '' : 's'}`;
   drawSettings();
@@ -532,6 +618,57 @@ $('save-settings').addEventListener('click', async () => {
     $('rules-error').textContent = friendly(error);
   }
 });
+
+/* ------------------------------------------------- phrase and restore */
+
+async function showPhrase(operation) {
+  const mnemonic = await device.phrase(operation);
+  $('phrase-words').replaceChildren(...mnemonic.split(' ').map(word => el('li', {}, word)));
+  $('phrase').showModal();
+}
+
+$('phrase-done').addEventListener('click', () => {
+  $('phrase-words').replaceChildren(); // do not leave the words sitting in the page
+  $('phrase').close();
+});
+
+async function showRestore(operation) {
+  state.restoreOperation = operation;
+  $('restore-error').textContent = '';
+  $('restore-words').value = '';
+  $('restore').showModal();
+}
+
+$('restore-cancel').addEventListener('click', () => $('restore').close());
+
+$('restore-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  $('restore-error').textContent = '';
+  const words = $('restore-words').value.trim().replace(/\s+/g, ' ').toLowerCase();
+  try {
+    await device.restore(state.restoreOperation, words, state.data.wallet.address);
+    $('restore-words').value = '';
+    $('restore').close();
+    toast('This device holds the key again.');
+    refresh().catch(() => {});
+  } catch (error) {
+    $('restore-error').textContent = friendly(error);
+  }
+});
+
+$('show-phrase').addEventListener('click', () => startRecovery('show'));
+$('restore-device').addEventListener('click', () => startRecovery('restore'));
+
+async function startRecovery(intent) {
+  $('device-error').textContent = '';
+  state.recoveryIntent = intent;
+  try {
+    const { operation } = await api('/api/recovery', {});
+    openApproval(operation, intent === 'restore' ? 'Getting ready to restore…' : 'Opening your phrase…');
+  } catch (error) {
+    $('device-error').textContent = friendly(error);
+  }
+}
 
 /* -------------------------------------------------------------- price */
 
@@ -780,24 +917,49 @@ async function pollApproval(current) {
   }
 }
 
-function settled(current, operation) {
+async function settled(current, operation) {
   if (active !== current) return;
   active = null;
   $('approval').close();
   $('approval-wait').hidden = false;
 
-  if (operation.status === 'failed') toast(operation.error || 'The action failed.');
-  else if (operation.status !== 'done') {
+  if (operation.status === 'failed') {
+    toast(operation.error || 'The action failed.');
+    return refresh().catch(() => {});
+  }
+
+  // The recovery ceremony takes two scans: open the sheet again for the other hand.
+  if (operation.kind === 'recovery' && operation.status === 'collecting') {
+    toast('First hand done. Now the other hand.');
+    return openApproval(operation, 'Opening your phrase…');
+  }
+
+  if (operation.status !== 'done' && operation.status !== 'running') {
     const left = operation.required - operation.approvedBy.length;
     toast(`Approved. Waiting for ${left} more palm approval${left === 1 ? '' : 's'}.`);
-  } else if (operation.kind === 'create') toast('Vault created. Only palm approvals can spend from it.');
-  else if (operation.kind === 'policy') toast('New settings are in force.');
-  else if (operation.txid) toast(`Sent. Transaction ${shortId(operation.txid)} is on the network.`);
-  else toast('Approved.');
+    return refresh().catch(() => {});
+  }
 
-  if (operation.kind === 'withdraw' && operation.status === 'done') {
-    $('send-form').reset();
-    $('send-amount').disabled = false;
+  try {
+    if (operation.kind === 'create') {
+      toast('Making your key in this browser…');
+      const account = await device.create(operation);
+      toast(`Wallet ready: ${account.address.slice(0, 12)}…`);
+    } else if (operation.kind === 'withdraw') {
+      // The quorum is complete; this browser is the only place that can sign it.
+      toast('Signing on this device…');
+      const { txid } = await device.send(operation);
+      toast(`Sent. Transaction ${shortId(txid)} is on the network.`);
+      $('send-form').reset();
+      $('send-amount').disabled = false;
+    } else if (operation.kind === 'recovery') {
+      if (state.recoveryIntent === 'restore') await showRestore(operation);
+      else await showPhrase(operation);
+    } else if (operation.kind === 'policy') {
+      toast('New settings are in force.');
+    }
+  } catch (error) {
+    toast(friendly(error));
   }
   refresh().catch(() => {});
 }

@@ -7,7 +7,9 @@ import { openDb } from './db.js';
 import { createVeyns, actionDigest, isFresh, randomId, HttpError } from './veyns.js';
 import { serverKeys, seal, open as openSealed } from './vault.js';
 import { createChain, createPrices, ChainError } from './chain.js';
-import { createKey, publicKeyOf, addressOf, planSpend, signPlan, isValidAddress, toBtc, WalletError } from './bitcoin.js';
+import {
+  createKey, publicKeyOf, addressOf, planSpend, signPlan, isValidAddress, toBtc, verifyAgainstPlan, WalletError,
+} from './bitcoin.js';
 import { DEFAULT_POLICY, PolicyError, describePolicy, requiredFor, requiredToChange, validatePolicy } from './policy.js';
 
 const SESSION_COOKIE = 'palmsafe_sid';
@@ -41,6 +43,8 @@ const SQL = {
   walletOf: 'SELECT * FROM wallets WHERE user_id = $1',
   insertWallet: `INSERT INTO wallets (user_id, network, address, public_key, sealed_key, bound_sub, bound_decision, policy, created_at)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (user_id) DO NOTHING`,
+  insertClientWallet: `INSERT INTO wallets (user_id, network, address, public_key, custody, unlock_sealed, salt, bound_sub, bound_decision, policy, created_at)
+                       VALUES ($1, $2, $3, $4, 'client', $5, $6, $7, $8, $9, $10) ON CONFLICT (user_id) DO NOTHING`,
   setPolicy: 'UPDATE wallets SET policy = $1 WHERE user_id = $2',
 
   membersOf: 'SELECT * FROM members WHERE wallet_user_id = $1 ORDER BY is_owner DESC, added_at',
@@ -62,12 +66,16 @@ const SQL = {
   cancelOperation: `UPDATE operations SET status = 'cancelled', error = $1, closed_at = $2 WHERE id = $3 AND status = 'collecting'`,
   expireOperations: `UPDATE operations SET status = 'failed', error = 'Not enough palm approvals in time.', closed_at = $1
                      WHERE status = 'collecting' AND expires_at <= $1 RETURNING id`,
+  // Approved, but the owner's device never came back to sign.
+  expireUnsigned: `UPDATE operations SET status = 'failed', error = 'Approved, but never signed on the owner''s device.', closed_at = $1
+                   WHERE status = 'running' AND kind = 'withdraw' AND expires_at + 3600 <= $1 RETURNING id`,
+  setPayload: 'UPDATE operations SET payload = $1 WHERE id = $2',
 
   approvalsOf: `SELECT a.*, u.id AS member_id FROM approvals a JOIN users u ON u.id = a.user_id WHERE a.operation_id = $1`,
   approvalById: 'SELECT * FROM approvals WHERE id = $1',
-  myApproval: 'SELECT * FROM approvals WHERE operation_id = $1 AND user_id = $2',
+  myApprovals: 'SELECT * FROM approvals WHERE operation_id = $1 AND user_id = $2 ORDER BY slot',
   ownApproval: 'SELECT * FROM approvals WHERE id = $1 AND user_id = $2',
-  insertApproval: `INSERT INTO approvals (id, operation_id, user_id, status, created_at) VALUES ($1, $2, $3, 'open', $4)`,
+  insertApproval: `INSERT INTO approvals (id, operation_id, user_id, slot, status, created_at) VALUES ($1, $2, $3, $4, 'open', $5)`,
   countApproved: `SELECT count(*)::int AS n FROM approvals WHERE operation_id = $1 AND status = 'approved'`,
   closeApproval: `UPDATE approvals SET status = $1, error = $2, closed_at = $3 WHERE id = $4 AND status = 'open'`,
   claimApproval: `UPDATE approvals SET status = 'approved', proof_id = $1, closed_at = $2 WHERE id = $3 AND status = 'open'`,
@@ -204,7 +212,10 @@ export function createApp(options) {
     network: w.network,
     createdAt: w.created_at,
     explorer: chain.explorerAddress(w.address),
-    protection: 'ML-KEM-768 + X25519 + AES-256-GCM',
+    custody: w.custody,
+    protection: w.custody === 'client'
+      ? 'Key in the owner’s browser; its unlock secret sealed with ML-KEM-768 + X25519'
+      : 'ML-KEM-768 + X25519 + AES-256-GCM',
   });
 
   const memberView = m => ({ id: m.member_id, label: m.label, owner: m.is_owner });
@@ -288,7 +299,7 @@ export function createApp(options) {
       + 'Check that this account has its palm scanner connected and is admitted to the palm pilot.');
   }
 
-  /** Ends operations whose quorum never arrived. Runs before every signed-in request. */
+  /** Ends operations whose quorum never arrived, or that were approved but never signed. */
   async function expireOperations() {
     const time = now();
     const closed = await transaction(async q => {
@@ -296,6 +307,7 @@ export function createApp(options) {
       for (const op of (await q('expireOperations', time)).rows) {
         rows.push(...(await q('cancelApprovalsOf', time, op.id)).rows);
       }
+      await q('expireUnsigned', time);
       return rows;
     });
     cancelRemote(closed);
@@ -337,17 +349,23 @@ export function createApp(options) {
 
   /* ------------------------------------------ what a finished quorum does */
 
+  /**
+   * The key itself is made in the owner's browser. All this does is mint the unlock secret
+   * that the browser's encrypted copy will need, seal it, and note the palm decision that
+   * authorised the wallet. The server never sees a phrase or a private key.
+   */
   async function createWallet(op, decisionId) {
     const owner = await one('userById', op.wallet_user_id);
     if (await one('walletOf', owner.id)) throw new HttpError(409, 'This account already has a wallet.');
-    const keys = vault();
-    const privateKey = createKey();
-    const publicKey = publicKeyOf(privateKey);
-    const address = addressOf(publicKey);
-    await query('insertWallet', owner.id, network, address, publicKey.toString('hex'),
-      seal(privateKey, keys), owner.sub, decisionId, JSON.stringify(DEFAULT_POLICY), now());
-    privateKey.fill(0);
-    await query('insertMember', owner.id, owner.id, JSON.parse(op.details).owner_label || 'Owner', true, now());
+    const unlock = crypto.randomBytes(32);
+    const payload = {
+      unlockSealed: seal(unlock, vault()),
+      salt: crypto.randomBytes(16).toString('base64'),
+      decisionId,
+      label: JSON.parse(op.details).owner_label || 'Owner',
+    };
+    unlock.fill(0);
+    await query('setPayload', JSON.stringify(payload), op.id);
     return { txid: null };
   }
 
@@ -364,6 +382,7 @@ export function createApp(options) {
     return { txid: null };
   }
 
+  /** Only for wallets made before the key moved into the browser. */
   async function broadcastPlan(op) {
     const wallet = await one('walletOf', op.wallet_user_id);
     if (!wallet) throw new HttpError(409, 'This account has no wallet.');
@@ -382,8 +401,16 @@ export function createApp(options) {
   async function runOperation(op, decisionId) {
     const time = now();
     try {
+      if (op.kind === 'withdraw') {
+        const wallet = await one('walletOf', op.wallet_user_id);
+        // With the key in the owner's browser, the quorum is complete but the signing is not:
+        // the operation waits, and the owner's device signs and sends it.
+        if (wallet?.custody === 'client') return;
+      }
       const { txid } = op.kind === 'create' ? await createWallet(op, decisionId)
         : op.kind === 'policy' ? await applyPolicy(op)
+        // Recovery unlocks nothing here: finishing it simply lets the owner's device open the phrase.
+        : op.kind === 'recovery' ? { txid: null }
         : await broadcastPlan(op);
       await query('finishOperation', 'done', txid, null, time, op.id);
     } catch (error) {
@@ -498,6 +525,84 @@ export function createApp(options) {
     return view;
   }
 
+  /** Randomness the browser mixes into a new phrase, so it never relies on one generator. */
+  function getRandom() {
+    return { random: crypto.randomBytes(32).toString('base64') };
+  }
+
+  /**
+   * Hands the browser the unlock secret for its encrypted key — only for an operation whose
+   * palm approvals are complete, and only to the person whose device holds that key.
+   */
+  async function unlockFor({ user, params: [id] }) {
+    const op = await ownOperation(id, user);
+    if (op.wallet_user_id !== user.id) throw new HttpError(403, 'Only the account owner can unlock this wallet.');
+    if (!['create', 'withdraw', 'recovery'].includes(op.kind)) throw new HttpError(409, 'Nothing to unlock for this request.');
+    if (!['running', 'done'].includes(op.status)) throw new HttpError(409, 'This request is still collecting palm approvals.');
+
+    const wallet = await one('walletOf', user.id);
+    if (op.kind === 'create') {
+      if (wallet) throw new HttpError(409, 'This account already has a wallet.');
+      const payload = JSON.parse(op.payload);
+      return { unlock: openSealed(payload.unlockSealed, vault()).toString('base64'), salt: payload.salt, label: payload.label };
+    }
+    if (!wallet) throw new HttpError(409, 'This account has no wallet.');
+    if (wallet.custody !== 'client') throw new HttpError(409, 'This wallet signs on the server.');
+    return {
+      unlock: openSealed(wallet.unlock_sealed, vault()).toString('base64'),
+      salt: wallet.salt,
+      ...(op.kind === 'withdraw' ? { plan: JSON.parse(op.payload), address: wallet.address } : {}),
+    };
+  }
+
+  /** The browser reports the address it derived; the server stores only public details. */
+  async function registerWallet({ user, body }) {
+    const op = await ownOperation(String(body.operationId ?? ''), user);
+    if (op.kind !== 'create' || op.status !== 'done' || op.wallet_user_id !== user.id) {
+      throw new HttpError(409, 'That is not a finished wallet creation.');
+    }
+    if (await one('walletOf', user.id)) throw new HttpError(409, 'This account already has a wallet.');
+    const address = String(body.address ?? '').trim();
+    const publicKey = String(body.publicKey ?? '').trim();
+    if (!isValidAddress(address)) throw new HttpError(400, `That is not a valid ${network} address.`);
+    if (!/^[0-9a-f]{66}$/i.test(publicKey)) throw new HttpError(400, 'That public key does not look right.');
+    if (addressOf(Buffer.from(publicKey, 'hex')) !== address) throw new HttpError(400, 'The address does not match the public key.');
+
+    const payload = JSON.parse(op.payload);
+    const time = now();
+    await query('insertClientWallet', user.id, network, address, publicKey, payload.unlockSealed, payload.salt,
+      user.sub, payload.decisionId, JSON.stringify(DEFAULT_POLICY), time);
+    await query('insertMember', user.id, user.id, payload.label || 'Owner', true, time);
+    return { wallet: walletView(await one('walletOf', user.id)) };
+  }
+
+  /** Takes the transaction the owner's browser signed, checks it against the approved plan, sends it. */
+  async function broadcastSigned({ user, params: [id], body }) {
+    const op = await ownOperation(id, user);
+    if (op.wallet_user_id !== user.id) throw new HttpError(403, 'Only the account owner can send this.');
+    if (op.kind !== 'withdraw') throw new HttpError(409, 'That request is not a withdrawal.');
+    if (op.status === 'done' && op.txid) return { txid: op.txid };
+    if (op.status !== 'running') throw new HttpError(409, 'This withdrawal is not ready to send.');
+
+    const plan = JSON.parse(op.payload);
+    let checked;
+    try {
+      checked = verifyAgainstPlan(String(body.hex ?? ''), plan);
+    } catch (error) {
+      if (error instanceof WalletError) throw new HttpError(400, error.message);
+      throw error;
+    }
+    try {
+      const txid = await chain.broadcast(String(body.hex).trim());
+      await query('finishOperation', 'done', txid, null, now(), op.id);
+      return { txid };
+    } catch (error) {
+      if (!(error instanceof ChainError)) throw error;
+      await query('finishOperation', 'failed', null, error.message, now(), op.id);
+      throw new HttpError(502, error.message);
+    }
+  }
+
   /** Market price for the dashboard chart. Never touches wallet state. */
   async function getPrice() {
     try {
@@ -566,6 +671,23 @@ export function createApp(options) {
     return { operation: operationView(op, [], user), policy, members };
   }
 
+  /** The recovery phrase ceremony: two palm scans, one per hand, before the words are shown. */
+  async function requestRecovery({ user }) {
+    requirePalmReady();
+    const wallet = await one('walletOf', user.id);
+    if (!wallet) throw new HttpError(409, 'Create the wallet first.');
+    if (wallet.custody !== 'client') throw new HttpError(409, 'This wallet has no recovery phrase: it signs on the server.');
+    const statement = `Show the recovery phrase for my ${network} wallet`;
+    const details = {
+      action: 'reveal recovery phrase',
+      network,
+      scans: 'two palm scans, one per hand',
+      warning: 'anyone who sees these words can spend the wallet',
+    };
+    const op = await newOperation({ walletOwnerId: user.id, user, kind: 'recovery', statement, details, required: 2 });
+    return { operation: operationView(op, [], user) };
+  }
+
   /** Plans an exact spend and works out how many palms it needs. */
   async function requestWithdrawal({ user, body }) {
     requirePalmReady();
@@ -627,14 +749,17 @@ export function createApp(options) {
       throw new HttpError(403, 'Only the owner can create this wallet.');
     }
 
-    const existing = await one('myApproval', op.id, user.id);
-    if (existing) {
-      if (existing.status === 'approved') throw new HttpError(409, 'You have already approved this.');
-      if (existing.status === 'open') return { approval: { id: existing.id, status: existing.status } };
-    }
+    // Recovery takes two scans from the same person, one per hand, so it has two slots.
+    const slots = op.kind === 'recovery' ? 2 : 1;
+    const mine = await all('myApprovals', op.id, user.id);
+    const open = mine.find(a => a.status === 'open');
+    if (open) return { approval: { id: open.id, status: 'open', slot: open.slot } };
+    if (mine.filter(a => a.status === 'approved').length >= slots) throw new HttpError(409, 'You have already approved this.');
+
     const approvalId = randomId(16);
-    await query('insertApproval', approvalId, op.id, user.id, now());
-    return { approval: { id: approvalId, status: 'open' } };
+    const slot = mine.reduce((highest, a) => Math.max(highest, a.slot), 0) + 1;
+    await query('insertApproval', approvalId, op.id, user.id, slot, now());
+    return { approval: { id: approvalId, status: 'open', slot } };
   }
 
   async function ownApproval(id, user) {
@@ -759,9 +884,14 @@ export function createApp(options) {
     { method: 'POST', path: '/api/login/finish', handler: loginFinish },
     { method: 'POST', path: '/api/logout', handler: logout },
     { method: 'GET', path: '/api/price', handler: getPrice, auth: true },
+    { method: 'GET', path: '/api/random', handler: getRandom, auth: true },
     { method: 'GET', path: '/api/wallet', handler: getWallet, auth: true },
     { method: 'POST', path: '/api/wallet/approval', handler: requestWallet, auth: true },
+    { method: 'POST', path: '/api/wallet/register', handler: registerWallet, auth: true },
+    { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/unlock$/, handler: unlockFor, auth: true },
+    { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/broadcast$/, handler: broadcastSigned, auth: true },
     { method: 'POST', path: '/api/policy', handler: requestPolicy, auth: true },
+    { method: 'POST', path: '/api/recovery', handler: requestRecovery, auth: true },
     { method: 'POST', path: '/api/withdrawals', handler: requestWithdrawal, auth: true },
     { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/approval$/, handler: joinOperation, auth: true },
     { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/cancel$/, handler: cancelOperation, auth: true },

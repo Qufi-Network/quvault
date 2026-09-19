@@ -11,7 +11,8 @@
     "start": "node server.js",
     "test": "node --test \"test/*.test.js\"",
     "keygen": "node scripts/keygen.js",
-    "check": "node scripts/check.js"
+    "check": "node scripts/check.js",
+    "build:client": "esbuild client/wallet.js --bundle --format=esm --minify --target=es2022 --outfile=public/vendor/wallet.js"
   },
   "dependencies": {
     "@noble/post-quantum": "^0.7.1",

@@ -128,3 +128,40 @@ export function signPlan({ privateKey, publicKey, plan }) {
 }
 
 export const toBtc = sats => (sats / 1e8).toFixed(8);
+
+/**
+ * Checks a signed transaction from someone's browser against the plan their palms approved,
+ * before it is allowed anywhere near the network: same coins, same outputs, same fee.
+ */
+export function verifyAgainstPlan(rawHex, plan) {
+  let tx;
+  try {
+    tx = btc.Transaction.fromRaw(hex.decode(String(rawHex).trim()));
+  } catch {
+    throw new WalletError('That is not a readable Bitcoin transaction.');
+  }
+
+  const inputs = [...Array(tx.inputsLength).keys()].map(i => {
+    const input = tx.getInput(i);
+    return `${hex.encode(input.txid)}:${input.index}`;
+  });
+  const planned = plan.inputs.map(input => `${input.txid}:${input.index}`);
+  if (inputs.length !== planned.length || [...inputs].sort().join() !== [...planned].sort().join()) {
+    throw new WalletError('The transaction spends different coins from the ones approved.');
+  }
+
+  const outputs = [...Array(tx.outputsLength).keys()].map(i => {
+    const output = tx.getOutput(i);
+    return { address: addressOfScript(output.script), sats: Number(output.amount) };
+  });
+  if (JSON.stringify(outputs) !== JSON.stringify(plan.outputs.map(o => ({ address: o.address, sats: o.sats })))) {
+    throw new WalletError('The transaction pays different amounts from the ones approved.');
+  }
+
+  const fee = plan.inputs.reduce((sum, i) => sum + i.value, 0) - plan.outputs.reduce((sum, o) => sum + o.sats, 0);
+  if (fee !== plan.feeSats) throw new WalletError('The transaction fee does not match the approved one.');
+  for (let i = 0; i < tx.inputsLength; i++) {
+    if (!tx.getInput(i).finalScriptWitness?.length) throw new WalletError('The transaction is not fully signed.');
+  }
+  return { txid: tx.id, vsize: tx.vsize };
+}

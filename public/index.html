@@ -242,6 +242,18 @@
         </section>
 
         <section class="lane">
+          <header class="lane-head"><h2>This device and your phrase</h2></header>
+          <div class="card settings-card">
+            <p class="quiet" id="device-state"></p>
+            <div class="row">
+              <button class="btn ghost small" id="show-phrase" type="button">Show recovery phrase</button>
+              <button class="btn ghost small" id="restore-device" type="button">Restore on this device</button>
+            </div>
+            <p class="fine">The key lives in this browser and never reaches the server. Showing or restoring the phrase takes two palm scans, one per hand.</p>
+            <p class="error" id="device-error" role="alert"></p>
+          </div>
+        </section>
+        <section class="lane">
           <header class="lane-head"><h2>Account</h2></header>
           <div class="card settings-card">
             <div class="detail-row"><span class="quiet">Network</span><b id="settings-network"></b></div>
@@ -275,6 +287,30 @@
   </dialog>
 
 
+  <dialog id="phrase" aria-labelledby="phrase-title">
+    <div class="sheet">
+      <p class="eyebrow seal" id="phrase-title">Recovery phrase</p>
+      <p class="fine">Write these twelve words down on paper, in order. Anyone who sees them can spend this wallet. They are shown only after two palm scans, and they are the only way back if this browser is lost.</p>
+      <ol class="words" id="phrase-words"></ol>
+      <div class="sheet-foot">
+        <p class="fine">QuVault never sends these words anywhere.</p>
+        <button class="btn brand small" id="phrase-done" type="button">I have written it down</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="restore" aria-labelledby="restore-title">
+    <form class="sheet" id="restore-form">
+      <p class="eyebrow" id="restore-title">Restore on this device</p>
+      <p class="fine">Type the twelve words, separated by spaces. They stay in this browser.</p>
+      <textarea id="restore-words" rows="3" spellcheck="false" autocomplete="off"></textarea>
+      <p class="error" id="restore-error" role="alert"></p>
+      <div class="sheet-foot">
+        <button class="link" id="restore-cancel" type="button">Cancel</button>
+        <button class="btn brand small" type="submit">Restore</button>
+      </div>
+    </form>
+  </dialog>
   <p class="toast" id="toast" role="status" aria-live="polite" hidden></p>
 </body>
 </html>

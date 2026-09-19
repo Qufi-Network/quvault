@@ -350,6 +350,40 @@ input:focus { border-color: var(--brand); outline: none; }
 .presets { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
 .chart-axis { display: flex; justify-content: space-between; font: 400 11px/1 var(--mono); color: var(--muted); }
 
+.words {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  margin: 18px 0;
+  padding: 0;
+  counter-reset: word;
+}
+.words li {
+  list-style: none;
+  padding: 10px 12px;
+  background: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font: 500 14px/1 var(--mono);
+}
+.words li::before {
+  counter-increment: word;
+  content: counter(word) '. ';
+  color: var(--muted);
+}
+
+textarea {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--ink-2);
+  color: var(--text);
+  font: 400 15px/1.6 var(--mono);
+  resize: vertical;
+}
+textarea:focus { border-color: var(--brand); outline: none; }
+
 .settings-card { display: grid; gap: 14px; }
 .settings-card .two { margin: 0; }
 .detail-row { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
