@@ -267,8 +267,12 @@
               <button class="btn ghost small" id="restore-device" type="button">Restore on this device</button>
               <button class="btn brand small" id="move-vault" type="button" hidden>Move this vault into this browser</button>
             </div>
-            <p class="fine">The key lives in this browser and never reaches the server. Showing or restoring the phrase takes two palm scans, one per hand.</p>
+            <p class="fine">Both keys live in this browser and never reach the server: the one that spends, and the one that signs your authorisation records. Showing or restoring the phrase takes two palm scans, one per hand.</p>
             <p class="error" id="device-error" role="alert"></p>
+            <div class="detail-row"><span class="quiet">Authorisation key</span><code id="attestation-key"></code></div>
+            <div class="row">
+              <button class="btn ghost small" id="rotate-attestation" type="button">Replace the authorisation key</button>
+            </div>
           </div>
         </section>
         <section class="lane">

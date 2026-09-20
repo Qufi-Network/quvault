@@ -7,7 +7,8 @@ import { actionDigest } from '../src/veyns.js';
 import { serverKeys, seal, open as openSealed } from '../src/vault.js';
 import { createKey, publicKeyOf, addressOf, planSpend, signPlan } from '../src/bitcoin.js';
 import { PolicyError, requiredFor, requiredToChange, validatePolicy } from '../src/policy.js';
-import { DEST, SEED, start, ok, signedIn, palmApprove, walletFor, signAndSend, setRules } from './harness.js';
+import { deriveAttestationKeys } from '../src/authorization.js';
+import { DEST, SEED, start, ok, signedIn, palmApprove, walletFor, signAndSend, setRules, attestFor } from './harness.js';
 
 test('the vault seals a key so only this server seed can open it', () => {
   const keys = serverKeys(SEED);
@@ -67,10 +68,25 @@ test('creating the wallet needs a palm scan, and binds the key to that account',
   // The address must match the public key, and the public key must look like one.
   assert.equal((await c.post('/api/wallet/register', { operationId: operation.id, address, publicKey: 'nope' })).status, 400);
   assert.equal((await c.post('/api/wallet/register', { operationId: operation.id, address: DEST, publicKey: publicKey.toString('hex') })).status, 400);
-  ok(await c.post('/api/wallet/register', { operationId: operation.id, address, publicKey: publicKey.toString('hex') }));
+  const attestation = deriveAttestationKeys(new Uint8Array(crypto.randomBytes(64)), 1);
+  // A vault with no attestation key of its own cannot be registered at all.
+  const noKey = await c.post('/api/wallet/register', { operationId: operation.id, address, publicKey: publicKey.toString('hex') });
+  assert.equal(noKey.status, 400);
+  assert.match(noKey.body.error, /attestation public key/);
+  assert.equal((await c.post('/api/wallet/register', {
+    operationId: operation.id, address, publicKey: publicKey.toString('hex'), attestationPublicKey: 'not-a-key',
+  })).status, 400);
+  ok(await c.post('/api/wallet/register', {
+    operationId: operation.id, address, publicKey: publicKey.toString('hex'),
+    attestationPublicKey: attestation.publicKeyBase64, attestationEpoch: 1,
+  }));
 
   const view = ok(await c.get('/api/wallet'));
   assert.equal(view.wallet.address, address);
+  // The server holds the public half, and says whose key it is.
+  assert.equal(view.wallet.attestation.publicKey, attestation.publicKeyBase64);
+  assert.equal(view.wallet.attestation.keyId, attestation.keyId);
+  assert.equal(view.wallet.attestation.epoch, 1);
   assert.equal(view.members.length, 1);
   assert.equal(view.members[0].label, 'Alex');
   assert.ok(view.members[0].owner);
@@ -121,10 +137,12 @@ test('a transaction that does not match the approved plan is never sent', async 
     publicKey: c.publicKey,
     plan: { ...plan, outputs: [{ address: addressOf(publicKeyOf(createKey())), sats: plan.outputs[0].sats }, plan.outputs[1]] },
   });
-  const refused = await c.post(`/api/operations/${operation.id}/broadcast`, { hex: sneaky.hex });
+  const unlockedForAttack = ok(await c.post(`/api/operations/${operation.id}/unlock`, {}));
+  const genuine = attestFor(env, c, unlockedForAttack);
+  const refused = await c.post(`/api/operations/${operation.id}/broadcast`, { hex: sneaky.hex, authorization: genuine });
   assert.equal(refused.status, 400);
   assert.match(refused.body.error, /different amounts|different coins/);
-  assert.match((await c.post(`/api/operations/${operation.id}/broadcast`, { hex: 'not hex at all' })).body.error, /not a readable/);
+  assert.match((await c.post(`/api/operations/${operation.id}/broadcast`, { hex: 'not hex at all', authorization: genuine })).body.error, /not a readable/);
   assert.equal(env.world.log.broadcast.length, 0, 'nothing reached the network');
 
   const sent = await signAndSend(env, c, operation.id);
@@ -348,9 +366,11 @@ test('a failed broadcast is reported and never marked as sent', async t => {
 
   const { operation } = ok(await c.post('/api/withdrawals', { to: DEST, amount: 40_000 }));
   await palmApprove(env, c, operation.id);
-  const { plan } = ok(await c.post(`/api/operations/${operation.id}/unlock`, {}));
-  const signed = signPlan({ privateKey: c.key, publicKey: c.publicKey, plan });
-  const rejected = await c.post(`/api/operations/${operation.id}/broadcast`, { hex: signed.hex });
+  const unlocked = ok(await c.post(`/api/operations/${operation.id}/unlock`, {}));
+  const signed = signPlan({ privateKey: c.key, publicKey: c.publicKey, plan: unlocked.plan });
+  const rejected = await c.post(`/api/operations/${operation.id}/broadcast`, {
+    hex: signed.hex, authorization: attestFor(env, c, unlocked),
+  });
   assert.equal(rejected.status, 502);
   assert.match(rejected.body.error, /txn-mempool-conflict/);
   assert.equal(ok(await c.get('/api/wallet')).history[0].status, 'failed');

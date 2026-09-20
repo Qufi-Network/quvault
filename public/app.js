@@ -1,6 +1,6 @@
 import {
-  accountFrom, accountsFrom, checkAuthorization, clearRecord, decryptMnemonic, encryptMnemonic, fromBase64,
-  jitterFrom, loadRecord, makeMnemonic, planDigest, saveRecord, signPlan,
+  accountFrom, accountsFrom, attest, attestationKeys, checkAuthorization, clearRecord, decryptMnemonic,
+  encryptMnemonic, fromBase64, jitterFrom, loadRecord, makeMnemonic, planDigest, saveRecord, signPlan,
 } from '/vendor/wallet.js';
 
 const $ = id => document.getElementById(id);
@@ -333,18 +333,28 @@ const device = {
     const blob = await encryptMnemonic(mnemonic, unlocked.unlock, unlocked.salt);
     await saveRecord({ blob, salt: unlocked.salt, address: account.address, publicKey: toHex(account.publicKey), createdAt: Date.now() });
     this.record = await loadRecord();
-    return account;
+    // The phrase goes back to the caller so the attestation key can be derived here, once,
+    // without asking the server to unlock anything a second time.
+    return { account, mnemonic };
   },
 
-  /** A new vault: the server is told only the address and the public key. */
+  /** A new vault: the server is told the address and two public keys, and no secret. */
   async create(operation) {
-    const account = await this.makeKey(operation);
+    const { account, mnemonic } = await this.makeKey(operation);
     await api('/api/wallet/register', {
       operationId: operation.id,
       address: account.address,
       publicKey: toHex(account.publicKey),
+      ...this.attestationPublicKey(mnemonic, 1),
     });
     return account;
+  },
+
+  /** The public half of the vault's attestation key, for registering with the server. */
+  attestationPublicKey(mnemonic, epoch) {
+    const keys = attestationKeys(mnemonic, epoch);
+    keys.secretKey.fill(0);
+    return { attestationPublicKey: keys.publicKeyBase64, attestationEpoch: epoch };
   },
 
   /**
@@ -352,11 +362,12 @@ const device = {
    * then the server sweeps the old address and retires the key it was holding.
    */
   async moveIn(operation) {
-    const account = await this.makeKey(operation);
+    const { account, mnemonic } = await this.makeKey(operation);
     const result = await api('/api/wallet/upgrade', {
       operationId: operation.id,
       address: account.address,
       publicKey: toHex(account.publicKey),
+      ...this.attestationPublicKey(mnemonic, 1),
     });
     return { ...result, account };
   },
@@ -374,8 +385,37 @@ const device = {
       transactionHash: unlocked.transactionHash,
       network: state.config.network,
     });
-    const sent = await api(`/api/operations/${operation.id}/broadcast`, { hex: signed.hex });
+    // The authorisation is signed here, with a key the server does not have.
+    const authorization = attest(mnemonic, {
+      vaultId: this.record.address,
+      accountId: 'bitcoin',
+      transactionHash: unlocked.transactionHash,
+      statementDigest: unlocked.statementDigest,
+      approvalMethod: 'veyns:palm',
+      approvals: unlocked.approvals,
+      approvedBy: unlocked.approvedBy,
+      decisionIds: unlocked.decisionIds,
+      approvedAt: Math.floor(Date.now() / 1000),
+    }, unlocked.attestationEpoch ?? 1);
+    const sent = await api(`/api/operations/${operation.id}/broadcast`, { hex: signed.hex, authorization });
     return { ...sent, receipt: await readReceipt(operation.id) };
+  },
+
+  /** The phrase, for an operation that has already been palm-approved. */
+  async phraseFromRecord(operationId) {
+    if (!this.record) throw new Error('This browser does not hold the key for this wallet.');
+    const unlocked = await this.unlockFor(operationId);
+    return decryptMnemonic(this.record.blob, unlocked.unlock, this.record.salt);
+  },
+
+  /** Replaces the attestation key with the next epoch from the same phrase. */
+  async rotateAttestation(operation) {
+    const mnemonic = await this.phraseFromRecord(operation.id);
+    const epoch = (state.data?.wallet?.attestation?.epoch ?? 1) + 1;
+    return api('/api/attestation/register', {
+      operationId: operation.id,
+      ...this.attestationPublicKey(mnemonic, epoch),
+    });
   },
 
   /** Derives the address for a newly approved network and reports only the public part. */
@@ -435,10 +475,11 @@ const toHex = bytes => [...bytes].map(b => b.toString(16).padStart(2, '0')).join
 async function readReceipt(operationId) {
   try {
     const receipt = await api(`/api/operations/${operationId}/receipt`);
-    const key = state.config.attestation?.publicKey;
-    const checked = key
-      ? checkAuthorization(receipt.authorization, key, { transactionHash: receipt.authorization.record.transactionHash })
-      : { ok: false, reason: 'this page was not given a key to check it with' };
+    // Checked against the vault's registered public key — the server has no key of its own here.
+    const checked = checkAuthorization(receipt.authorization, receipt.publicKey, {
+      transactionHash: receipt.authorization.record.transactionHash,
+      vaultId: state.data?.wallet?.address,
+    });
     return { ...receipt, checked };
   } catch (error) {
     return { error: friendly(error) };
@@ -752,6 +793,19 @@ async function startMove(errorNode) {
 
 $('legacy-move').addEventListener('click', () => startMove($('legacy-error')));
 
+/* ------------------------------------------- replacing the authorisation key */
+
+$('rotate-attestation').addEventListener('click', async () => {
+  $('device-error').textContent = '';
+  if (!confirm('Replace the key that signs your authorisation records?\n\nReceipts signed by the old key stop being accepted. The new key comes from the same recovery phrase.')) return;
+  try {
+    const { operation } = await api('/api/attestation/approval', {});
+    openApproval(operation, 'Replacing the authorisation key…');
+  } catch (error) {
+    $('device-error').textContent = friendly(error);
+  }
+});
+
 /* ------------------------------------------------------- starting over */
 
 function openReset() {
@@ -833,7 +887,7 @@ function renderRequests(container, requests) {
 const BUSY = {
   create: 'Creating the vault…', withdraw: 'Sending…', policy: 'Applying the new settings…',
   account: 'Adding the account…', recovery: 'Opening your phrase…', upgrade: 'Moving the vault into this browser…',
-  reset: 'Erasing the vault…',
+  reset: 'Erasing the vault…', attestation: 'Replacing the authorisation key…',
 };
 const busyText = op => BUSY[op.kind] || 'Working…';
 
@@ -894,6 +948,11 @@ function renderSettings(data) {
   $('show-phrase').hidden = legacy || !holds;
   $('restore-device').hidden = legacy || holds;
   $('move-vault').hidden = !legacy;
+  const attestation = wallet.attestation;
+  $('attestation-key').textContent = attestation
+    ? `${attestation.algorithm} · ${attestation.keyId} · epoch ${attestation.epoch}`
+    : 'none registered';
+  $('rotate-attestation').hidden = legacy || !attestation;
   $('reset-note').textContent = legacy
     ? `Erasing destroys the key this server holds for ${wallet.address}. Anything left at that address goes with it, so sweep it somewhere on the way out.`
     : `Erasing removes the vault here and the key in this browser. Your twelve words are the only way back to ${wallet.address}, so send the coins on or write the words down first.`;
@@ -1224,7 +1283,7 @@ function showReceipt(receipt, txid) {
   $('receipt-headline').textContent = 'Transaction authorised.';
   $('receipt-ticks').replaceChildren(
     el('li', {}, 'A palm approval was verified for this exact transaction'),
-    el('li', {}, `Authorisation signed with ${receipt.algorithm}`),
+    el('li', {}, `Signed by your vault's own key, ${receipt.algorithm} · ${receipt.keyId ?? 'unknown'}`),
     el('li', { class: checked ? '' : 'unchecked' },
       checked ? 'Signature checked in this browser' : `Not checked here: ${receipt.checked?.reason ?? 'unknown'}`),
     el('li', {}, txid ? 'Broadcast to the network' : 'Ready to broadcast'),
@@ -1235,7 +1294,7 @@ function showReceipt(receipt, txid) {
     approvals: record.approvals,
     method: record.approvalMethod,
     approved_at: when(record.approvedAt),
-    key: `${receipt.algorithm} · ${receipt.keyId}`,
+    key: `${receipt.algorithm} · ${receipt.keyId} · held by this vault`,
     ...(txid ? { txid } : {}),
   }));
   state.receipt = receipt;
@@ -1273,6 +1332,7 @@ async function openApproval(operation, busy) {
   const kinds = {
     create: 'Palm approval · new vault', withdraw: 'Palm approval · withdrawal', policy: 'Palm approval · settings',
     account: 'Palm approval · new account', recovery: 'Palm approval · recovery phrase',
+    attestation: 'Palm approval · authorisation key',
     upgrade: 'Palm approval · moving the vault',
     reset: 'Palm approval · erasing the vault',
   };
@@ -1378,6 +1438,9 @@ async function settled(current, operation) {
     } else if (operation.kind === 'recovery') {
       if (state.recoveryIntent === 'restore') await showRestore(operation);
       else await showPhrase(operation);
+    } else if (operation.kind === 'attestation') {
+      const { attestation } = await device.rotateAttestation(operation);
+      toast(`Authorisation key replaced: ${attestation.keyId} (epoch ${attestation.epoch}).`);
     } else if (operation.kind === 'reset') {
       const { txid, sweptSats } = await device.reset(operation);
       toast(txid

@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import QRCode from 'qrcode';
 import { openDb, describeDbError } from './db.js';
 import { createVeyns, actionDigest, isFresh, randomId, HttpError, canonicalTransaction, transactionDigest } from './veyns.js';
-import { attestationKeys, signAuthorization, verifyAuthorization } from './authorization.js';
+import { verifyAuthorization, keyIdOf } from './authorization.js';
 import { serverKeys, seal, open as openSealed } from './vault.js';
 import { createChain, createPrices, ChainError } from './chain.js';
 import {
@@ -45,8 +45,10 @@ const SQL = {
   walletOf: 'SELECT * FROM wallets WHERE user_id = $1',
   insertWallet: `INSERT INTO wallets (user_id, network, address, public_key, sealed_key, bound_sub, bound_decision, policy, created_at)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (user_id) DO NOTHING`,
-  insertClientWallet: `INSERT INTO wallets (user_id, network, address, public_key, custody, unlock_sealed, salt, bound_sub, bound_decision, policy, created_at)
-                       VALUES ($1, $2, $3, $4, 'client', $5, $6, $7, $8, $9, $10) ON CONFLICT (user_id) DO NOTHING`,
+  insertClientWallet: `INSERT INTO wallets (user_id, network, address, public_key, custody, unlock_sealed, salt, bound_sub, bound_decision, policy, created_at, attestation_public_key, attestation_epoch, attestation_at)
+                       VALUES ($1, $2, $3, $4, 'client', $5, $6, $7, $8, $9, $10, $11, $12, $10) ON CONFLICT (user_id) DO NOTHING`,
+  setAttestationKey: `UPDATE wallets SET attestation_public_key = $1, attestation_epoch = $2, attestation_at = $3
+                      WHERE user_id = $4 AND attestation_epoch < $2`,
   setPolicy: 'UPDATE wallets SET policy = $1 WHERE user_id = $2',
   moveWalletToBrowser: `UPDATE wallets SET address = $1, public_key = $2, custody = 'client', unlock_sealed = $3,
                         salt = $4, sealed_key = NULL WHERE user_id = $5 AND custody = 'server'`,
@@ -214,19 +216,6 @@ export function createApp(options) {
     return { transaction, digest: transactionDigest(transaction) };
   };
 
-  let attestation = null;
-  /** The ML-DSA-65 key this vault signs authorisation records with, from the same seed. */
-  const attester = () => {
-    if (!attestation) {
-      try {
-        attestation = attestationKeys(walletSeed);
-      } catch (error) {
-        throw new HttpError(503, error.message);
-      }
-    }
-    return attestation;
-  };
-
   const secureCookies = publicOrigin.startsWith('https:');
   const publicHost = new URL(publicOrigin).host;
   // Nothing third-party runs on the wallet page: no outside scripts, no frames. Market data
@@ -278,6 +267,16 @@ export function createApp(options) {
     createdAt: w.created_at,
     explorer: chain.explorerAddress(w.address),
     custody: w.custody,
+    // The public half of the owner's attestation key. The server has never had the other half.
+    attestation: w.attestation_public_key
+      ? {
+        algorithm: 'ML-DSA-65',
+        keyId: keyIdOf(Buffer.from(w.attestation_public_key, 'base64')),
+        publicKey: w.attestation_public_key,
+        epoch: w.attestation_epoch,
+        registeredAt: w.attestation_at,
+      }
+      : null,
     protection: w.custody === 'client'
       ? 'Key in the owner’s browser; its unlock secret sealed with ML-KEM-768 + X25519'
       : 'ML-KEM-768 + X25519 + AES-256-GCM',
@@ -542,23 +541,20 @@ export function createApp(options) {
   }
 
   /**
-   * Writes down what this vault verified, and signs it with ML-DSA-65.
+   * What the owner's device has to put its name to, drawn from what actually happened here.
    *
-   * The record names the exact transaction by digest, the sentence the person read, and the
-   * palm decisions that settled it. It carries no biometric data: `biometricVerified: true`
-   * is the whole of what it says about the palm itself.
+   * The server builds this expectation and checks the signed record against it; it cannot
+   * produce the record itself, because the key that signs one lives in the browser.
    */
-  async function recordAuthorization(op) {
-    const [wallet, approvals] = await Promise.all([one('walletOf', op.wallet_user_id), all('approvalsOf', op.id)]);
-    if (!wallet) throw new WalletError('This account has no wallet.');
+  async function expectedAuthorization(op, wallet) {
+    const approvals = await all('approvalsOf', op.id);
+    const approved = approvals.filter(a => a.status === 'approved');
     const plan = JSON.parse(op.payload);
     const bound = bindPlan(wallet, plan);
-    // The plan on disk must still be the transaction that was approved.
     if (bound.digest !== plan.transactionHash || bound.digest !== JSON.parse(op.details).transaction_hash) {
-      throw new WalletError('The stored transaction no longer matches the one that was approved.');
+      throw new HttpError(409, 'The stored transaction no longer matches the one that was approved.');
     }
-    const approved = approvals.filter(a => a.status === 'approved');
-    const authorization = signAuthorization({
+    return {
       vaultId: wallet.address,
       accountId: 'bitcoin',
       transactionHash: bound.digest,
@@ -567,10 +563,11 @@ export function createApp(options) {
       approvals: `${approved.length} of ${op.required}`,
       approvedBy: approved.map(a => a.user_id),
       decisionIds: approved.map(a => a.decision_id).filter(Boolean),
-      approvedAt: now(),
-    }, attester());
-    await query('setAuthorization', JSON.stringify(authorization), op.id);
-    return authorization;
+      keyEpoch: wallet.attestation_epoch || 1,
+      // The record cannot predate the approvals it claims, nor be dated in the future.
+      notBefore: Math.min(...approved.map(a => a.closed_at ?? a.created_at)) - 60,
+      notAfter: now() + 60,
+    };
   }
 
   /** The record and the key to check it with, for this request. */
@@ -588,8 +585,6 @@ export function createApp(options) {
     const time = now();
     try {
       if (op.kind === 'withdraw') {
-        // Fail closed: if the authorisation record cannot be written, nothing gets signed.
-        await recordAuthorization(op);
         const wallet = await one('walletOf', op.wallet_user_id);
         // With the key in the owner's browser, the quorum is complete but the signing is not:
         // the operation waits, and the owner's device signs and sends it.
@@ -602,7 +597,7 @@ export function createApp(options) {
         : op.kind === 'upgrade' ? await prepareUpgrade(op)
         // Erasing happens when the owner's browser confirms it, so the key is cleared there too.
         : op.kind === 'reset' ? { txid: null }
-        : op.kind === 'recovery' || op.kind === 'account' ? { txid: null }
+        : op.kind === 'recovery' || op.kind === 'account' || op.kind === 'attestation' ? { txid: null }
         : await broadcastPlan(op);
       await query('finishOperation', 'done', txid, null, time, op.id);
     } catch (error) {
@@ -625,10 +620,8 @@ export function createApp(options) {
       requirePalmSignin,
       network,
       vaultReady: Boolean(walletSeed),
-      // The key that signs authorisation records, so a page can check them for itself.
-      attestation: walletSeed
-        ? { algorithm: 'ML-DSA-65', keyId: attester().keyId, publicKey: Buffer.from(attester().publicKey).toString('base64') }
-        : null,
+      // Authorisation records are signed by the owner's vault; this server only verifies them.
+      attestation: { algorithm: 'ML-DSA-65', signedBy: 'vault' },
       databaseVariable: options.databaseVariable ?? (databaseUrl ? 'local' : null),
       databaseCandidates: options.databaseCandidates ?? [],
     };
@@ -739,7 +732,9 @@ export function createApp(options) {
   async function unlockFor({ user, params: [id] }) {
     const op = await ownOperation(id, user);
     if (op.wallet_user_id !== user.id) throw new HttpError(403, 'Only the account owner can unlock this wallet.');
-    if (!['create', 'withdraw', 'recovery', 'account', 'upgrade'].includes(op.kind)) throw new HttpError(409, 'Nothing to unlock for this request.');
+    if (!['create', 'withdraw', 'recovery', 'account', 'upgrade', 'attestation'].includes(op.kind)) {
+      throw new HttpError(409, 'Nothing to unlock for this request.');
+    }
     if (!['running', 'done'].includes(op.status)) throw new HttpError(409, 'This request is still collecting palm approvals.');
 
     const wallet = await one('walletOf', user.id);
@@ -759,9 +754,22 @@ export function createApp(options) {
     return {
       unlock: openSealed(wallet.unlock_sealed, vault()).toString('base64'),
       salt: wallet.salt,
-      ...(op.kind === 'withdraw'
-        ? { plan: JSON.parse(op.payload), address: wallet.address, transactionHash: JSON.parse(op.payload).transactionHash }
-        : {}),
+      ...(op.kind === 'withdraw' ? await withdrawalUnlock(op, wallet) : {}),
+    };
+  }
+
+  /** What the owner's device needs to sign the transaction and to attest to the approval. */
+  async function withdrawalUnlock(op, wallet) {
+    const expected = await expectedAuthorization(op, wallet);
+    return {
+      plan: JSON.parse(op.payload),
+      address: wallet.address,
+      transactionHash: expected.transactionHash,
+      statementDigest: expected.statementDigest,
+      approvals: expected.approvals,
+      approvedBy: expected.approvedBy,
+      decisionIds: expected.decisionIds,
+      attestationEpoch: expected.keyEpoch,
     };
   }
 
@@ -780,8 +788,9 @@ export function createApp(options) {
 
     const payload = JSON.parse(op.payload);
     const time = now();
+    const attestationKey = readAttestationKey(body);
     await query('insertClientWallet', user.id, network, address, publicKey, payload.unlockSealed, payload.salt,
-      user.sub, payload.decisionId, JSON.stringify(DEFAULT_POLICY), time);
+      user.sub, payload.decisionId, JSON.stringify(DEFAULT_POLICY), time, attestationKey.publicKey, attestationKey.epoch);
     await query('insertMember', user.id, user.id, payload.label || 'Owner', true, time);
     // This vault exists because that palm approved it, so the owner's palm identity starts here.
     await query('bindPalm', palmId(user.sub), time, user.id, user.id);
@@ -807,14 +816,16 @@ export function createApp(options) {
     if (bound.digest !== plan.transactionHash || bound.digest !== JSON.parse(op.details).transaction_hash) {
       throw new HttpError(409, 'The stored transaction no longer matches the one that was approved.');
     }
-    // 2. A human authorised that exact digest, and this vault signed a record saying so.
-    const checkedAuthorization = verifyAuthorization(
-      authorizationOf(op),
-      Buffer.from(attester().publicKey).toString('base64'),
-      { transactionHash: bound.digest, vaultId: wallet.address },
-    );
-    if (!checkedAuthorization.ok) {
-      throw new HttpError(409, `No valid human authorisation for this transaction: ${checkedAuthorization.reason}.`);
+    // 2. The owner's own key attested to that approval, for this exact transaction.
+    //    This server cannot produce this record: it holds only the public half of that key.
+    if (wallet.custody === 'client') {
+      const expected = await expectedAuthorization(op, wallet);
+      const authorization = body.authorization ?? authorizationOf(op);
+      const checkedAuthorization = verifyAuthorization(authorization, wallet.attestation_public_key, expected);
+      if (!checkedAuthorization.ok) {
+        throw new HttpError(409, `No valid human authorisation for this transaction: ${checkedAuthorization.reason}.`);
+      }
+      if (!op.human_authorization) await query('setAuthorization', JSON.stringify(authorization), op.id);
     }
     // 3. The signed bytes spend the approved coins, pay the approved outputs, at the approved fee.
     let checked;
@@ -963,12 +974,13 @@ export function createApp(options) {
     const op = await ownOperation(id, user);
     const authorization = authorizationOf(op);
     if (!authorization) throw new HttpError(404, 'There is no authorisation record for this request.');
-    const keys = attester();
-    const publicKey = Buffer.from(keys.publicKey).toString('base64');
+    const wallet = await one('walletOf', op.wallet_user_id);
+    const publicKey = wallet?.attestation_public_key ?? null;
     return {
       authorization,
       publicKey,
-      keyId: keys.keyId,
+      keyId: publicKey ? keyIdOf(Buffer.from(publicKey, 'base64')) : null,
+      signedBy: 'vault',
       algorithm: 'ML-DSA-65',
       statement: op.statement,
       details: JSON.parse(op.details),
@@ -1060,6 +1072,59 @@ export function createApp(options) {
     return { ok: true, txid, sweptSats };
   }
 
+  /** An ML-DSA-65 public key, checked for shape only: the server never holds the other half. */
+  function readAttestationKey(body) {
+    const publicKey = String(body.attestationPublicKey ?? '').trim();
+    const epoch = Number(body.attestationEpoch ?? 1);
+    if (!publicKey) throw new HttpError(400, 'This vault must register an attestation public key.');
+    let bytes;
+    try {
+      bytes = Buffer.from(publicKey, 'base64');
+    } catch {
+      bytes = Buffer.alloc(0);
+    }
+    // ML-DSA-65 public keys are 1952 bytes. Anything else is not one.
+    if (bytes.length !== 1952) throw new HttpError(400, 'That is not an ML-DSA-65 public key.');
+    if (!Number.isInteger(epoch) || epoch < 1) throw new HttpError(400, 'The attestation epoch starts at 1.');
+    return { publicKey: bytes.toString('base64'), epoch };
+  }
+
+  /** Replacing the attestation key: palm-approved, like every other change to a vault. */
+  async function requestAttestationRotation({ user }) {
+    requirePalmReady();
+    const wallet = await one('walletOf', user.id);
+    if (!wallet) throw new HttpError(409, 'Create the wallet first.');
+    if (wallet.custody !== 'client') throw new HttpError(409, 'This vault signs on the server and has no attestation key of its own.');
+    const next = (wallet.attestation_epoch || 1) + 1;
+    const statement = 'Replace the authorisation key of my vault';
+    const details = {
+      action: 'replace authorisation key',
+      network,
+      vault: wallet.address,
+      from_epoch: String(wallet.attestation_epoch || 1),
+      to_epoch: String(next),
+      effect: 'records signed by the old key stop being accepted',
+    };
+    const { required } = await changeQuorum(user.id, 'bitcoin');
+    const op = await newOperation({ walletOwnerId: user.id, user, kind: 'attestation', statement, details, required });
+    return { operation: operationView(op, [], user), epoch: next };
+  }
+
+  /** The browser reports the public half of the new key. The old one stops being accepted. */
+  async function registerAttestationKey({ user, body }) {
+    const op = await ownOperation(String(body.operationId ?? ''), user);
+    if (op.kind !== 'attestation' || op.status !== 'done' || op.wallet_user_id !== user.id) {
+      throw new HttpError(409, 'That is not an approved key replacement.');
+    }
+    const wallet = await one('walletOf', user.id);
+    if (!wallet) throw new HttpError(409, 'This account has no wallet.');
+    const key = readAttestationKey(body);
+    if (key.epoch <= (wallet.attestation_epoch || 0)) throw new HttpError(409, 'That epoch has already been used.');
+    const moved = await query('setAttestationKey', key.publicKey, key.epoch, now(), user.id);
+    if (!moved.count) throw new HttpError(409, 'The key was not replaced.');
+    return { attestation: walletView(await one('walletOf', user.id)).attestation };
+  }
+
   /** Asks for the palm approvals that move a server-held vault into the owner's browser. */
   async function requestUpgrade({ user }) {
     requirePalmReady();
@@ -1099,6 +1164,7 @@ export function createApp(options) {
     if (!/^[0-9a-f]{66}$/i.test(publicKey)) throw new HttpError(400, 'That public key does not look right.');
     if (addressOf(Buffer.from(publicKey, 'hex')) !== address) throw new HttpError(400, 'The address does not match the public key.');
     if (address === wallet.address) throw new HttpError(400, 'The new address has to be a different one.');
+    const attestationKey = readAttestationKey(body);
 
     let txid = null;
     let sweptSats = 0;
@@ -1134,6 +1200,7 @@ export function createApp(options) {
       await q('setBitcoinAccount', address, publicKey, user.id);
       await q('insertAccountFull', user.id, 'bitcoin', address, publicKey,
         wallet.policy, JSON.stringify([user.id]), now());
+      await q('setAttestationKey', attestationKey.publicKey, attestationKey.epoch, now(), user.id);
     });
     if (txid) await query('setOperationTxid', txid, op.id);
     return { wallet: walletView(await one('walletOf', user.id)), txid, sweptSats };
@@ -1437,6 +1504,8 @@ export function createApp(options) {
     { method: 'POST', path: '/api/wallet/register', handler: registerWallet, auth: true },
     { method: 'POST', path: '/api/wallet/upgrade/approval', handler: requestUpgrade, auth: true },
     { method: 'POST', path: '/api/wallet/upgrade', handler: completeUpgrade, auth: true },
+    { method: 'POST', path: '/api/attestation/approval', handler: requestAttestationRotation, auth: true },
+    { method: 'POST', path: '/api/attestation/register', handler: registerAttestationKey, auth: true },
     { method: 'POST', path: '/api/wallet/reset/approval', handler: requestReset, auth: true },
     { method: 'POST', path: '/api/wallet/reset', handler: completeReset, auth: true },
     { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/unlock$/, handler: unlockFor, auth: true },

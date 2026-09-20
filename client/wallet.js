@@ -19,7 +19,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { base64urlnopad } from '@scure/base';
 import { canonicalTransaction, canonicalBytes } from '../src/canonical.js';
-import { verifyAuthorization } from '../src/authorization.js';
+import { deriveAttestationKeys, signAuthorization, verifyAuthorization } from '../src/authorization.js';
 
 const NETWORK = btc.TEST_NETWORK;
 const PATH = "m/84'/1'/0'/0/0"; // BIP84 testnet: the phrase restores in any standard wallet
@@ -183,6 +183,31 @@ export function planDigest({ network, from, plan }) {
 
 /** Re-checks an authorisation receipt in the browser, with the same code that signed it. */
 export const checkAuthorization = verifyAuthorization;
+
+/**
+ * The vault's attestation key: ML-DSA-65, derived from this phrase and nowhere else.
+ *
+ * The server never sees it. It learns the public half when the vault is created, and after
+ * that it can only check signatures — it cannot make one. A new `epoch` is a new key from
+ * the same phrase, which is how a key is replaced without a new secret to store.
+ */
+export function attestationKeys(mnemonic, epoch = 1) {
+  if (!validateMnemonic(mnemonic, wordlist)) throw new Error('That is not a valid 12-word recovery phrase.');
+  const seed = mnemonicToSeedSync(mnemonic);
+  const keys = deriveAttestationKeys(seed, epoch);
+  seed.fill(0);
+  return keys;
+}
+
+/** Signs the authorisation record for a transaction this device is about to sign. */
+export function attest(mnemonic, parts, epoch = 1) {
+  const keys = attestationKeys(mnemonic, epoch);
+  try {
+    return signAuthorization(parts, keys);
+  } finally {
+    keys.secretKey.fill(0);
+  }
+}
 
 /**
  * Signs exactly the plan the palm approved: same coins, same outputs, same fee.

@@ -136,6 +136,14 @@ const SCHEMA = [
   'ALTER TABLE operations ADD COLUMN IF NOT EXISTS human_authorization TEXT',
 
   /*
+   * v9: the key that signs those records belongs to the owner's browser. The server keeps the
+   * public half and the epoch it was registered under, and holds nothing it could sign with.
+   */
+  'ALTER TABLE wallets ADD COLUMN IF NOT EXISTS attestation_public_key TEXT',
+  'ALTER TABLE wallets ADD COLUMN IF NOT EXISTS attestation_epoch INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE wallets ADD COLUMN IF NOT EXISTS attestation_at BIGINT',
+
+  /*
    * Which kinds of operation exist is decided by the code that is running, so the constraint
    * is simply restated on every migration: one statement, every old name dropped, today's
    * list added. Versioned names were a trap — a later version dropping an earlier one made
@@ -149,7 +157,7 @@ const SCHEMA = [
      DROP CONSTRAINT IF EXISTS operations_kind_v7,
      DROP CONSTRAINT IF EXISTS operations_kind,
      ADD CONSTRAINT operations_kind
-       CHECK (kind IN ('create', 'withdraw', 'policy', 'recovery', 'account', 'upgrade', 'reset'))`,
+       CHECK (kind IN ('create', 'withdraw', 'policy', 'recovery', 'account', 'upgrade', 'reset', 'attestation'))`,
 ];
 
 const INT8 = 20; // Timestamps are BIGINT; read them back as numbers.

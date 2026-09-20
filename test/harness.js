@@ -12,6 +12,7 @@ import { actionDigest } from '../src/veyns.js';
 import { serverKeys, seal, open as openSealed } from '../src/vault.js';
 import { createKey, publicKeyOf, addressOf, planSpend, signPlan } from '../src/bitcoin.js';
 import { DEFAULT_POLICY } from '../src/policy.js';
+import { deriveAttestationKeys, signAuthorization } from '../src/authorization.js';
 import { accountsFrom } from '../client/wallet.js';
 
 export const ISSUER = 'https://issuer.test';
@@ -151,7 +152,7 @@ export async function start(t, overrides = {}) {
     return { get: path => call('GET', path), post: (path, body = {}) => call('POST', path, body) };
   }
 
-  return { world, client, app, advance: seconds => { time += seconds; } };
+  return { world, client, app, now: () => time, advance: seconds => { time += seconds; } };
 }
 
 export function ok(response) {
@@ -188,17 +189,40 @@ export async function walletFor(env, c) {
   c.key = createKey();
   c.publicKey = publicKeyOf(c.key);
   c.address = addressOf(c.publicKey);
+  c.attestation = deriveAttestationKeys(new Uint8Array(crypto.randomBytes(64)), 1);
   ok(await c.post('/api/wallet/register', {
     operationId: operation.id, address: c.address, publicKey: c.publicKey.toString('hex'),
+    attestationPublicKey: c.attestation.publicKeyBase64, attestationEpoch: 1,
   }));
   return ok(await c.get('/api/wallet')).wallet;
 }
 
-/** The browser signing an approved plan and handing back the raw transaction. */
-export async function signAndSend(env, c, operationId) {
-  const { plan } = ok(await c.post(`/api/operations/${operationId}/unlock`, {}));
-  const signed = signPlan({ privateKey: c.key, publicKey: c.publicKey, plan });
-  return ok(await c.post(`/api/operations/${operationId}/broadcast`, { hex: signed.hex }));
+/**
+ * The browser signing an approved plan, and signing the authorisation record with the key
+ * only it holds. The server gets a transaction and a record, and no secret of either kind.
+ */
+export async function signAndSend(env, c, operationId, tweak = {}) {
+  const unlocked = ok(await c.post(`/api/operations/${operationId}/unlock`, {}));
+  const signed = signPlan({ privateKey: c.key, publicKey: c.publicKey, plan: unlocked.plan });
+  const authorization = attestFor(env, c, unlocked, tweak);
+  return ok(await c.post(`/api/operations/${operationId}/broadcast`, { hex: signed.hex, authorization }));
+}
+
+/** The record a browser would sign for an unlocked withdrawal, with anything overridden. */
+export function attestFor(env, c, unlocked, tweak = {}) {
+  const { keys = c.attestation, ...fields } = tweak;
+  return signAuthorization({
+    vaultId: unlocked.address,
+    accountId: 'bitcoin',
+    transactionHash: unlocked.transactionHash,
+    statementDigest: unlocked.statementDigest,
+    approvalMethod: 'veyns:palm',
+    approvals: unlocked.approvals,
+    approvedBy: unlocked.approvedBy,
+    decisionIds: unlocked.decisionIds,
+    approvedAt: env.now(),
+    ...fields,
+  }, keys);
 }
 
 /**
@@ -249,6 +273,14 @@ export async function legacyWallet(env, owner, time = 1_700_000_000) {
 export function browserKey() {
   const key = createKey();
   const publicKey = publicKeyOf(key);
-  return { key, publicKey: publicKey.toString('hex'), address: addressOf(publicKey) };
+  const attestation = deriveAttestationKeys(new Uint8Array(crypto.randomBytes(64)), 1);
+  return {
+    key,
+    publicKey: publicKey.toString('hex'),
+    address: addressOf(publicKey),
+    attestation,
+    attestationPublicKey: attestation.publicKeyBase64,
+    attestationEpoch: 1,
+  };
 }
 

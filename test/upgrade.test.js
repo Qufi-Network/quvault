@@ -41,7 +41,7 @@ test('an older vault moves into the browser, sweeping its coins to the new addre
   assert.ok(unlocked.unlock && unlocked.salt, 'the browser gets a secret for the key it is about to make');
 
   const fresh = browserKey();
-  const moved = ok(await alex.post('/api/wallet/upgrade', { operationId: operation.id, address: fresh.address, publicKey: fresh.publicKey }));
+  const moved = ok(await alex.post('/api/wallet/upgrade', { operationId: operation.id, address: fresh.address, publicKey: fresh.publicKey, attestationPublicKey: fresh.attestationPublicKey, attestationEpoch: 1 }));
   assert.equal(moved.wallet.address, fresh.address);
   assert.equal(moved.wallet.custody, 'client');
 
@@ -77,7 +77,7 @@ test('a vault with an unconfirmed payment waits, and keeps its key until it is s
   const { operation } = ok(await alex.post('/api/wallet/upgrade/approval', {}));
   await palmApprove(env, alex, operation.id);
   const fresh = browserKey();
-  const refused = await alex.post('/api/wallet/upgrade', { operationId: operation.id, address: fresh.address, publicKey: fresh.publicKey });
+  const refused = await alex.post('/api/wallet/upgrade', { operationId: operation.id, address: fresh.address, publicKey: fresh.publicKey, attestationPublicKey: fresh.attestationPublicKey, attestationEpoch: 1 });
   assert.equal(refused.status, 409);
   assert.match(refused.body.error, /first confirmation/);
   assert.equal(env.world.log.broadcast.length, 0, 'nothing was spent');
@@ -86,7 +86,7 @@ test('a vault with an unconfirmed payment waits, and keeps its key until it is s
   // Once it confirms, the same approved request goes through.
   env.world.chain.pending = 0;
   env.world.chain.utxos.push({ txid: 'c'.repeat(64), vout: 1, value: 50_000 });
-  const moved = ok(await alex.post('/api/wallet/upgrade', { operationId: operation.id, address: fresh.address, publicKey: fresh.publicKey }));
+  const moved = ok(await alex.post('/api/wallet/upgrade', { operationId: operation.id, address: fresh.address, publicKey: fresh.publicKey, attestationPublicKey: fresh.attestationPublicKey, attestationEpoch: 1 }));
   assert.equal(moved.wallet.custody, 'client');
   assert.equal(env.world.log.broadcast[0].tx.inputsLength, 2, 'both coins came along');
 });
@@ -100,12 +100,12 @@ test('a move needs its own palm approval, and an address that matches its key', 
   const fresh = browserKey();
 
   // Not approved yet.
-  assert.equal((await alex.post('/api/wallet/upgrade', { operationId: operation.id, ...fresh })).status, 409);
+  assert.equal((await alex.post('/api/wallet/upgrade', { operationId: operation.id, address: fresh.address, publicKey: fresh.publicKey, attestationPublicKey: fresh.attestationPublicKey, attestationEpoch: 1 })).status, 409);
   // Nobody else can drive it.
-  assert.equal((await omar.post('/api/wallet/upgrade', { operationId: operation.id, ...fresh })).status, 404);
+  assert.equal((await omar.post('/api/wallet/upgrade', { operationId: operation.id, address: fresh.address, publicKey: fresh.publicKey, attestationPublicKey: fresh.attestationPublicKey, attestationEpoch: 1 })).status, 404);
 
   await palmApprove(env, alex, operation.id);
-  const mismatched = await alex.post('/api/wallet/upgrade', { operationId: operation.id, address: fresh.address, publicKey: browserKey().publicKey });
+  const mismatched = await alex.post('/api/wallet/upgrade', { operationId: operation.id, address: fresh.address, publicKey: browserKey().publicKey, attestationPublicKey: fresh.attestationPublicKey, attestationEpoch: 1 });
   assert.equal(mismatched.status, 400);
   assert.match(mismatched.body.error, /does not match/);
   assert.equal(ok(await alex.get('/api/wallet')).wallet.custody, 'server');
