@@ -65,6 +65,9 @@ const SQL = {
 
   membersOf: 'SELECT * FROM members WHERE wallet_user_id = $1 ORDER BY is_owner DESC, added_at',
   memberIn: 'SELECT * FROM members WHERE wallet_user_id = $1 AND member_id = $2',
+  keysOfMember: 'SELECT key_index FROM members WHERE member_id = $1 AND key_index IS NOT NULL ORDER BY key_index',
+  setMemberKey: `UPDATE members SET public_key = $1, key_index = $2, key_at = $3
+                 WHERE wallet_user_id = $4 AND member_id = $5`,
   walletsForMember: 'SELECT wallet_user_id FROM members WHERE member_id = $1',
   insertMember: `INSERT INTO members (wallet_user_id, member_id, label, is_owner, added_at) VALUES ($1, $2, $3, $4, $5)
                  ON CONFLICT (wallet_user_id, member_id) DO UPDATE SET label = EXCLUDED.label`,
@@ -329,6 +332,9 @@ export function createApp(options) {
     // Assigned the first time that person put their palm to this vault.
     palmId: m.palm_id || null,
     palmAt: m.palm_at || null,
+    // The Bitcoin key they sign with. Until this exists they can approve but not sign.
+    signingKey: m.public_key || null,
+    signingKeyAt: m.key_at || null,
   });
 
   const operationView = (op, approvals, me) => ({
@@ -643,7 +649,7 @@ export function createApp(options) {
         : op.kind === 'upgrade' ? await prepareUpgrade(op)
         // Erasing happens when the owner's browser confirms it, so the key is cleared there too.
         : op.kind === 'reset' ? { txid: null }
-        : op.kind === 'recovery' || op.kind === 'account' || op.kind === 'attestation' ? { txid: null }
+        : ['recovery', 'account', 'attestation', 'signing'].includes(op.kind) ? { txid: null }
         : await broadcastPlan(op);
       await query('finishOperation', 'done', txid, null, time, op.id);
     } catch (error) {
@@ -783,7 +789,7 @@ export function createApp(options) {
   async function unlockFor({ user, params: [id] }) {
     const op = await ownOperation(id, user);
     if (op.wallet_user_id !== user.id) throw new HttpError(403, 'Only the account owner can unlock this wallet.');
-    if (!['create', 'withdraw', 'recovery', 'account', 'upgrade', 'attestation'].includes(op.kind)) {
+    if (!['create', 'withdraw', 'recovery', 'account', 'upgrade', 'attestation', 'signing'].includes(op.kind)) {
       throw new HttpError(409, 'Nothing to unlock for this request.');
     }
     if (!['running', 'done'].includes(op.status)) throw new HttpError(409, 'This request is still collecting palm approvals.');
@@ -998,6 +1004,61 @@ export function createApp(options) {
       required, networkId,
     });
     return { operation: operationView(op, [], user), signers, policy };
+  }
+
+  /*
+   * A signer's own key for one vault.
+   *
+   * The request is made against the signer's own wallet, because it is their phrase that has
+   * to be opened, and it is their palm that opens it. The vault they are signing for is only
+   * told the public half afterwards. Somebody who has no wallet of their own has no phrase to
+   * derive from, and is told so rather than being handed a second set of words to keep.
+   */
+  async function requestSigningKey({ user, body }) {
+    requirePalmReady();
+    const ownerId = String(body.vaultOwnerId ?? '').trim();
+    const member = await one('memberIn', ownerId, user.id);
+    if (!member) throw new HttpError(404, 'You do not sign for that vault.');
+    const mine = await one('walletOf', user.id);
+    if (!mine) {
+      throw new HttpError(409, 'Create your own vault first: the key you sign with comes from your own phrase.');
+    }
+    if (mine.custody !== 'client') throw new HttpError(409, 'Move your vault into this browser first.');
+    if (member.public_key) throw new HttpError(409, 'You already have a signing key for that vault.');
+
+    // One branch per vault this person signs for, never reused between them.
+    const used = (await all('keysOfMember', user.id)).map(row => row.key_index);
+    const index = used.length ? Math.max(...used) + 1 : 0;
+    const label = ownerId === user.id ? 'my own vault' : 'a vault you sign for';
+    const statement = `Create the key I sign ${ownerId === user.id ? 'my' : 'their'} Bitcoin with`;
+    const details = {
+      action: 'create a signing key',
+      vault: label,
+      derived_from: `your own phrase, branch ${index}`,
+      effect: 'the vault is told the public half; the key itself stays in this browser',
+    };
+    const op = await newOperation({
+      walletOwnerId: user.id, user, kind: 'signing', statement, details,
+      payload: { vaultOwnerId: ownerId, index }, required: 1, networkId: 'bitcoin',
+    });
+    return { operation: operationView(op, [], user), index, vaultOwnerId: ownerId };
+  }
+
+  /** The browser reports the public half of the key it derived, and nothing else. */
+  async function registerSigningKey({ user, body }) {
+    const op = await ownOperation(String(body.operationId ?? ''), user);
+    if (op.kind !== 'signing' || op.status !== 'done' || op.wallet_user_id !== user.id) {
+      throw new HttpError(409, 'That request cannot register a signing key.');
+    }
+    const publicKey = String(body.publicKey ?? '').trim().toLowerCase();
+    if (!/^0[23][0-9a-f]{64}$/.test(publicKey)) throw new HttpError(400, 'That public key does not look right.');
+
+    const { vaultOwnerId, index } = JSON.parse(op.payload);
+    const member = await one('memberIn', vaultOwnerId, user.id);
+    if (!member) throw new HttpError(404, 'You do not sign for that vault.');
+    if (member.public_key) throw new HttpError(409, 'You already have a signing key for that vault.');
+    await query('setMemberKey', publicKey, index, now(), vaultOwnerId, user.id);
+    return { signingKey: publicKey, index };
   }
 
   /** The browser reports the address it derived for the new network. */
@@ -1729,6 +1790,8 @@ export function createApp(options) {
     { method: 'GET', path: '/api/invites', handler: listInvites, auth: true },
     { method: 'POST', path: '/api/invites/cancel', handler: cancelInvite, auth: true },
     { method: 'POST', path: '/api/invites/join', handler: requestJoin, auth: true },
+    { method: 'POST', path: '/api/signing-key/approval', handler: requestSigningKey, auth: true },
+    { method: 'POST', path: '/api/signing-key/register', handler: registerSigningKey, auth: true },
     { method: 'POST', path: '/api/attestation/approval', handler: requestAttestationRotation, auth: true },
     { method: 'POST', path: '/api/attestation/register', handler: registerAttestationKey, auth: true },
     { method: 'POST', path: '/api/wallet/reset/approval', handler: requestReset, auth: true },

@@ -23,6 +23,10 @@ import { deriveAttestationKeys, signAuthorization, signRegistration, verifyAutho
 
 const NETWORK = btc.TEST_NETWORK;
 const PATH = "m/84'/1'/0'/0/0"; // BIP84 testnet: the phrase restores in any standard wallet
+// BIP48 script-type 2', the path every multisig coordinator uses for P2WSH co-signing. One
+// branch per vault a person signs for, so the same phrase backs all of them and no two
+// vaults share a key on the chain.
+const COSIGN_PATH = index => `m/48'/1'/0'/2'/0/${index}`;
 const DB_NAME = 'quvault';
 const STORE = 'wallet';
 const RECORD = 'current';
@@ -64,6 +68,19 @@ export function accountFrom(mnemonic) {
   const publicKey = node.publicKey;
   const payment = btc.p2wpkh(publicKey, NETWORK);
   return { privateKey: node.privateKey, publicKey, address: payment.address, path: PATH };
+}
+
+/**
+ * The key this person signs with for one particular vault. It comes from the same twelve
+ * words as their own wallet, on a branch of its own, so there is still one phrase to keep
+ * and losing it costs them their place in a quorum rather than their own coins.
+ */
+export function cosignerFrom(mnemonic, index) {
+  if (!validateMnemonic(mnemonic, wordlist)) throw new Error('That is not a valid 12-word recovery phrase.');
+  if (!Number.isInteger(index) || index < 0 || index > 0x7fffffff) throw new Error('That is not a signing branch.');
+  const path = COSIGN_PATH(index);
+  const node = HDKey.fromMasterSeed(mnemonicToSeedSync(mnemonic)).derive(path);
+  return { privateKey: node.privateKey, publicKey: node.publicKey, path };
 }
 
 /* ------------------------------------------------- the other networks */

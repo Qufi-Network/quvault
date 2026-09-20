@@ -189,6 +189,17 @@ const SCHEMA = [
   'ALTER TABLE operations ADD COLUMN IF NOT EXISTS unlocked_at BIGINT',
 
   /*
+   * v13: the key a signer signs Bitcoin with, as opposed to the palm that says they meant to.
+   * A quorum the chain keeps needs a public key per signer, derived in their own browser from
+   * their own phrase on a branch of its own, so one person signing for several vaults keeps
+   * one phrase and no two vaults share a key. The server holds the public half and the branch
+   * number, both of which are safe in the open.
+   */
+  'ALTER TABLE members ADD COLUMN IF NOT EXISTS public_key TEXT',
+  'ALTER TABLE members ADD COLUMN IF NOT EXISTS key_index INTEGER',
+  'ALTER TABLE members ADD COLUMN IF NOT EXISTS key_at BIGINT',
+
+  /*
    * Which kinds of operation exist is decided by the code that is running, so the constraint
    * is simply restated on every migration: one statement, every old name dropped, today's
    * list added. Versioned names were a trap — a later version dropping an earlier one made
@@ -202,7 +213,7 @@ const SCHEMA = [
      DROP CONSTRAINT IF EXISTS operations_kind_v7,
      DROP CONSTRAINT IF EXISTS operations_kind,
      ADD CONSTRAINT operations_kind
-       CHECK (kind IN ('create', 'withdraw', 'policy', 'recovery', 'account', 'upgrade', 'reset', 'attestation', 'invite', 'join'))`,
+       CHECK (kind IN ('create', 'withdraw', 'policy', 'recovery', 'account', 'upgrade', 'reset', 'attestation', 'invite', 'join', 'signing'))`,
 ];
 
 const INT8 = 20; // Timestamps are BIGINT; read them back as numbers.
