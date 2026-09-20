@@ -235,15 +235,22 @@ export function createApp(options) {
 
   const secureCookies = publicOrigin.startsWith('https:');
   const publicHost = new URL(publicOrigin).host;
-  // Nothing third-party runs on the wallet page: no outside scripts, no frames. Market data
-  // is fetched by this server and drawn here, so a compromised widget cannot reach a session.
+  /*
+   * No code from anywhere else runs on this page. Not a widget, not a frame, and not the
+   * identity provider's own script: Veyns is talked to over fetch and a redirect, never by
+   * loading its JavaScript here. A script on this origin could read the encrypted key out of
+   * IndexedDB and the unlock secret as it arrives, so the party that verifies a palm must not
+   * also be a party that can execute. `connect-src` still names the issuer, because exchanging
+   * data with it is the point; exchanging code with it is not.
+   */
   const csp = [
     "default-src 'self'",
-    `script-src 'self' ${issuer}`,
+    "script-src 'self'",
     `connect-src 'self' ${issuer}`,
-    `img-src 'self' data: ${issuer}`,
+    "img-src 'self' data:",
     "style-src 'self' https://fonts.googleapis.com",
     'font-src https://fonts.gstatic.com',
+    "object-src 'none'",
     "frame-src 'none'",
     "frame-ancestors 'none'",
     "base-uri 'none'",

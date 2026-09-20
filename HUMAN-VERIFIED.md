@@ -120,6 +120,10 @@ broadcast               only if plan, hash, record and bytes all agree
   a browser. Where a platform offers hardware-backed storage this does not use it yet.
 - **Not proof against local malware.** Code running inside the browser session can wait for an
   unlock and then use both keys. Nothing in a web page prevents that.
+- **Not proof against a compromised browser, but no longer against Veyns.** Nothing from the
+  identity provider executes on this origin: sign-in is the ordinary authorization-code
+  redirect with PKCE, and `script-src` is `'self'` alone. Veyns can assert who you are and that
+  a palm was seen. It cannot read the phrase out of this browser.
 - **Not quantum-proof.** ML-DSA-65 and ML-KEM-768 are lattice schemes believed to resist
   quantum attack; they run on ordinary hardware. Bitcoin itself still signs with secp256k1,
   which a quantum computer would break on-chain regardless of anything here.

@@ -87,21 +87,15 @@ function show(view) {
   $('who').hidden = view !== 'wallet' && view !== 'create';
 }
 
-let sdkPromise = null;
-function loadSdk() {
-  sdkPromise ??= new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = `${state.config.issuer}/veyns.js`;
-    script.onload = () => (window.veyns ? resolve(window.veyns) : reject(new Error('Veyns did not load.')));
-    script.onerror = () => {
-      sdkPromise = null;
-      script.remove();
-      reject(new Error('Could not reach Veyns. Check your connection and try again.'));
-    };
-    document.head.append(script);
-  });
-  return sdkPromise;
-}
+/*
+ * Veyns is never loaded as a script here.
+ *
+ * Sign-in is the ordinary authorization-code redirect with PKCE: this page talks to the
+ * issuer over fetch and hands the browser to it, and the issuer hands the browser back with
+ * a code. Nothing of theirs executes on this origin, which matters because anything that did
+ * could read the encrypted phrase out of IndexedDB and the unlock secret as it arrives. The
+ * party that verifies a palm should not also be a party that could take the key.
+ */
 
 /* --------------------------------------------------------------- boot */
 
@@ -114,7 +108,6 @@ async function boot() {
     $('network-chip').textContent = state.config.network;
     $('pitch-network').textContent = state.config.network;
     if (!state.config.configured || !state.config.vaultReady || !state.config.palmEnabled) return showSetup();
-    loadSdk().catch(() => {});
     let redirectError = '';
     try {
       await finishRedirectSignIn();
@@ -230,7 +223,7 @@ async function showSignin() {
   $('signin-browser').hidden = state.config.requirePalmSignin;
   $('signin-browser').disabled = $('signin-palm').disabled = true;
   try {
-    const [{ nonce }] = await Promise.all([api('/api/login/start', {}), loadSdk()]);
+    const { nonce } = await api('/api/login/start', {});
     state.loginNonce = nonce;
     $('signin-browser').disabled = $('signin-palm').disabled = false;
   } catch (error) {
@@ -240,30 +233,15 @@ async function showSignin() {
 
 async function signIn(method) {
   const nonce = state.loginNonce;
-  if (!nonce || !window.veyns) return;
+  if (!nonce) return;
   state.loginNonce = null;
   $('signin-error').textContent = '';
   $('signin-browser').disabled = $('signin-palm').disabled = true;
   try {
-    const { token } = await window.veyns.signin({
-      clientId: state.config.clientId,
-      nonce,
-      ...(method === 'palm' ? { method: 'palm' } : {}),
-    });
-    await api('/api/login/finish', { token });
-    await refresh();
+    $('signin-error').textContent = 'Opening Veyns…';
+    await signInWithRedirect(method, nonce);
   } catch (error) {
-    if (error.code === 'popup_blocked') {
-      try {
-        $('signin-error').textContent = 'Opening Veyns in this tab…';
-        await signInWithRedirect(method, nonce);
-        return;
-      } catch (redirectError) {
-        $('signin-error').textContent = friendly(redirectError);
-      }
-    } else if (error.code !== 'cancelled') {
-      $('signin-error').textContent = friendly(error);
-    }
+    $('signin-error').textContent = friendly(error);
     await showSignin();
   }
 }
