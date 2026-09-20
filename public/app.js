@@ -416,15 +416,18 @@ const device = {
    */
   async rotateAttestation(operation) {
     const mnemonic = await this.phraseFromRecord(operation.id);
-    const current = state.data?.wallet?.attestation?.epoch ?? 1;
-    return api('/api/attestation/register', {
-      operationId: operation.id,
-      attestationRegistration: registerKey(mnemonic, {
-        vaultId: this.record.address,
-        epoch: current + 1,
-        previous: current,
-      }),
-    });
+    const current = state.data?.wallet?.attestation?.epoch ?? null;
+    const registration = current === null
+      // No lineage yet: start one at epoch 1, signed by itself.
+      ? registerKey(mnemonic, { vaultId: this.record.address, epoch: 1 })
+      : registerKey(mnemonic, { vaultId: this.record.address, epoch: current + 1, previous: current });
+    const result = await api('/api/attestation/register', { operationId: operation.id, attestationRegistration: registration });
+    // The device pins the root of whatever lineage it just started.
+    if (current === null && this.record) {
+      await saveRecord({ ...this.record, attestationRootKeyId: result.attestation.rootKeyId });
+      this.record = await loadRecord();
+    }
+    return result;
   },
 
   /** Derives the address for a newly approved network and reports only the public part. */
@@ -812,7 +815,11 @@ $('legacy-move').addEventListener('click', () => startMove($('legacy-error')));
 
 $('rotate-attestation').addEventListener('click', async () => {
   $('device-error').textContent = '';
-  if (!confirm('Replace the key that signs your authorisation records?\n\nReceipts signed by the old key stop being accepted. The new key comes from the same recovery phrase.')) return;
+  const fresh = !state.data?.wallet?.attestation?.keyId;
+  const question = fresh
+    ? 'Register the key that signs your authorisation records?\n\nIt is derived from the recovery phrase this browser already holds, and takes one palm scan.'
+    : 'Replace the key that signs your authorisation records?\n\nReceipts signed by the old key stop being accepted. The new key comes from the same recovery phrase.';
+  if (!confirm(question)) return;
   try {
     const { operation } = await api('/api/attestation/approval', {});
     openApproval(operation, 'Replacing the authorisation key…');
@@ -967,7 +974,10 @@ function renderSettings(data) {
   $('attestation-key').textContent = attestation?.keyId
     ? `${attestation.algorithm} · ${attestation.keyId} · epoch ${attestation.epoch} · from ${attestation.rootKeyId}`
     : attestation?.broken ? `lineage broken: ${attestation.broken}` : 'none registered';
-  $('rotate-attestation').hidden = legacy || !attestation;
+  $('rotate-attestation').hidden = legacy;
+  $('rotate-attestation').textContent = attestation?.keyId
+    ? 'Replace the authorisation key'
+    : 'Register the authorisation key';
   $('reset-note').textContent = legacy
     ? `Erasing destroys the key this server holds for ${wallet.address}. Anything left at that address goes with it, so sweep it somewhere on the way out.`
     : `Erasing removes the vault here and the key in this browser. Your twelve words are the only way back to ${wallet.address}, so send the coins on or write the words down first.`;
@@ -1298,11 +1308,14 @@ function checkLineage(data) {
   const wallet = data.wallet;
   const attestation = wallet?.attestation;
   const pinned = device.record?.attestationRootKeyId ?? null;
-  const problem = !attestation ? (wallet?.custody === 'client' ? 'This vault has no attestation key registered.' : null)
-    : attestation.broken ? `This vault's key lineage does not verify: ${attestation.broken}.`
-    : pinned && attestation.rootKeyId !== pinned
-      ? 'The authorisation key this server reports did not come from this device. Do not send anything until you know why.'
-      : null;
+  const problem = !attestation
+    ? (wallet?.custody === 'client'
+      ? 'This vault has no authorisation key yet. Register one in Settings — it takes one palm scan, and the key comes from the recovery phrase you already have.'
+      : null)
+    : attestation.broken ? `This vault's key lineage does not verify: ${attestation.broken}. Register a key again in Settings.`
+      : pinned && attestation.rootKeyId !== pinned
+        ? 'The authorisation key this server reports did not come from this device. Do not send anything until you know why.'
+        : null;
 
   state.lineage = { ok: !problem, problem, attestation, pinned };
   $('lineage-warning').textContent = problem ?? '';
@@ -1480,7 +1493,9 @@ async function settled(current, operation) {
       else await showPhrase(operation);
     } else if (operation.kind === 'attestation') {
       const { attestation } = await device.rotateAttestation(operation);
-      toast(`Authorisation key replaced: ${attestation.keyId} (epoch ${attestation.epoch}).`);
+      toast(attestation.epoch === 1
+        ? `Authorisation key registered: ${attestation.keyId}. You can send again.`
+        : `Authorisation key replaced: ${attestation.keyId} (epoch ${attestation.epoch}).`);
     } else if (operation.kind === 'reset') {
       const { txid, sweptSats } = await device.reset(operation);
       toast(txid

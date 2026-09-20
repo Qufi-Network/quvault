@@ -347,3 +347,44 @@ async function currentLink(db, userId) {
   const { rows } = await db.query('SELECT attestation_chain FROM wallets WHERE user_id = $1', [userId]);
   return JSON.stringify(JSON.parse(rows[0].attestation_chain)[0]);
 }
+
+/* ================= a vault that predates key lineages ====================== */
+
+test('a vault with no lineage can start one, and spends again afterwards', async t => {
+  const env = await start(t);
+  const alex = await signedIn(env, 'sub-alex');
+  await walletFor(env, alex);
+
+  // As a vault registered before lineages existed would look: a key, and no chain.
+  const db = await env.app.db();
+  await db.query('UPDATE wallets SET attestation_chain = NULL, attestation_root_seal = NULL WHERE user_id = $1', [alex.id]);
+  assert.equal(ok(await alex.get('/api/wallet')).wallet.attestation, null, 'the page would say: no key');
+
+  // It cannot spend while it has no key to attest with.
+  const { operation, unlocked, hex } = await approved(env, alex);
+  refused(await alex.post(`/api/operations/${operation.id}/broadcast`, { hex, authorization: attestFor(env, alex, unlocked) }), 'no lineage');
+
+  // Registering a root takes a palm, like every other change to a vault.
+  const request = ok(await alex.post('/api/attestation/approval', {}));
+  assert.equal(request.epoch, 1);
+  assert.equal(request.starting, true);
+  refused(await alex.post('/api/attestation/register', {
+    operationId: request.operation.id,
+    attestationRegistration: registrationFor({ vaultId: alex.address, keys: alex.attestation }),
+  }), 'registering before the palm');
+
+  await palmApprove(env, alex, request.operation.id);
+  const registered = ok(await alex.post('/api/attestation/register', {
+    operationId: request.operation.id,
+    attestationRegistration: registrationFor({ vaultId: alex.address, keys: alex.attestation }),
+  }));
+  assert.equal(registered.attestation.epoch, 1);
+  assert.equal(registered.attestation.keyId, alex.attestation.keyId);
+
+  // And the repaired vault spends, while a substituted key still does not.
+  const attacker = attackerKeys();
+  refused(await alex.post(`/api/operations/${operation.id}/broadcast`, {
+    hex, authorization: attestFor(env, alex, unlocked, { keys: attacker }),
+  }), 'a substituted key after the repair');
+  assert.ok(ok(await alex.post(`/api/operations/${operation.id}/broadcast`, { hex, authorization: attestFor(env, alex, unlocked) })).txid);
+});

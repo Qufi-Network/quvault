@@ -1132,22 +1132,37 @@ export function createApp(options) {
     const wallet = await one('walletOf', user.id);
     if (!wallet) throw new HttpError(409, 'Create the wallet first.');
     if (wallet.custody !== 'client') throw new HttpError(409, 'This vault signs on the server and has no attestation key of its own.');
+    // A vault made before key lineages existed has no chain to continue, so it starts one.
+    // A vault with a working chain continues it, and the key it has signs for the next.
     const current = attestationOf(wallet);
-    if (!current.ok) throw new HttpError(409, `This vault has no working key to replace: ${current.reason}.`);
-    const next = current.epoch + 1;
-    const statement = 'Replace the authorisation key of my vault';
-    const details = {
-      action: 'replace authorisation key',
-      network,
-      vault: wallet.address,
-      from_key: current.keyId,
-      from_epoch: String(current.epoch),
-      to_epoch: String(next),
-      effect: 'records signed by the old key stop being accepted',
-    };
+    const starting = !current.ok && !wallet.attestation_chain;
+    if (!current.ok && !starting) {
+      throw new HttpError(409, `This vault's key lineage cannot be continued: ${current.reason}.`);
+    }
+    const next = starting ? 1 : current.epoch + 1;
+    const statement = starting
+      ? 'Register the authorisation key of my vault'
+      : 'Replace the authorisation key of my vault';
+    const details = starting
+      ? {
+        action: 'register authorisation key',
+        network,
+        vault: wallet.address,
+        to_epoch: '1',
+        effect: 'this vault can sign authorisation records again',
+      }
+      : {
+        action: 'replace authorisation key',
+        network,
+        vault: wallet.address,
+        from_key: current.keyId,
+        from_epoch: String(current.epoch),
+        to_epoch: String(next),
+        effect: 'records signed by the old key stop being accepted',
+      };
     const { required } = await changeQuorum(user.id, 'bitcoin');
     const op = await newOperation({ walletOwnerId: user.id, user, kind: 'attestation', statement, details, required });
-    return { operation: operationView(op, [], user), epoch: next };
+    return { operation: operationView(op, [], user), epoch: next, starting };
   }
 
   /** The browser reports the public half of the new key. The old one stops being accepted. */
@@ -1159,7 +1174,19 @@ export function createApp(options) {
     const wallet = await one('walletOf', user.id);
     if (!wallet) throw new HttpError(409, 'This account has no wallet.');
     const current = attestationOf(wallet);
-    if (!current.ok) throw new HttpError(409, `This vault has no working key to sign a replacement: ${current.reason}.`);
+    if (!current.ok && wallet.attestation_chain) {
+      throw new HttpError(409, `This vault's key lineage cannot be continued: ${current.reason}.`);
+    }
+
+    if (!current.ok) {
+      // Starting a lineage: a root, self-signed, sealed so the database alone cannot move it.
+      const registration = readRegistration(body, { vaultId: wallet.address });
+      if (registration.epoch !== 1) throw new HttpError(409, 'A new lineage starts at epoch 1.');
+      await query('setAttestationRoot', JSON.stringify(registration.chain),
+        sealRoot(walletSeed, { vaultId: wallet.address, rootKeyId: registration.rootKeyId }), now(), user.id);
+      return { attestation: attestationView(await one('walletOf', user.id)) };
+    }
+
     const existing = JSON.parse(wallet.attestation_chain);
     const registration = readRegistration(body, { vaultId: wallet.address, existing });
     if (registration.epoch !== current.epoch + 1) throw new HttpError(409, 'A replacement key follows the one before it.');
