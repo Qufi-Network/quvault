@@ -1057,23 +1057,69 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
 .home .error { margin-top: 10px; }
 .eyebrow.foot-note { margin-top: 26px; }
 
-/* -------------------------------------------------------------- the hand */
+/* ---------------------------------------------------------- the hand, in 3D */
 
-.hero-hand { position: relative; display: flex; justify-content: center; min-width: 0; }
+.hero-hand { position: relative; display: flex; justify-content: center; min-width: 0; perspective: 1400px; }
 .hand-note {
   position: absolute;
-  top: 26%;
+  top: 24%;
   right: 0;
+  z-index: 2;
   font: 600 10.5px/1.7 var(--sans);
   letter-spacing: .2em;
   text-transform: uppercase;
   color: var(--muted);
   text-align: right;
 }
-.hand-frame { position: relative; width: min(100%, 560px); aspect-ratio: 1 / 1.12; }
-.hand-frame img { width: 100%; height: 100%; object-fit: contain; object-position: bottom; }
 
-/* Until the photograph is in place, a shape that reads as deliberate rather than broken. */
+/*
+ * The frame keeps the photograph's own proportions exactly, because everything drawn over it
+ * is placed as a percentage of the image. Get the ratio wrong and the mark drifts off the palm
+ * at some window width and not at others.
+ */
+.hand-frame {
+  position: relative;
+  width: min(100%, 580px);
+  aspect-ratio: 1145 / 1374;
+  transform-style: preserve-3d;
+  transform:
+    perspective(1400px)
+    rotateY(var(--tilt-x, 0deg))
+    rotateX(var(--tilt-y, 0deg))
+    translateZ(0);
+  will-change: transform;
+}
+/*
+ * No transition while it is following the pointer — the frames are already smooth, and a
+ * transition running against them holds the transform at whatever it started from. It only
+ * eases on the way back to rest, which is the one moment that wants easing.
+ */
+.hand-frame.settling { transition: transform .6s cubic-bezier(.22, .61, .36, 1); }
+.hand-frame img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  /* The render is cut out on white, so the depth has to be added rather than photographed. */
+  filter: drop-shadow(0 34px 44px rgba(9, 44, 110, .26)) drop-shadow(0 4px 10px rgba(9, 44, 110, .12));
+}
+
+/* A floor for it to stand on, which is what actually reads as depth. */
+.hand-frame::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -2%;
+  width: 62%;
+  height: 7%;
+  transform: translateX(-50%) translateZ(-40px);
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(9, 44, 110, .26), transparent 78%);
+  filter: blur(6px);
+}
+.hand-frame::after { content: none; }
+
+/* Until the photograph loads, a shape that reads as deliberate rather than broken. */
 .hand-fallback {
   position: absolute;
   inset: 0;
@@ -1085,97 +1131,81 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
 }
 .hand-frame.has-image .hand-fallback { display: none; }
 
-/* the corner brackets of a scanner */
-.hand-frame::before, .hand-frame::after {
-  content: "";
-  position: absolute;
-  width: clamp(48px, 9%, 72px);
-  height: clamp(48px, 9%, 72px);
-  border: 1.5px solid rgba(10, 98, 255, .28);
-}
-.hand-frame::before { top: 12%; left: 6%; border-right: 0; border-bottom: 0; border-radius: 6px 0 0 0; }
-.hand-frame::after { bottom: 16%; right: 6%; border-left: 0; border-top: 0; border-radius: 0 0 6px 0; }
-
+/*
+ * Anchored on the Q in the photograph: 49.9% across, 59.8% down, measured off the pixels
+ * rather than guessed. The overlay is 62% of the image wide, so one unit of its 400-unit box
+ * is a fixed fraction of the hand however large the hand is drawn.
+ */
 .palm-q {
   position: absolute;
-  left: 50%;
-  top: 52%;
-  width: clamp(160px, 40%, 250px);
-  transform: translate(-50%, -50%);
+  left: 49.9%;
+  top: 59.8%;
+  width: 62%;
+  transform: translate(-50%, -50%) translateZ(30px);
   overflow: visible;
+  pointer-events: none;
 }
-.palm-q .ring { fill: none; stroke: var(--brand); transform-origin: 110px 110px; }
-.palm-q .ring-1 { stroke-width: 2.2; opacity: .85; }
-.palm-q .ring-2 { stroke-width: 1.4; opacity: .5; stroke-dasharray: 5 9; }
-.palm-q .ring-3 { stroke-width: 1; opacity: .28; stroke-dasharray: 2 12; }
-.palm-q .disc { fill: rgba(10, 98, 255, .16); stroke: rgba(10, 98, 255, .55); stroke-width: 1.2; transform-origin: 110px 110px; }
-.palm-q .glow { transform-origin: 110px 110px; }
-.palm-q .sweep { transform-origin: 110px 110px; opacity: .8; }
-.palm-q .orbit { transform-origin: 110px 110px; }
-.palm-q .spark { fill: #6aa8ff; }
-.palm-q .spark-b { fill: rgba(106, 168, 255, .6); }
+.palm-q .ring {
+  fill: none;
+  stroke: #7cc0ff;
+  stroke-width: 2.2;
+  opacity: 0;
+  transform-origin: 200px 200px;
+}
+.palm-q .glow { transform-origin: 200px 200px; opacity: .8; }
+.palm-q .sweep { transform-origin: 200px 200px; opacity: .85; }
+.palm-q .orbit { transform-origin: 200px 200px; }
+.palm-q .spark { fill: #bfe0ff; }
+.palm-q .spark-b { fill: rgba(150, 205, 255, .65); }
 
 /*
- * Both names sit in the palm at rest, one above the other: QuVault holds the coins, Veyns is
- * what reads the hand. They are readable with no animation at all, because a browser that
- * gives no frames — or a person who has asked for less motion — should still see the mark
- * rather than an empty circle.
+ * The photograph already says QuVault. This says what reads the hand, and it is legible with
+ * no animation at all: a browser that gives no frames, or somebody who has asked for less
+ * motion, should still see the name rather than an empty palm.
  */
-.palm-q .q {
-  fill: var(--brand);
-  font: 700 52px/1 var(--sans);
-  letter-spacing: -.02em;
-}
 .palm-q .veyns {
-  fill: #6aa8ff;
-  font: 600 11px/1 var(--sans);
-  letter-spacing: .3em;
-  opacity: .55;
+  fill: #cfe7ff;
+  font: 600 19px/1 var(--sans);
+  letter-spacing: .38em;
+  opacity: .6;
+  paint-order: stroke;
+  stroke: rgba(4, 30, 80, .55);
+  stroke-width: 3.5;
 }
 
-/*
- * One beat, shared by everything: the rings go out, the disc breathes, the scanner turns, and
- * the two names hand over to each other at the peak of it.
- */
 @media (prefers-reduced-motion: no-preference) {
-  .palm-q .ring-1 { animation: pulse-ring 3.2s var(--ease) infinite; }
-  .palm-q .ring-2 { animation: pulse-ring 3.2s var(--ease) .4s infinite; }
-  .palm-q .ring-3 { animation: pulse-ring 3.2s var(--ease) .8s infinite; }
-  .palm-q .glow { animation: pulse-glow 3.2s var(--ease) infinite; }
-  .palm-q .disc { animation: pulse-disc 3.2s var(--ease) infinite; }
-  .palm-q .sweep { animation: sweep-round 3.2s linear infinite; }
-  .palm-q .orbit { animation: sweep-round 8s linear infinite reverse; }
-  .palm-q .q { animation: breathe-q 3.2s var(--ease) infinite; }
-  .palm-q .veyns { animation: read-veyns 3.2s var(--ease) infinite; }
+  .hand-frame { animation: hand-float 9s ease-in-out infinite; }
+  .palm-q .ring-1 { animation: leave-palm 3.4s var(--ease) infinite; }
+  .palm-q .ring-2 { animation: leave-palm 3.4s var(--ease) 1.13s infinite; }
+  .palm-q .ring-3 { animation: leave-palm 3.4s var(--ease) 2.26s infinite; }
+  .palm-q .glow { animation: palm-breathe 3.4s var(--ease) infinite; }
+  .palm-q .sweep { animation: turn 3.4s linear infinite; }
+  .palm-q .orbit { animation: turn 9s linear infinite reverse; }
+  .palm-q .veyns { animation: read-veyns 3.4s var(--ease) infinite; }
 
-  @keyframes pulse-ring {
-    0% { transform: scale(.9); opacity: .15; }
-    40% { opacity: .85; }
-    100% { transform: scale(1.14); opacity: 0; }
+  /* The hand is held up, not clamped down: it should drift a little. */
+  @keyframes hand-float {
+    0%, 100% { translate: 0 0; }
+    50% { translate: 0 -12px; }
   }
-  @keyframes pulse-glow {
-    0%, 100% { transform: scale(.94); opacity: .55; }
-    50% { transform: scale(1.06); opacity: 1; }
+  @keyframes leave-palm {
+    0% { transform: scale(.62); opacity: 0; stroke-width: 3.4; }
+    18% { opacity: .9; }
+    100% { transform: scale(1.68); opacity: 0; stroke-width: 1; }
   }
-  @keyframes pulse-disc {
-    0%, 100% { transform: scale(1); }
-    50% { transform: scale(1.06); }
+  @keyframes palm-breathe {
+    0%, 100% { transform: scale(.92); opacity: .55; }
+    50% { transform: scale(1.08); opacity: 1; }
   }
-  @keyframes sweep-round {
+  @keyframes turn {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
   }
-  /* The Q breathes with the ring; Veyns answers a beat later, the way a reading lands. */
-  @keyframes breathe-q {
-    0%, 100% { opacity: .88; transform: scale(1); }
-    50% { opacity: 1; transform: scale(1.04); }
-  }
   @keyframes read-veyns {
-    0%, 30% { opacity: .35; letter-spacing: .3em; }
-    62% { opacity: 1; letter-spacing: .42em; }
-    100% { opacity: .35; letter-spacing: .3em; }
+    0%, 26% { opacity: .35; letter-spacing: .38em; }
+    60% { opacity: 1; letter-spacing: .5em; }
+    100% { opacity: .35; letter-spacing: .38em; }
   }
-  .palm-q .q, .palm-q .veyns { transform-box: fill-box; transform-origin: center; }
 }
 
 /* --------------------------------------------------------------- features */

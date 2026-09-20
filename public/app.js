@@ -267,11 +267,53 @@ for (const [id, method] of SIGNIN_BUTTONS) $(id).addEventListener('click', () =>
  */
 {
   const image = $('hero-hand-image');
-  image.addEventListener('load', () => {
-    image.hidden = false;
-    image.closest('.hand-frame').classList.add('has-image');
-  });
+  const done = () => image.closest('.hand-frame').classList.add('has-image');
+  if (image.complete && image.naturalWidth) done();
+  image.addEventListener('load', done);
   image.addEventListener('error', () => { image.remove(); });
+}
+
+/*
+ * The hand turns a little towards whoever is looking at it. Small angles on purpose — enough
+ * that it reads as an object in a room rather than a picture stuck to the page, and not so
+ * much that it becomes a toy. Nothing moves for somebody who has asked for less motion, and
+ * nothing moves on a touch screen, where there is no pointer to follow.
+ */
+{
+  const frame = $('hand-frame');
+  const still = window.matchMedia('(prefers-reduced-motion: reduce)');
+  const coarse = window.matchMedia('(pointer: coarse)');
+  const MAX = 7;
+  let queued = false;
+  let last = { x: 0, y: 0 };
+
+  const apply = () => {
+    queued = false;
+    frame.style.setProperty('--tilt-x', `${last.x.toFixed(2)}deg`);
+    frame.style.setProperty('--tilt-y', `${last.y.toFixed(2)}deg`);
+  };
+
+  window.addEventListener('pointermove', event => {
+    if (still.matches || coarse.matches || $('view-signin').hidden) return;
+    const box = frame.getBoundingClientRect();
+    if (!box.width) return;
+    frame.classList.remove('settling');
+    const dx = (event.clientX - (box.left + box.width / 2)) / (window.innerWidth / 2);
+    const dy = (event.clientY - (box.top + box.height / 2)) / (window.innerHeight / 2);
+    last = {
+      x: Math.max(-MAX, Math.min(MAX, dx * MAX)),
+      y: Math.max(-MAX, Math.min(MAX, -dy * MAX)),
+    };
+    if (!queued) { queued = true; requestAnimationFrame(apply); }
+  }, { passive: true });
+
+  const rest = () => {
+    frame.classList.add('settling');
+    last = { x: 0, y: 0 };
+    apply();
+  };
+  document.addEventListener('pointerleave', rest);
+  window.addEventListener('blur', rest);
 }
 $('signout').addEventListener('click', async () => {
   await api('/api/logout', {}).catch(() => {});

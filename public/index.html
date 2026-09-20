@@ -95,48 +95,46 @@
 
       <div class="hero-hand">
         <p class="hand-note">Your hand<br>your key</p>
-        <div class="hand-frame">
-          <img id="hero-hand-image" src="/hand.png" alt="A hand held up to be scanned" hidden>
+        <div class="hand-frame" id="hand-frame">
+          <img id="hero-hand-image" src="/hand.webp" alt="A hand held up to be scanned" width="1145" height="1374">
           <div class="hand-fallback" id="hero-hand-fallback"></div>
           <!--
-            The mark is drawn over the image rather than baked into it, so it can breathe, and
-            so the two names in this product can take turns: QuVault holds the coins, Veyns is
-            what reads the hand. One beat each, on the same pulse.
+            The Q is part of the photograph, so nothing here draws a second one. What is added
+            is the life around it: rings leaving the palm, a scanner turning over it, and the
+            name of the thing that actually reads a hand. The overlay is anchored on the Q
+            itself — measured at 49.9% across and 59.8% down the image — so it sits in the palm
+            at every size rather than near it.
           -->
-          <svg class="palm-q" viewBox="0 0 220 220" aria-hidden="true">
+          <svg class="palm-q" viewBox="0 0 400 400" aria-hidden="true">
             <defs>
               <radialGradient id="palm-glow">
-                <stop offset="0%" stop-color="rgba(10,98,255,.38)"/>
-                <stop offset="70%" stop-color="rgba(10,98,255,.10)"/>
-                <stop offset="100%" stop-color="rgba(10,98,255,0)"/>
+                <stop offset="30%" stop-color="rgba(60,150,255,.30)"/>
+                <stop offset="70%" stop-color="rgba(60,150,255,.10)"/>
+                <stop offset="100%" stop-color="rgba(60,150,255,0)"/>
               </radialGradient>
-              <linearGradient id="palm-sweep" x1="0" y1="0" x2="1" y2="0">
-                <stop offset="0%" stop-color="rgba(90,170,255,0)"/>
-                <stop offset="100%" stop-color="rgba(90,170,255,.9)"/>
+              <linearGradient id="palm-sweep" x1="0" y1="1" x2="0" y2="0">
+                <stop offset="0%" stop-color="rgba(120,190,255,0)"/>
+                <stop offset="100%" stop-color="rgba(160,215,255,.95)"/>
               </linearGradient>
             </defs>
 
-            <circle class="glow" cx="110" cy="110" r="104" fill="url(#palm-glow)"/>
-            <circle class="ring ring-3" cx="110" cy="110" r="96"/>
-            <circle class="ring ring-2" cx="110" cy="110" r="74"/>
-            <circle class="ring ring-1" cx="110" cy="110" r="54"/>
+            <circle class="glow" cx="200" cy="200" r="190" fill="url(#palm-glow)"/>
 
-            <!-- a scanner passing over the palm -->
+            <!-- each ring leaves the palm a beat after the one before it -->
+            <circle class="ring ring-1" cx="200" cy="200" r="104"/>
+            <circle class="ring ring-2" cx="200" cy="200" r="104"/>
+            <circle class="ring ring-3" cx="200" cy="200" r="104"/>
+
             <g class="sweep">
-              <path d="M110 110 L110 26" stroke="url(#palm-sweep)" stroke-width="3" stroke-linecap="round" fill="none"/>
+              <path d="M200 200 L200 52" stroke="url(#palm-sweep)" stroke-width="3.5" stroke-linecap="round" fill="none"/>
             </g>
 
-            <!-- points of light that travel the outer ring -->
             <g class="orbit">
-              <circle class="spark" cx="110" cy="14" r="2.6"/>
-              <circle class="spark spark-b" cx="110" cy="206" r="1.9"/>
+              <circle class="spark" cx="200" cy="96" r="3.4"/>
+              <circle class="spark spark-b" cx="200" cy="304" r="2.4"/>
             </g>
 
-            <circle class="disc" cx="110" cy="110" r="48"/>
-            <g class="marks">
-              <text class="q" x="110" y="100" text-anchor="middle" dominant-baseline="central">Q</text>
-              <text class="veyns" x="110" y="138" text-anchor="middle" dominant-baseline="central">VEYNS</text>
-            </g>
+            <text class="veyns" x="200" y="292" text-anchor="middle" dominant-baseline="central">VEYNS</text>
           </svg>
         </div>
       </div>
