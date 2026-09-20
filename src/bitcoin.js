@@ -8,7 +8,7 @@
 import crypto from 'node:crypto';
 import * as btc from '@scure/btc-signer';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
-import { hex } from '@scure/base';
+import { hex, base64 } from '@scure/base';
 
 // testnet4 shares address formats and version bytes with the older test network.
 export const NETWORK = btc.TEST_NETWORK;
@@ -43,25 +43,89 @@ export function isValidAddress(address) {
 
 const addressOfScript = script => btc.Address(NETWORK).encode(btc.OutScript.decode(script));
 
+/*
+ * A quorum the chain itself keeps.
+ *
+ * The coins sit in a P2WSH output holding an ordinary m-of-n script, which every wallet and
+ * every explorer understands, and which holds whether or not this server is running. Keys
+ * are ordered lexicographically (BIP67) so that the same people always derive the same
+ * address, whichever of them derives it, and so that the order nobody agreed on cannot
+ * quietly become a different vault.
+ */
+export const MAX_KEYS = 15; // OP_CHECKMULTISIG counts no higher
+
+const asKey = value => {
+  const bytes = typeof value === 'string' ? tryHex(value) : new Uint8Array(value);
+  if (bytes?.length !== 33 || (bytes[0] !== 2 && bytes[0] !== 3)) {
+    throw new WalletError('That is not a compressed public key.');
+  }
+  return bytes;
+};
+
+const tryHex = value => {
+  try {
+    return hex.decode(value.toLowerCase());
+  } catch {
+    return null;
+  }
+};
+
+export function multisigOf(publicKeys, required) {
+  const keys = (Array.isArray(publicKeys) ? publicKeys : []).map(asKey);
+  if (keys.length < 2) throw new WalletError('A quorum needs at least two keys.');
+  if (keys.length > MAX_KEYS) throw new WalletError(`A quorum takes at most ${MAX_KEYS} keys.`);
+  if (!Number.isInteger(required) || required < 1 || required > keys.length) {
+    throw new WalletError(`A quorum of ${keys.length} keys needs between one and ${keys.length} signatures.`);
+  }
+  const ordered = keys.map(k => hex.encode(k)).sort();
+  if (new Set(ordered).size !== ordered.length) throw new WalletError('The same key appears twice in this quorum.');
+  return btc.p2wsh(btc.p2ms(required, ordered.map(k => hex.decode(k))), NETWORK);
+}
+
+export const multisigAddressOf = (publicKeys, required) => multisigOf(publicKeys, required).address;
+
+/** What a vault's coins are locked to: one key, or a quorum of them. */
+export function lockOf({ publicKey, publicKeys, required } = {}) {
+  if (required === undefined || required === null) {
+    return { address: addressOf(publicKey), script: scriptOf(publicKey), required: null };
+  }
+  const wsh = multisigOf(publicKeys, required);
+  return { address: wsh.address, script: wsh.script, witnessScript: wsh.witnessScript, required };
+}
+
+/*
+ * What one input costs to spend, in vbytes. A single-key input carries a signature and a
+ * public key; a quorum carries one signature per required palm and the script itself. The
+ * arithmetic is here rather than a constant because the answer moves with the threshold,
+ * and a test signs a real transaction to check this has not drifted from the truth.
+ */
+function inputVsize(lock) {
+  if (!lock.required) return 68;
+  const script = lock.witnessScript.length;
+  const witness = 2 + 73 * lock.required + (script < 253 ? 1 : 3) + script;
+  return 41 + Math.ceil(witness / 4);
+}
+
 /**
  * Chooses coins and returns the plan. `amountSats` may be 'max' to sweep everything.
  * Throws WalletError with a plain message when the balance or fee does not work out.
  */
-export function planSpend({ publicKey, utxos, toAddress, amountSats, feeRate }) {
+export function planSpend({ publicKey, publicKeys, required, utxos, toAddress, amountSats, feeRate }) {
   if (!isValidAddress(toAddress)) throw new WalletError('That is not a valid testnet4 address.');
   if (!utxos.length) throw new WalletError('This wallet has no confirmed coins yet.');
-  const script = scriptOf(publicKey);
-  const address = addressOf(publicKey);
+  const lock = lockOf({ publicKey, publicKeys, required });
+  const { script, address } = lock;
   const spendable = utxos.map(u => ({
     txid: hex.decode(u.txid),
     index: u.vout,
     witnessUtxo: { script, amount: BigInt(u.value) },
+    ...(lock.witnessScript ? { witnessScript: lock.witnessScript } : {}),
   }));
   const rate = Math.max(1, Math.round(feeRate));
   if (amountSats === 'max') {
     // Everything in one output, so the fee comes out of the amount sent.
     const total = utxos.reduce((sum, u) => sum + u.value, 0);
-    const vsize = Math.ceil(10.5 + 68 * utxos.length + 31);
+    const vsize = Math.ceil(10.5 + inputVsize(lock) * utxos.length + 31);
     const feeSats = vsize * rate;
     const sats = total - feeSats;
     if (sats < Number(DUST_SATS)) throw new WalletError('The balance is too small to cover the fee.');
@@ -124,6 +188,84 @@ export function signPlan({ privateKey, publicKey, plan }) {
   tx.finalize();
   const fee = plan.inputs.reduce((sum, i) => sum + i.value, 0) - plan.outputs.reduce((sum, o) => sum + o.sats, 0);
   if (fee !== plan.feeSats) throw new WalletError('The signed transaction does not match the approved plan.');
+  return { hex: tx.hex, txid: tx.id, vsize: tx.vsize };
+}
+
+/*
+ * Collecting a quorum's signatures.
+ *
+ * The server builds the unsigned transaction for the approved plan and holds it as a PSBT.
+ * Each signer's own browser opens it, adds one signature and hands it back; the server can
+ * put those together but cannot produce one, because it holds no signer's key. A PSBT that
+ * describes a different transaction is refused by the library, so a signature collected for
+ * one spend cannot be carried over to another.
+ */
+export function psbtForPlan(vault, plan) {
+  const lock = lockOf(vault);
+  const tx = new btc.Transaction();
+  for (const input of plan.inputs) {
+    tx.addInput({
+      txid: hex.decode(input.txid),
+      index: input.index,
+      witnessUtxo: { script: lock.script, amount: BigInt(input.value) },
+      ...(lock.witnessScript ? { witnessScript: lock.witnessScript } : {}),
+    });
+  }
+  for (const output of plan.outputs) tx.addOutputAddress(output.address, BigInt(output.sats), NETWORK);
+  return base64.encode(tx.toPSBT());
+}
+
+const readPsbt = psbt => {
+  try {
+    return btc.Transaction.fromPSBT(base64.decode(String(psbt)));
+  } catch {
+    throw new WalletError('That is not a readable partly signed transaction.');
+  }
+};
+
+/** One signer adding their own signature. The plan is already fixed; nothing else changes. */
+export function signPsbt(psbt, privateKey) {
+  const tx = readPsbt(psbt);
+  let signed = 0;
+  try {
+    signed = tx.sign(new Uint8Array(privateKey));
+  } catch {
+    signed = 0;
+  }
+  if (!signed) throw new WalletError('That key does not sign for this vault.');
+  return base64.encode(tx.toPSBT());
+}
+
+/** How many of the quorum have signed, counted per input so a thin one cannot hide. */
+export function signatureCount(psbt) {
+  const tx = readPsbt(psbt);
+  const counts = [...Array(tx.inputsLength).keys()].map(i => tx.getInput(i).partialSig?.length ?? 0);
+  return counts.length ? Math.min(...counts) : 0;
+}
+
+/** Puts the signers' work together. Work for a different transaction is refused outright. */
+export function combinePsbts(psbts) {
+  const parts = psbts.map(readPsbt);
+  if (!parts.length) throw new WalletError('There is nothing to put together.');
+  const [first, ...rest] = parts;
+  for (const part of rest) {
+    try {
+      first.combine(part);
+    } catch (error) {
+      throw new WalletError(`Those signatures are not for this transaction: ${error.message}`);
+    }
+  }
+  return base64.encode(first.toPSBT());
+}
+
+/** The finished transaction, once enough of the quorum has signed. */
+export function finalizePsbt(psbt) {
+  const tx = readPsbt(psbt);
+  try {
+    tx.finalize();
+  } catch (error) {
+    throw new WalletError(`This transaction is not ready to send: ${error.message}`);
+  }
   return { hex: tx.hex, txid: tx.id, vsize: tx.vsize };
 }
 
