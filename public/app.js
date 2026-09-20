@@ -274,16 +274,16 @@ for (const [id, method] of SIGNIN_BUTTONS) $(id).addEventListener('click', () =>
 }
 
 /*
- * The hand turns a little towards whoever is looking at it. Small angles on purpose — enough
- * that it reads as an object in a room rather than a picture stuck to the page, and not so
- * much that it becomes a toy. Nothing moves for somebody who has asked for less motion, and
- * nothing moves on a touch screen, where there is no pointer to follow.
+ * The hand turns very slightly towards whoever is looking at it — three degrees at the edge of
+ * the window, which is enough to sit in a room rather than on a page and little enough that
+ * you would struggle to catch it doing so. Nothing moves for somebody who has asked for less
+ * motion, and nothing moves on a touch screen, where there is no pointer to follow.
  */
 {
   const frame = $('hand-frame');
   const still = window.matchMedia('(prefers-reduced-motion: reduce)');
   const coarse = window.matchMedia('(pointer: coarse)');
-  const MAX = 7;
+  const MAX = 3;
   let queued = false;
   let last = { x: 0, y: 0 };
 
