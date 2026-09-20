@@ -97,6 +97,14 @@
         <p class="hand-note">Your hand<br>your key</p>
         <div class="hand-frame" id="hand-frame">
           <img id="hero-hand-image" src="/hand.webp" alt="A hand held up to be scanned" width="1145" height="1374">
+          <!--
+            The same photograph twice more, with the skin crushed away and the veins blown out,
+            laid over the first. One layer is the charge held in the hand; the other is a band
+            travelling up it. Nothing is drawn by hand here — it is the render's own veins
+            lighting up, which is why it lines up perfectly with the hand underneath.
+          -->
+          <img class="vein-glow" src="/hand.webp" alt="" aria-hidden="true" width="1145" height="1374">
+          <img class="vein-flow" src="/hand.webp" alt="" aria-hidden="true" width="1145" height="1374">
           <div class="hand-fallback" id="hero-hand-fallback"></div>
           <!--
             The Q is part of the photograph, so nothing here draws a second one. What is added
@@ -112,28 +120,9 @@
                 <stop offset="70%" stop-color="rgba(60,150,255,.10)"/>
                 <stop offset="100%" stop-color="rgba(60,150,255,0)"/>
               </radialGradient>
-              <linearGradient id="palm-sweep" x1="0" y1="1" x2="0" y2="0">
-                <stop offset="0%" stop-color="rgba(120,190,255,0)"/>
-                <stop offset="100%" stop-color="rgba(160,215,255,.95)"/>
-              </linearGradient>
             </defs>
 
             <circle class="glow" cx="200" cy="200" r="190" fill="url(#palm-glow)"/>
-
-            <!-- each ring leaves the palm a beat after the one before it -->
-            <circle class="ring ring-1" cx="200" cy="200" r="104"/>
-            <circle class="ring ring-2" cx="200" cy="200" r="104"/>
-            <circle class="ring ring-3" cx="200" cy="200" r="104"/>
-
-            <g class="sweep">
-              <path d="M200 200 L200 52" stroke="url(#palm-sweep)" stroke-width="3.5" stroke-linecap="round" fill="none"/>
-            </g>
-
-            <g class="orbit">
-              <circle class="spark" cx="200" cy="96" r="3.4"/>
-              <circle class="spark spark-b" cx="200" cy="304" r="2.4"/>
-            </g>
-
             <text class="veyns" x="200" y="292" text-anchor="middle" dominant-baseline="central">VEYNS</text>
           </svg>
         </div>
