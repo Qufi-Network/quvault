@@ -1,7 +1,7 @@
 import {
   accountFrom, accountsFrom, attest, attestationKeys, checkAuthorization, checkChain, clearRecord,
   decryptMnemonic, encryptMnemonic, fromBase64, jitterFrom, loadRecord, makeMnemonic, planDigest,
-  registerKey, saveRecord, signPlan,
+  cosignerFrom, registerKey, saveRecord, signPlan, signQuorum,
 } from '/vendor/wallet.js';
 
 const $ = id => document.getElementById(id);
@@ -150,6 +150,13 @@ async function refresh() {
         ? 'Something needs your palm'
         : `${waiting.length} requests need your palm`;
       $('signer-alert-what').textContent = `${waiting[0].statement} — ${waiting[0].approvedBy.length} of ${waiting[0].required} approvals so far.`;
+    }
+    // One browser holds one phrase, so a second vault here would write over the first.
+    const taken = Boolean(device.record);
+    $('create-wallet').disabled = taken;
+    if (taken) {
+      $('create-error').textContent = 'This browser already holds the key for another vault. '
+        + 'Making a second one here would write over it, so use a different browser or profile.';
     }
     show('create');
     return;
@@ -369,8 +376,19 @@ const device = {
     return api(`/api/operations/${operationId}/unlock`, {});
   },
 
-  /** Makes the phrase and stores it encrypted, here and nowhere else. */
+  /**
+   * Makes the phrase and stores it encrypted, here and nowhere else.
+   *
+   * There is one phrase per browser, and it is the only copy of itself. A second vault made
+   * here would write over the first, taking with it that vault's coins and any key derived
+   * from the same words for a quorum somebody else is relying on. So it is refused rather
+   * than done quietly.
+   */
   async makeKey(operation) {
+    if (this.record) {
+      throw new Error('This browser already holds a vault key, and making another would write over it. '
+        + 'Use a different browser or profile, or erase the vault here first.');
+    }
     const [{ random }, unlocked] = await Promise.all([api('/api/random'), this.unlockFor(operation.id)]);
     const mnemonic = makeMnemonic({
       serverRandom: fromBase64(random),
@@ -447,6 +465,38 @@ const device = {
     }, unlocked.attestationEpoch ?? 1);
     const sent = await api(`/api/operations/${operation.id}/broadcast`, { hex: signed.hex, authorization });
     return { ...sent, receipt: await readReceipt(operation.id) };
+  },
+
+  /**
+   * The key this browser signs one vault's Bitcoin with. It comes from the same phrase as the
+   * wallet here, on a branch of its own; the vault is told the public half and nothing else.
+   */
+  async makeSigningKey(operation) {
+    if (!this.record) throw new Error('This browser does not hold the key for this wallet.');
+    const unlocked = await this.unlockFor(operation.id);
+    const mnemonic = await decryptMnemonic(this.record.blob, unlocked.unlock, this.record.salt);
+    const { publicKey } = cosignerFrom(mnemonic, operation.details.branch);
+    return api('/api/signing-key/register', { operationId: operation.id, publicKey: toHex(publicKey) });
+  },
+
+  /**
+   * One signature towards a spend from an account the chain guards. The transaction is
+   * re-checked against what the palm approved before anything is signed, and what leaves here
+   * is the half-signed transaction with this browser's signature added to it.
+   */
+  async addSignature(operation) {
+    if (!this.record) throw new Error('This browser does not hold the key for this wallet.');
+    const unlocked = await this.unlockFor(operation.id);
+    const mnemonic = await decryptMnemonic(this.record.blob, unlocked.unlock, this.record.salt);
+    const { psbt } = signQuorum(mnemonic, {
+      psbt: unlocked.psbt,
+      plan: unlocked.plan,
+      index: unlocked.keyIndex,
+      address: unlocked.address,
+      transactionHash: unlocked.transactionHash,
+      network: state.config.network,
+    });
+    return api(`/api/operations/${operation.id}/signature`, { psbt });
   },
 
   /** The phrase, for an operation that has already been palm-approved. */
@@ -1006,8 +1056,12 @@ function renderRequests(container, requests) {
     const actions = el('div', { class: 'row' });
     if (op.status === 'collecting' && (!mine || mine.status !== 'approved')) {
       actions.append(button('Approve with palm', 'btn brand sm', () => openApproval(op, busyText(op))));
+    } else if (op.needsSignature) {
+      // An account the chain guards needs this person's signature as well as their palm.
+      actions.append(button('Sign with your key', 'btn brand sm', () => addSignature(op)));
     } else if (mine?.status === 'approved') {
-      actions.append(el('span', { class: 'quiet' }, 'You approved. Waiting for the others.'));
+      actions.append(el('span', { class: 'quiet' },
+        op.signatures ? 'You signed. Waiting for the others.' : 'You approved. Waiting for the others.'));
     }
     if (op.startedBy === me.id || op.walletOwner === me.id) {
       actions.append(button('Cancel', 'btn ghost sm', () => cancelRequest(op)));
@@ -1017,17 +1071,33 @@ function renderRequests(container, requests) {
       el('p', { class: 'quiet small' }, [
         `${done} of ${op.required} approval${op.required === 1 ? '' : 's'}`,
         done ? `by ${op.approvedBy.map(id => labels[id] || 'someone').join(', ')}` : null,
-        op.status === 'running' ? 'running' : null,
+        op.signatures ? `${op.signatures.done} of ${op.signatures.required} signatures on the chain` : null,
+        op.status === 'running' && !op.signatures ? 'running' : null,
       ].filter(Boolean).join(' · ')),
       el('div', { class: 'meter', 'aria-hidden': 'true' }, el('span', { style: { width: `${Math.min(100, (done / op.required) * 100)}%` } })),
       actions);
   }));
 }
 
+/** Adds this browser's signature to a spend from an account the chain guards. */
+async function addSignature(op) {
+  try {
+    toast('Signing with your key…');
+    const result = await device.addSignature(op);
+    toast(result.txid
+      ? `Sent. ${result.signatures} of ${result.required} signatures (${shortId(result.txid)}).`
+      : `Signed. ${result.signatures} of ${result.required} signatures so far.`);
+  } catch (error) {
+    toast(friendly(error));
+  }
+  refresh().catch(() => {});
+}
+
 const BUSY = {
   create: 'Creating the vault…', withdraw: 'Sending…', policy: 'Applying the new settings…',
   account: 'Adding the account…', recovery: 'Opening your phrase…', upgrade: 'Moving the vault into this browser…',
   reset: 'Erasing the vault…', attestation: 'Replacing the authorisation key…',
+  signing: 'Making your signing key…', lock: 'Locking to the chain…',
 };
 const busyText = op => BUSY[op.kind] || 'Working…';
 
@@ -1119,6 +1189,102 @@ function renderRules(account, data) {
   $('settings-required').textContent = `${account.changeRequired} palm${account.changeRequired === 1 ? '' : 's'} to change`;
   void data;
   drawSettings();
+  drawChainLock(account);
+}
+
+/*
+ * What the chain itself keeps for this account, and what it would take to get there.
+ *
+ * Two things here are the chain's doing rather than a choice. A script cannot read the amount
+ * being sent, so a locked account has one threshold and not a ladder of them. And the
+ * threshold is part of the address, so changing it later means moving the coins again. Both
+ * are said on the page rather than discovered afterwards.
+ */
+function drawChainLock(account) {
+  const me = state.data.me;
+  const mine = state.data.members?.find(m => m.id === me.id);
+  const locked = account.quorum;
+  const bitcoin = account.network === 'bitcoin';
+  $('chain-card').closest('.lane').hidden = !bitcoin;
+  if (!bitcoin) return;
+
+  $('chain-state').textContent = locked
+    ? `${locked.required} of ${locked.keys.length} on the chain`
+    : 'a rule here, not on the chain';
+  $('chain-state').classList.toggle('ok', Boolean(locked));
+  $('chain-error').textContent = '';
+
+  $('chain-address').hidden = !locked;
+  $('chain-previous').hidden = !locked?.previousAddress;
+  if (locked) {
+    $('chain-address-value').textContent = account.address;
+    if (locked.previousAddress) $('chain-previous-value').textContent = locked.previousAddress;
+  }
+
+  /* who has a key, and who is still to make one */
+  const signers = account.signers;
+  $('key-rows').replaceChildren(...(locked ? [] : signers.map(signer => el('div', { class: 'member-row' },
+    el('span', { class: 'avatar' }, initials(signer.label)),
+    el('span', { class: 'member-who' },
+      el('b', {}, signer.label),
+      el('small', {}, signer.signingKey ? `${signer.signingKey.slice(0, 10)}…` : 'no signing key yet')),
+    el('span', { class: `chip soft ${signer.signingKey ? 'ok' : 'muted'}` }, signer.signingKey ? 'has a key' : 'waiting')))));
+
+  const ready = signers.filter(s => s.signingKey).length;
+  const owner = state.data.wallet && me.id === state.data.members?.find(m => m.owner)?.id;
+
+  $('chain-explains').textContent = locked
+    ? 'Bitcoin keeps this threshold. Spending takes that many signatures, each from its own signer, and this server cannot produce one.'
+    : `Today the threshold is a rule this server remembers: the coins sit behind one key, and whoever holds it could spend alone. Locking moves them into a script naming every signer's key. ${ready} of ${signers.length} signers have made one.`;
+
+  /* the threshold that would be locked in */
+  const wanted = state.chainThreshold ?? Math.min(2, signers.length);
+  $('chain-threshold').hidden = Boolean(locked) || ready < signers.length || signers.length < 2;
+  if (!$('chain-threshold').hidden) {
+    $('chain-threshold').replaceChildren(...Array.from({ length: signers.length }, (_, i) => i + 1).map(m => el('button', {
+      class: `seg-item${wanted === m ? ' on' : ''}`,
+      type: 'button',
+      'aria-pressed': wanted === m ? 'true' : 'false',
+      onclick: () => { state.chainThreshold = m; drawChainLock(account); },
+    }, `${m} of ${signers.length}`)));
+  }
+
+  $('chain-note').textContent = locked
+    ? 'Coins sent to the old address still arrive there and are still yours; tell people the new one.'
+    : 'Locking moves every coin in this account to the new address in one transaction, and the amount steps above stop applying: a script cannot read the amount being sent.';
+
+  /* what there is to do about it */
+  const actions = [];
+  if (!mine?.signingKey && !locked) {
+    actions.push(button('Make my signing key', 'btn brand sm', () => startSigningKey(account)));
+  }
+  if (!locked && owner && ready === signers.length && signers.length >= 2) {
+    actions.push(button(`Lock to ${wanted} of ${signers.length} with a palm scan`, 'btn brand sm', () => startLock(account, wanted)));
+  }
+  $('chain-actions').replaceChildren(...actions);
+}
+
+async function startSigningKey(account) {
+  $('chain-error').textContent = '';
+  try {
+    const owner = state.data.members.find(m => m.owner)?.id ?? state.data.me.id;
+    const { operation } = await api('/api/signing-key/approval', { vaultOwnerId: owner });
+    openApproval(operation, 'Making your signing key…');
+  } catch (error) {
+    $('chain-error').textContent = friendly(error);
+  }
+  void account;
+}
+
+async function startLock(account, required) {
+  $('chain-error').textContent = '';
+  try {
+    const asked = await api('/api/accounts/lock', { required });
+    openApproval(asked.operation, 'Locking to the chain…');
+  } catch (error) {
+    $('chain-error').textContent = friendly(error);
+  }
+  void account;
 }
 
 function drawSettings() {
@@ -1781,6 +1947,17 @@ async function settled(current, operation) {
       showInviteCode(code, operation.details?.invitee);
     } else if (operation.kind === 'join') {
       toast('You are a signer on that vault now. Its requests will appear here.');
+    } else if (operation.kind === 'signing') {
+      const { signingKey } = await device.makeSigningKey(operation);
+      toast(`Signing key ready: ${signingKey.slice(0, 10)}…`);
+    } else if (operation.kind === 'lock') {
+      if (operation.details?.transaction_hash) {
+        toast('Moving the coins into the script…');
+        const { txid } = await device.send(operation);
+        toast(`Locked to the chain. The coins are on their way (${shortId(txid)}).`);
+      } else {
+        toast('Locked to the chain.');
+      }
     } else if (operation.kind === 'attestation') {
       const { attestation } = await device.rotateAttestation(operation);
       toast(attestation.epoch === 1

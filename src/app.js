@@ -749,7 +749,32 @@ export function createApp(options) {
       all('closedOperationsFor', visible),
     ]);
 
-    const withApprovals = async op => operationView(op, await all('approvalsOf', op.id), user);
+    /*
+     * A spend from an account the chain guards is not finished when the palms are in: it
+     * still needs this person's signature. The view says how many have been collected and
+     * whether one of them should be theirs, so nobody is left looking at a request that is
+     * waiting for them without being told.
+     */
+    const withApprovals = async op => {
+      const approvals = await all('approvalsOf', op.id);
+      const view = operationView(op, approvals, user);
+      if (op.kind !== 'withdraw' || op.status !== 'running') return view;
+      const account = await one('accountOn', op.wallet_user_id, 'bitcoin');
+      if (!account?.required) return view;
+
+      const plan = JSON.parse(op.payload);
+      const signed = signersOfPsbt(op.psbt || psbtForPlan(lockOfAccount(account), plan));
+      const member = await one('memberIn', op.wallet_user_id, user.id);
+      const approved = approvals.some(a => a.user_id === user.id && a.status === 'approved');
+      view.signatures = { done: signed.length, required: account.required };
+      view.needsSignature = Boolean(
+        approved && member?.public_key
+        && JSON.parse(account.quorum_keys).includes(member.public_key)
+        && !signed.includes(member.public_key),
+      );
+      view.needsYou = view.needsYou || view.needsSignature;
+      return view;
+    };
     const labels = {};
     for (const id of visible) {
       for (const m of await all('membersOf', id)) labels[m.member_id] = m.label;
@@ -1203,6 +1228,7 @@ export function createApp(options) {
       action: 'create a signing key',
       vault: label,
       derived_from: `your own phrase, branch ${index}`,
+      branch: index,
       effect: 'the vault is told the public half; the key itself stays in this browser',
     };
     const op = await newOperation({

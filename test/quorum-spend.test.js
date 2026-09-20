@@ -244,3 +244,26 @@ test('the half-signed transaction is rebuilt from the approved plan, never trust
   assert.equal(ok(second.result).txid, null, 'so nothing is sent');
   assert.equal(env.world.log.broadcast.length, 1);
 });
+
+test('the view tells each signer what is waiting for their key, not just their palm', async t => {
+  const env = await start(t);
+  const { alex, bea, cara } = await locked(env);
+  const operation = await approvedSpend(env, { owner: alex, palms: [alex, bea] });
+
+  // Both approvers are being asked for a signature; Cara, who did not approve, is not.
+  for (const who of [alex, bea]) {
+    const waiting = ok(await who.get('/api/wallet')).pending.find(op => op.id === operation.id);
+    assert.equal(waiting.needsSignature, true);
+    assert.equal(waiting.needsYou, true);
+    assert.deepEqual(waiting.signatures, { done: 0, required: 2 });
+  }
+  const hers = ok(await cara.get('/api/wallet')).pending.find(op => op.id === operation.id);
+  assert.equal(hers.needsSignature, false, 'she did not approve, so there is nothing to sign');
+
+  // Once Alex has signed, it stops asking him and still asks Bea.
+  ok((await addSignature(env, alex, operation.id, PHRASES.alex)).result);
+  const his = ok(await alex.get('/api/wallet')).pending.find(op => op.id === operation.id);
+  assert.equal(his.needsSignature, false);
+  assert.deepEqual(his.signatures, { done: 1, required: 2 });
+  assert.equal(ok(await bea.get('/api/wallet')).pending.find(op => op.id === operation.id).needsSignature, true);
+});

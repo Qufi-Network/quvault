@@ -362,6 +362,29 @@
               <p class="error" id="rules-error" role="alert"></p>
             </section>
           </div>
+
+          <section class="lane">
+            <header class="lane-head">
+              <h2>On the chain</h2>
+              <span class="chip soft" id="chain-state">&mdash;</span>
+            </header>
+            <section class="card stack" id="chain-card">
+              <p class="quiet small" id="chain-explains"></p>
+              <div class="member-rows" id="key-rows"></div>
+              <div class="kv" id="chain-address" hidden>
+                <span>Address</span>
+                <code id="chain-address-value"></code>
+              </div>
+              <div class="kv" id="chain-previous" hidden>
+                <span>Old address</span>
+                <code id="chain-previous-value"></code>
+              </div>
+              <div class="seg" id="chain-threshold" role="group" aria-label="Signatures on the chain" hidden></div>
+              <p class="fine" id="chain-note"></p>
+              <div class="row" id="chain-actions"></div>
+              <p class="error" id="chain-error" role="alert"></p>
+            </section>
+          </section>
         </section>
       </section>
     </div>
