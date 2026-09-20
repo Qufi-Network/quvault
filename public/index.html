@@ -272,6 +272,15 @@
           </div>
         </section>
         <section class="lane">
+          <header class="lane-head"><h2>Start over</h2><p class="quiet">Erase this vault and begin again.</p></header>
+          <div class="card settings-card">
+            <p class="quiet" id="reset-note"></p>
+            <button class="btn ghost small danger" id="reset-vault" type="button">Erase this vault and start over</button>
+            <p class="error" id="reset-error" role="alert"></p>
+          </div>
+        </section>
+
+        <section class="lane">
           <header class="lane-head"><h2>Selected account</h2></header>
           <div class="card settings-card">
             <div class="detail-row"><span class="quiet">Network</span><b id="settings-network"></b></div>
@@ -319,6 +328,24 @@
         </div>
       </div>
     </div>
+  </dialog>
+
+  <dialog id="reset" aria-labelledby="reset-title">
+    <form class="sheet" id="reset-form">
+      <p class="eyebrow" id="reset-title">Erase this vault</p>
+      <p class="statement">This cannot be undone.</p>
+      <dl class="details" id="reset-details"></dl>
+      <div id="reset-coins">
+        <label for="reset-to">Send the coins here first <span class="optional">a testnet4 address</span></label>
+        <input id="reset-to" autocomplete="off" spellcheck="false" placeholder="tb1…">
+        <label class="check"><input type="checkbox" id="reset-accept"> <span>Or erase anyway, and let those coins go</span></label>
+      </div>
+      <p class="error" id="reset-dialog-error" role="alert"></p>
+      <div class="sheet-foot">
+        <button class="link" id="reset-cancel" type="button">Keep the vault</button>
+        <button class="btn brand small" type="submit">Erase with a palm scan</button>
+      </div>
+    </form>
   </dialog>
 
   <dialog id="phrase" aria-labelledby="phrase-title">

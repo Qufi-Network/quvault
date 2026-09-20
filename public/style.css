@@ -182,6 +182,8 @@ code { font-family: var(--mono); font-size: .92em; }
 .btn.ghost { background: var(--surface); color: var(--text); border-color: var(--line-strong); }
 .btn.ghost:hover:not(:disabled) { border-color: var(--brand); color: var(--brand); }
 .btn.small { min-height: 34px; padding: 0 14px; font-size: 13.5px; }
+.btn.danger { color: var(--danger); border-color: rgba(215, 0, 21, .32); }
+.btn.danger:hover:not(:disabled) { background: rgba(215, 0, 21, .06); border-color: var(--danger); color: var(--danger); }
 .btn.wide { width: 100%; }
 
 .link {

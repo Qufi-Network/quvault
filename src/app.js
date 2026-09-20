@@ -69,6 +69,12 @@ const SQL = {
              WHERE wallet_user_id = $3 AND member_id = $4`,
   bindPalmId: 'UPDATE members SET palm_id = $1 WHERE wallet_user_id = $2 AND member_id = $3 AND palm_id IS NULL',
   deleteMember: 'DELETE FROM members WHERE wallet_user_id = $1 AND member_id = $2 AND is_owner = false',
+  // Erasing a vault: approvals hang off operations, so they go first.
+  deleteApprovalsOfWallet: 'DELETE FROM approvals WHERE operation_id IN (SELECT id FROM operations WHERE wallet_user_id = $1)',
+  deleteOperationsOfWallet: 'DELETE FROM operations WHERE wallet_user_id = $1',
+  deleteAccountsOfWallet: 'DELETE FROM accounts WHERE wallet_user_id = $1',
+  deleteMembersOfWallet: 'DELETE FROM members WHERE wallet_user_id = $1',
+  deleteWallet: 'DELETE FROM wallets WHERE user_id = $1',
 
   insertOperation: `INSERT INTO operations (id, wallet_user_id, started_by, kind, statement, details, digest, payload, required, status, network, created_at, expires_at)
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'collecting', $10, $11, $12)`,
@@ -522,6 +528,8 @@ export function createApp(options) {
         // Recovery and new accounts do nothing here: finishing them lets the owner's device
         // open the phrase, or derive the new network's address.
         : op.kind === 'upgrade' ? await prepareUpgrade(op)
+        // Erasing happens when the owner's browser confirms it, so the key is cleared there too.
+        : op.kind === 'reset' ? { txid: null }
         : op.kind === 'recovery' || op.kind === 'account' ? { txid: null }
         : await broadcastPlan(op);
       await query('finishOperation', 'done', txid, null, time, op.id);
@@ -848,6 +856,90 @@ export function createApp(options) {
     });
     for (const member of signers) await assignPalmId(user.id, member.id);
     return { ok: true };
+  }
+
+  /**
+   * Erasing the vault and starting over. The palm statement names the address, what it holds
+   * and what is destroyed, so nobody approves this without having read it.
+   */
+  async function requestReset({ user }) {
+    requirePalmReady();
+    const wallet = await one('walletOf', user.id);
+    if (!wallet) throw new HttpError(409, 'There is no vault to erase.');
+    const [accounts, balance] = await Promise.all([
+      all('accountsOf', user.id),
+      chain.balance(wallet.address).catch(() => null),
+    ]);
+    const holding = balance ? balance.confirmed + balance.pending : null;
+    const statement = 'Erase this vault and start over';
+    const details = {
+      action: 'erase vault',
+      network,
+      address: wallet.address,
+      accounts: accounts.map(a => NETWORKS[a.network]?.label ?? a.network).join(', '),
+      holds: holding === null ? 'unknown' : `${toBtc(holding)} tBTC`,
+      warning: wallet.custody === 'client'
+        ? 'the key in this browser goes with it; only the twelve words could bring it back'
+        : 'the key held for this vault is destroyed and cannot be brought back',
+    };
+    const { required } = await changeQuorum(user.id, 'bitcoin');
+    const op = await newOperation({ walletOwnerId: user.id, user, kind: 'reset', statement, details, required });
+    return { operation: operationView(op, [], user), holding, custody: wallet.custody };
+  }
+
+  /** Sweeps the coins out if asked to, then removes the vault and everything hanging off it. */
+  async function completeReset({ user, body }) {
+    const op = await ownOperation(String(body.operationId ?? ''), user);
+    if (op.kind !== 'reset' || op.status !== 'done' || op.wallet_user_id !== user.id) {
+      throw new HttpError(409, 'That is not an approved erase.');
+    }
+    const wallet = await one('walletOf', user.id);
+    if (!wallet) return { ok: true, txid: null, sweptSats: 0 };
+
+    const balance = await chain.balance(wallet.address).catch(() => null);
+    const holding = balance ? balance.confirmed + balance.pending : 0;
+    const sweepTo = String(body.sweepTo ?? '').trim();
+    if (holding > 0 && !sweepTo && body.acceptLoss !== true) {
+      throw new HttpError(409, `This vault still holds ${toBtc(holding)} tBTC. Give an address to sweep it to, or say plainly that you are letting it go.`);
+    }
+
+    let txid = null;
+    let sweptSats = 0;
+    if (sweepTo) {
+      if (!isValidAddress(sweepTo)) throw new HttpError(400, `That is not a valid ${network} address.`);
+      if (wallet.custody !== 'server') {
+        throw new HttpError(409, 'This vault signs in your browser: send the coins with Send funds first.');
+      }
+      if (balance?.pending > 0) throw new HttpError(409, 'A payment here is still waiting for its first confirmation.');
+      try {
+        const utxos = await chain.spendableUtxos(wallet.address);
+        if (utxos.length) {
+          const oldPublicKey = Buffer.from(wallet.public_key, 'hex');
+          const plan = planSpend({ publicKey: oldPublicKey, utxos, toAddress: sweepTo, amountSats: 'max', feeRate: await chain.feeRate() });
+          const privateKey = openSealed(wallet.sealed_key, vault());
+          try {
+            txid = await chain.broadcast(signPlan({ privateKey, publicKey: oldPublicKey, plan }).hex);
+          } finally {
+            privateKey.fill(0);
+          }
+          sweptSats = plan.sentSats;
+        }
+      } catch (error) {
+        if (error instanceof ChainError || error instanceof WalletError) throw new HttpError(409, `The coins could not be moved: ${error.message}`);
+        throw error;
+      }
+    }
+
+    // Nothing of this vault is kept: not the key, not its accounts, signers or history.
+    await transaction(async q => {
+      await q('deleteApprovalsOfWallet', user.id);
+      await q('deleteOperationsOfWallet', user.id);
+      await q('deleteAccountsOfWallet', user.id);
+      await q('deleteMembersOfWallet', user.id);
+      await q('deleteWallet', user.id);
+    });
+    log.log(`vault erased for ${user.id}${txid ? `, coins swept in ${txid}` : ''}`);
+    return { ok: true, txid, sweptSats };
   }
 
   /** Asks for the palm approvals that move a server-held vault into the owner's browser. */
@@ -1223,6 +1315,8 @@ export function createApp(options) {
     { method: 'POST', path: '/api/wallet/register', handler: registerWallet, auth: true },
     { method: 'POST', path: '/api/wallet/upgrade/approval', handler: requestUpgrade, auth: true },
     { method: 'POST', path: '/api/wallet/upgrade', handler: completeUpgrade, auth: true },
+    { method: 'POST', path: '/api/wallet/reset/approval', handler: requestReset, auth: true },
+    { method: 'POST', path: '/api/wallet/reset', handler: completeReset, auth: true },
     { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/unlock$/, handler: unlockFor, auth: true },
     { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/broadcast$/, handler: broadcastSigned, auth: true },
     { method: 'POST', path: '/api/policy', handler: requestPolicy, auth: true },

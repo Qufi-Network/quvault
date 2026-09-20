@@ -147,6 +147,15 @@ const SCHEMA = [
   `UPDATE accounts a SET signers = (
      SELECT json_agg(m.member_id)::text FROM members m WHERE m.wallet_user_id = a.wallet_user_id
    ) WHERE a.signers IS NULL`,
+
+  // v7: a vault can be erased and started over, which is itself a palm-approved operation.
+  `DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'operations_kind_v7') THEN
+      ALTER TABLE operations DROP CONSTRAINT IF EXISTS operations_kind_v5;
+      ALTER TABLE operations ADD CONSTRAINT operations_kind_v7
+        CHECK (kind IN ('create', 'withdraw', 'policy', 'recovery', 'account', 'upgrade', 'reset'));
+    END IF;
+  END $$`,
 ];
 
 const INT8 = 20; // Timestamps are BIGINT; read them back as numbers.

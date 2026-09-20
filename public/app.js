@@ -387,6 +387,19 @@ const device = {
     return account;
   },
 
+  /** Erases the vault on the server and takes the key off this device with it. */
+  async reset(operation) {
+    const result = await api('/api/wallet/reset', { operationId: operation.id, ...(state.resetChoice ?? {}) });
+    try {
+      await clearRecord();
+    } catch {
+      // A browser that will not let go of its storage does not stop the vault being gone.
+    }
+    this.record = null;
+    state.resetChoice = null;
+    return result;
+  },
+
   async phrase(operation) {
     if (!this.record) throw new Error('This browser does not hold the key for this wallet.');
     const unlocked = await this.unlockFor(operation.id);
@@ -712,6 +725,57 @@ async function startMove(errorNode) {
 }
 
 $('legacy-move').addEventListener('click', () => startMove($('legacy-error')));
+
+/* ------------------------------------------------------- starting over */
+
+function openReset() {
+  const data = state.data;
+  if (!data?.wallet) return;
+  const account = (data.accounts || []).find(item => item.network === 'bitcoin');
+  const holding = Number(account?.amount ?? 0);
+  const server = data.wallet.custody !== 'client';
+
+  $('reset-error').textContent = '';
+  $('reset-dialog-error').textContent = '';
+  $('reset-to').value = '';
+  $('reset-accept').checked = false;
+  $('reset-details').replaceChildren(...detailRows({
+    address: data.wallet.address,
+    holds: `${account?.formatted ?? '0.00000000'} tBTC`,
+    accounts: (data.accounts || []).map(item => item.label).join(', '),
+    signers: data.members.map(member => member.label).join(', '),
+    erases: server
+      ? 'the key held for this vault, its accounts, signers and history'
+      : 'the key in this browser, its accounts, signers and history',
+  }));
+  // Only a vault the server can still sign for can sweep its coins on the way out.
+  $('reset-coins').hidden = holding <= 0;
+  $('reset-to').hidden = !server;
+  $('reset-to').previousElementSibling?.toggleAttribute('hidden', !server);
+  $('reset').showModal();
+}
+
+$('reset-vault').addEventListener('click', openReset);
+$('reset-cancel').addEventListener('click', () => $('reset').close());
+
+$('reset-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  $('reset-dialog-error').textContent = '';
+  const sweepTo = $('reset-to').hidden ? '' : $('reset-to').value.trim();
+  const accept = $('reset-accept').checked;
+  if (!$('reset-coins').hidden && !sweepTo && !accept) {
+    $('reset-dialog-error').textContent = 'Give an address for the coins, or tick the box to let them go.';
+    return;
+  }
+  state.resetChoice = { ...(sweepTo ? { sweepTo } : {}), ...(accept ? { acceptLoss: true } : {}) };
+  try {
+    const { operation } = await api('/api/wallet/reset/approval', {});
+    $('reset').close();
+    openApproval(operation, 'Erasing the vault…');
+  } catch (error) {
+    $('reset-dialog-error').textContent = friendly(error);
+  }
+});
 $('move-vault').addEventListener('click', () => startMove($('device-error')));
 
 function renderRequests(container, requests) {
@@ -743,6 +807,7 @@ function renderRequests(container, requests) {
 const BUSY = {
   create: 'Creating the vault…', withdraw: 'Sending…', policy: 'Applying the new settings…',
   account: 'Adding the account…', recovery: 'Opening your phrase…', upgrade: 'Moving the vault into this browser…',
+  reset: 'Erasing the vault…',
 };
 const busyText = op => BUSY[op.kind] || 'Working…';
 
@@ -794,6 +859,9 @@ function renderSettings(data) {
   $('show-phrase').hidden = legacy || !holds;
   $('restore-device').hidden = legacy || holds;
   $('move-vault').hidden = !legacy;
+  $('reset-note').textContent = legacy
+    ? `Erasing destroys the key this server holds for ${wallet.address}. Anything left at that address goes with it, so sweep it somewhere on the way out.`
+    : `Erasing removes the vault here and the key in this browser. Your twelve words are the only way back to ${wallet.address}, so send the coins on or write the words down first.`;
 
   if (!account) return;
   state.draft = {
@@ -1136,6 +1204,7 @@ async function openApproval(operation, busy) {
     create: 'Palm approval · new vault', withdraw: 'Palm approval · withdrawal', policy: 'Palm approval · settings',
     account: 'Palm approval · new account', recovery: 'Palm approval · recovery phrase',
     upgrade: 'Palm approval · moving the vault',
+    reset: 'Palm approval · erasing the vault',
   };
   $('approval-kind').textContent = kinds[operation.kind] || 'Palm approval';
   $('approval-statement').textContent = operation.statement;
@@ -1238,6 +1307,11 @@ async function settled(current, operation) {
     } else if (operation.kind === 'recovery') {
       if (state.recoveryIntent === 'restore') await showRestore(operation);
       else await showPhrase(operation);
+    } else if (operation.kind === 'reset') {
+      const { txid, sweptSats } = await device.reset(operation);
+      toast(txid
+        ? `Vault erased. ${fmtSats(sweptSats)} sats were sent on first (${shortId(txid)}).`
+        : 'Vault erased. Create a new one whenever you are ready.');
     } else if (operation.kind === 'upgrade') {
       toast('Making your key in this browser…');
       const { txid, sweptSats } = await device.moveIn(operation);
