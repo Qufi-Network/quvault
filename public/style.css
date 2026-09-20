@@ -1145,29 +1145,27 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
   overflow: visible;
   pointer-events: none;
 }
-.palm-q .glow { transform-origin: 200px 200px; opacity: .8; }
-
 /*
- * The photograph already says QuVault. This says what reads the hand, and it is legible with
- * no animation at all: a browser that gives no frames, or somebody who has asked for less
- * motion, should still see the name rather than an empty palm.
+ * Light added to the mark rather than paint laid over it: screen can only brighten, so the Q
+ * in the photograph comes up and the palm around it is left alone.
  */
-.palm-q .veyns {
-  fill: #cfe7ff;
-  font: 600 19px/1 var(--sans);
-  letter-spacing: .38em;
-  opacity: .6;
-  paint-order: stroke;
-  stroke: rgba(4, 30, 80, .55);
-  stroke-width: 3.5;
-}
+.palm-q { mix-blend-mode: screen; }
+.palm-q .glow { transform-origin: 200px 200px; opacity: .5; }
 
 @media (prefers-reduced-motion: no-preference) {
   /*
-   * Nothing here animates the hand. It does not drift, the palm does not breathe and the
-   * name does not flicker — a photograph of a hand held still is what it should look like.
-   * The only thing that moves on this page is what is running inside the veins.
+   * The hand itself does not move — it does not drift and the palm does not breathe. The only
+   * two things alive on this page are the veins carrying light up the hand, and the mark in
+   * the middle of it answering them.
    */
+  .palm-q .glow { animation: q-pulse 7s ease-in-out infinite; }
+
+  /* Half a beat behind the pulse reaching the palm, so the mark reads as answering it. */
+  @keyframes q-pulse {
+    0%, 100% { opacity: .34; transform: scale(.94); }
+    38% { opacity: .92; transform: scale(1.06); }
+    62% { opacity: .5; transform: scale(.99); }
+  }
 }
 
 /*
@@ -1223,14 +1221,21 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
   .hand-frame .vein-flow { animation: vein-rise 7s cubic-bezier(.45, .05, .35, 1) infinite; }
 
   @keyframes vein-rest {
-    0%, 100% { opacity: .13; }
-    50% { opacity: .22; }
+    0%, 100% { opacity: .12; }
+    38% { opacity: .26; }
   }
+  /*
+   * The band brightest as it crosses the palm, which is where the mark is and where anyone
+   * looking at the hand is already looking. It arrives dim from the wrist, opens up over the
+   * middle, and thins out into the fingers.
+   */
   @keyframes vein-rise {
     0% { -webkit-mask-position: 0% 100%; mask-position: 0% 100%; opacity: 0; }
-    16% { opacity: .34; }
-    74% { opacity: .3; }
-    92%, 100% { -webkit-mask-position: 0% 0%; mask-position: 0% 0%; opacity: 0; }
+    14% { opacity: .38; }
+    36% { opacity: .72; }
+    58% { opacity: .54; }
+    80% { opacity: .3; }
+    94%, 100% { -webkit-mask-position: 0% 0%; mask-position: 0% 0%; opacity: 0; }
   }
 }
 
