@@ -2319,3 +2319,51 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
   .home-top.open .home-nav { display: flex; }
   .home-nav a { padding: 11px 2px; font-size: 16px; }
 }
+
+/* ================================================= the supplied artwork, exactly */
+
+/*
+ * Mode A. The artwork is the page and the controls sit over it, so what renders is the
+ * supplied pixels rather than an interpretation of them. The header that belongs to the other
+ * pages steps aside here, because this artwork draws its own.
+ */
+.view.exact { max-width: none; margin: 0; padding: 0; background: #020b19; }
+.exact-page { position: relative; width: 100%; max-width: 796px; margin: 0 auto; }
+.exact-art { display: block; width: 100%; height: auto; user-select: none; }
+
+.hotspot {
+  position: absolute;
+  display: block;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  z-index: 5;
+}
+.hotspot:disabled { cursor: default; }
+.hotspot:focus-visible { outline: 2px solid #1685ff; outline-offset: 3px; border-radius: 10px; }
+
+.exact-foot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 14px 20px 22px;
+  background: #030a15;
+  text-align: center;
+}
+.exact-foot .palm-link { margin: 0; color: rgba(255, 255, 255, .55); }
+.exact-foot .palm-link:hover { color: #4f9dff; }
+/* hotspot coordinates, generated from the package reference */
+.at-home { left: 35.1759%; top: 0.9114%; width: 6.9095%; height: 1.6203%; }
+.at-about { left: 42.0854%; top: 0.9114%; width: 6.9095%; height: 1.6203%; }
+.at-technology { left: 48.9950%; top: 0.9114%; width: 11.3065%; height: 1.6203%; }
+.at-usecases { left: 60.3015%; top: 0.9114%; width: 10.0503%; height: 1.6203%; }
+.at-security { left: 70.3518%; top: 0.9114%; width: 9.4221%; height: 1.6203%; }
+.at-resources { left: 79.7739%; top: 0.9114%; width: 10.0503%; height: 1.6203%; }
+.at-spot-signin { right: 14.4472%; top: 0.6582%; width: 9.4221%; height: 1.7215%; }
+.at-spot-create { right: 2.2613%; top: 0.6582%; width: 11.3065%; height: 1.7215%; }
+.at-spot-start { left: 5.6533%; top: 15.9494%; width: 16.9598%; height: 2.4304%; }
+.at-hero-video { left: 22.6131%; top: 15.9494%; width: 14.4472%; height: 2.4304%; }
+.at-spot-join { left: 69.7236%; top: 74.9367%; width: 23.8693%; height: 2.7848%; }

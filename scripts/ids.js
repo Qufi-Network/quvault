@@ -8,7 +8,15 @@ const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf
 const script = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 
 const inPage = new Set([...html.matchAll(/\bid="([\w-]+)"/g)].map(match => match[1]));
-const used = new Set([...script.matchAll(/\$\('([\w-]+)'\)/g)].map(match => match[1]));
+/*
+ * Both the way ids are reached for: directly, and through a table the script then loops over.
+ * The table form was missed once, and the page it broke stayed on "Loading…" with nothing but
+ * a console error to say why, which is exactly what this check exists to prevent.
+ */
+const used = new Set([
+  ...[...script.matchAll(/\$\('([\w-]+)'\)/g)].map(match => match[1]),
+  ...[...script.matchAll(/\['([a-z][\w-]*)',\s*'(?:browser|palm)'\]/g)].map(match => match[1]),
+]);
 // Made by the script itself, not written into the page.
 const made = new Set(['account-fiat']);
 

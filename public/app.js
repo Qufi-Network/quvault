@@ -91,7 +91,8 @@ function show(view) {
   // Those pages carry their own header, so the app's one steps out of their way.
   const marketing = MARKETING.includes(view);
   document.querySelector('.top').hidden = marketing;
-  $('marketing-top').hidden = !marketing;
+  // The exact home page carries its own navigation inside the artwork.
+  $('marketing-top').hidden = view !== 'about';
   for (const link of $('marketing-nav').querySelectorAll('a')) {
     const here = (link.getAttribute('href') === '#about') === (view === 'about');
     link.classList.toggle('on', here && ['#about', '#home'].includes(link.getAttribute('href')));
@@ -231,21 +232,27 @@ addEventListener('hashchange', () => route(location.hash, { remember: false }));
 /** Every way in from the home page, and whether it asks Veyns for a palm or lets them choose. */
 const SIGNIN_BUTTONS = [
   ['signin-top', 'browser'],
-  ['signin-browser', 'browser'],
   ['signin-create', 'browser'],
   ['signin-palm', 'palm'],
   ['about-join', 'browser'],
-  ['built-cta', 'browser'],
-  ['join-cta', 'browser'],
+  // the controls drawn into the supplied artwork
+  ['spot-signin', 'browser'],
+  ['spot-create', 'browser'],
+  ['spot-start', 'browser'],
+  ['spot-join', 'browser'],
 ];
 
 /** Home or About, whichever the address bar asks for. Both can sign you in. */
 async function showSignin() {
   show(location.hash === '#about' ? 'about' : 'signin');
   const ready = state => { for (const [id] of SIGNIN_BUTTONS) $(id).disabled = state; };
-  // A vault that insists on a palm has nothing to offer the ordinary way in.
-  for (const id of ['signin-top', 'signin-browser', 'signin-create']) {
-    $(id).hidden = state.config.requirePalmSignin;
+  /*
+   * A vault that insists on a palm has nothing to offer the ordinary way in, so those routes
+   * are taken off the page. The list is derived rather than written out, because writing it
+   * out is how it came to name a button that no longer existed and stop the page booting.
+   */
+  for (const [id, method] of SIGNIN_BUTTONS) {
+    if (method === 'browser') $(id).hidden = state.config.requirePalmSignin;
   }
   ready(true);
   try {
@@ -298,73 +305,11 @@ for (const [id, method] of SIGNIN_BUTTONS) $(id).addEventListener('click', () =>
 }
 
 /*
- * The newsletter sign-up. There is nowhere to send an address yet, so rather than pretend to
- * take one it says plainly that it is not connected — a form that silently swallows what
- * somebody typed is worse than one that admits it cannot help.
+ * The home page is the supplied artwork with controls over it, so the newsletter, the hand
+ * image loader and the pointer tilt that belonged to the component build are gone with it.
+ * The About page keeps its hand, which needs no script.
  */
-$('foot-signup').addEventListener('submit', event => {
-  event.preventDefault();
-  const email = $('signup-email').value.trim();
-  if (!email) return;
-  $('signup-note').textContent = $('signup-consent').checked
-    ? 'Updates are not connected yet — nothing has been sent or stored.'
-    : 'Tick the box first, and note that updates are not connected yet.';
-});
 
-/*
- * The hand is a photograph the product ships with. If it is not there the page still reads,
- * because a broken image on the first screen somebody sees is worse than no image at all.
- */
-{
-  const image = $('hero-hand-image');
-  const done = () => image.closest('.hand-frame').classList.add('has-image');
-  if (image.complete && image.naturalWidth) done();
-  image.addEventListener('load', done);
-  image.addEventListener('error', () => { image.remove(); });
-}
-
-/*
- * The hand turns very slightly towards whoever is looking at it — three degrees at the edge of
- * the window, which is enough to sit in a room rather than on a page and little enough that
- * you would struggle to catch it doing so. Nothing moves for somebody who has asked for less
- * motion, and nothing moves on a touch screen, where there is no pointer to follow.
- */
-{
-  const frame = $('hand-frame');
-  const still = window.matchMedia('(prefers-reduced-motion: reduce)');
-  const coarse = window.matchMedia('(pointer: coarse)');
-  const MAX = 3;
-  let queued = false;
-  let last = { x: 0, y: 0 };
-
-  const apply = () => {
-    queued = false;
-    frame.style.setProperty('--tilt-x', `${last.x.toFixed(2)}deg`);
-    frame.style.setProperty('--tilt-y', `${last.y.toFixed(2)}deg`);
-  };
-
-  window.addEventListener('pointermove', event => {
-    if (still.matches || coarse.matches || $('view-signin').hidden) return;
-    const box = frame.getBoundingClientRect();
-    if (!box.width) return;
-    frame.classList.remove('settling');
-    const dx = (event.clientX - (box.left + box.width / 2)) / (window.innerWidth / 2);
-    const dy = (event.clientY - (box.top + box.height / 2)) / (window.innerHeight / 2);
-    last = {
-      x: Math.max(-MAX, Math.min(MAX, dx * MAX)),
-      y: Math.max(-MAX, Math.min(MAX, -dy * MAX)),
-    };
-    if (!queued) { queued = true; requestAnimationFrame(apply); }
-  }, { passive: true });
-
-  const rest = () => {
-    frame.classList.add('settling');
-    last = { x: 0, y: 0 };
-    apply();
-  };
-  document.addEventListener('pointerleave', rest);
-  window.addEventListener('blur', rest);
-}
 $('signout').addEventListener('click', async () => {
   await api('/api/logout', {}).catch(() => {});
   state.data = null;
@@ -1307,7 +1252,7 @@ function drawChainLock(account) {
     ? `${locked.required} of ${locked.keys.length} on the chain`
     : 'a rule here, not on the chain';
   $('chain-state').classList.toggle('ok', Boolean(locked));
-  $('chain-error').textContent = '';
+  $('lock-error').textContent = '';
 
   $('chain-address').hidden = !locked;
   $('chain-previous').hidden = !locked?.previousAddress;
@@ -1360,13 +1305,13 @@ function drawChainLock(account) {
 }
 
 async function startSigningKey(account) {
-  $('chain-error').textContent = '';
+  $('lock-error').textContent = '';
   try {
     const owner = state.data.members.find(m => m.owner)?.id ?? state.data.me.id;
     const { operation } = await api('/api/signing-key/approval', { vaultOwnerId: owner });
     openApproval(operation, 'Making your signing key…');
   } catch (error) {
-    $('chain-error').textContent = friendly(error);
+    $('lock-error').textContent = friendly(error);
   }
   void account;
 }

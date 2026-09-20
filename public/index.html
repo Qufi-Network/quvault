@@ -77,308 +77,34 @@
     </div>
   </header>
 
-  <main id="view-signin" class="view home" hidden>
-    <section class="hero">
-      <div class="hero-scene" aria-hidden="true">
-        <span class="scene-window"></span>
-        <span class="scene-city"></span>
-        <span class="scene-surface"></span>
-      </div>
+  <main id="view-signin" class="view exact" hidden>
+    <!--
+      Mode A from the package: the supplied artwork is the visual layer and every control on it
+      is a real, focusable element placed over the top. The coordinates come from the package's
+      own reference HTML, converted to percentages so they hold at any width rather than only
+      at the 796px the reference was drawn at.
+    -->
+    <div class="exact-page">
+      <img class="exact-art" src="/ref/MASTER_REFERENCE.png" width="796" height="1975"
+           alt="QuVault: your coins move only for your hand. Biometric verification and post-quantum cryptography.">
+      <a class="hotspot at-home" id="spot-home" href="#home" aria-label="Home"></a>
+      <a class="hotspot at-about" id="spot-about" href="#about" aria-label="About"></a>
+      <a class="hotspot at-technology" id="spot-technology" href="#technology" aria-label="Technology"></a>
+      <a class="hotspot at-usecases" id="spot-usecases" href="#uses" aria-label="Use Cases"></a>
+      <a class="hotspot at-security" id="spot-security" href="#security" aria-label="Security"></a>
+      <a class="hotspot at-resources" id="spot-resources" href="#contact" aria-label="Resources"></a>
+      <button class="hotspot at-spot-signin" id="spot-signin" type="button" aria-label="Sign In" disabled></button>
+      <button class="hotspot at-spot-create" id="spot-create" type="button" aria-label="Create Account" disabled></button>
+      <button class="hotspot at-spot-start" id="spot-start" type="button" aria-label="Get Started" disabled></button>
+      <a class="hotspot at-hero-video" id="spot-hero-video" href="#security" aria-label="Watch the Video"></a>
+      <button class="hotspot at-spot-join" id="spot-join" type="button" aria-label="Create Your Account" disabled></button>
+    </div>
 
-      <div class="hero-inner">
-        <div class="hero-copy">
-          <p class="eyebrow spaced">Your hand. Your key.</p>
-          <h1>The Next<br>Generation<br>of <em>Asset Security</em></h1>
-          <p class="lede">QuVault protects your digital assets with biometric verification and
-            post-quantum cryptography. Your coins move only for your hand.</p>
-
-          <div class="hero-cta">
-            <button class="btn brand xl" id="signin-browser" type="button" disabled>
-              Get Started
-              <svg class="chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.5 4.5 6 5.5-6 5.5"/></svg>
-            </button>
-            <a class="watch" href="#security">
-              Watch the Video
-              <span class="play"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.8 5.6v8.8l7-4.4z"/></svg></span>
-            </a>
-          </div>
-          <button class="link palm-link" id="signin-palm" type="button" disabled>or sign in with your palm</button>
-          <p class="error" id="signin-error" role="alert"></p>
-
-          <ul class="hero-marks">
-            <li>
-              <span class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4a8 8 0 0 0-8 8v3"/><path d="M12 8a4 4 0 0 0-4 4v4"/><path d="M12 12v5"/><path d="M16 12a4 4 0 0 0-4-4"/><path d="M20 12a8 8 0 0 0-3-6.2"/></svg></span>
-              <span>Human<br>verified</span>
-            </li>
-            <li>
-              <span class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 19 6v6c0 4.2-2.8 7.3-7 8.5-4.2-1.2-7-4.3-7-8.5V6z"/><path d="m9 12 2.2 2.2L15.5 10"/></svg></span>
-              <span>Post quantum<br>secure</span>
-            </li>
-            <li>
-              <span class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3.6 8 4.2-8 4.2-8-4.2z"/><path d="m4 12 8 4.2 8-4.2"/><path d="m4 16.2 8 4.2 8-4.2"/></svg></span>
-              <span>Multi asset<br>support</span>
-            </li>
-            <li>
-              <span class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="9.5" rx="2.2"/><path d="M8.2 10.5V8a3.8 3.8 0 0 1 7.6 0v2.5"/><path d="M12 14.4v2"/></svg></span>
-              <span>You control<br>your assets</span>
-            </li>
-          </ul>
-
-          <span class="rule"></span>
-          <p class="eyebrow spaced">A safer today. Ready for tomorrow.</p>
-        </div>
-
-        <div class="hero-stage">
-          <p class="stage-note at-left">Your hand<br>unlocks<br>a brighter<br>tomorrow</p>
-          <p class="stage-note at-right">Freedom<br>through<br>security</p>
-
-          <!-- The hand, reaching down to the reader, with the same life in it as everywhere else. -->
-          <div class="hand-frame reaching" id="hand-frame">
-            <img id="hero-hand-image" src="/quvault_palm_exact.png" alt="A hand held out to be read" width="1145" height="1374">
-            <img class="vein-glow" src="/quvault_palm_exact.png" alt="" aria-hidden="true" width="1145" height="1374">
-            <img class="vein-flow" src="/quvault_palm_exact.png" alt="" aria-hidden="true" width="1145" height="1374">
-            <div class="hand-fallback" id="hero-hand-fallback"></div>
-            <svg class="palm-q" viewBox="0 0 400 400" aria-hidden="true">
-              <circle class="glow" cx="200" cy="200" r="108" fill="url(#palm-glow)"/>
-            </svg>
-          </div>
-
-          <!-- The reader it is held out to: light leaving the ring and arriving at the palm. -->
-          <div class="reader" aria-hidden="true">
-            <span class="beams"></span>
-            <span class="reader-ring"></span>
-            <span class="reader-body">
-              <svg class="reader-mark" viewBox="0 0 40 40"><use href="#q-glyph"/></svg>
-            </span>
-            <span class="reader-shadow"></span>
-          </div>
-
-          <aside class="assets-card">
-            <header>
-              <p>Your Assets<br>Secured by You</p>
-              <svg class="assets-mark" viewBox="0 0 40 40" aria-hidden="true"><use href="#q-glyph"/></svg>
-            </header>
-            <ul>
-              <li><span class="coin btc">&#8383;</span><b>Bitcoin</b><span class="amount">1.2500 BTC</span></li>
-              <li><span class="coin eth">&#9830;</span><b>Ethereum</b><span class="amount">12.4300 ETH</span></li>
-              <li><span class="coin usdt">&#8366;</span><b>Tether</b><span class="amount">25,000.00 USDT</span></li>
-            </ul>
-            <a class="assets-more" href="#security">+ More Assets<svg class="chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.5 4.5 6 5.5-6 5.5"/></svg></a>
-            <footer><span class="live"></span>Protected by QuVault<svg class="chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.5 4.5 6 5.5-6 5.5"/></svg></footer>
-          </aside>
-
-          <p class="stage-note at-foot">Secure<br>authenticate<br>transact</p>
-        </div>
-      </div>
-
-      <div class="trust">
-        <p class="eyebrow spaced">Trusted for a more secure tomorrow.</p>
-        <ul>
-          <li><span class="glyph sm"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.4"/><path d="M9.6 8.4h4a2 2 0 0 1 0 4h-4m0 0h4.3a2 2 0 0 1 0 4H9.6m0-8V16m1.6-9.6V8m2.4-1.6V8m-2.4 8v1.6m2.4-1.6v1.6"/></svg></span>Bitcoin ready</li>
-          <li><span class="glyph sm"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3.2 5.4 8.9L12 15.3 6.6 12.1z"/><path d="m12 16.8 5.4-3.2L12 20.8 6.6 13.6z"/></svg></span>Ethereum ready</li>
-          <li><span class="glyph sm"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 19 6v6c0 4.2-2.8 7.3-7 8.5-4.2-1.2-7-4.3-7-8.5V6z"/><path d="m9 12 2.2 2.2L15.5 10"/></svg></span>Post quantum</li>
-          <li><span class="glyph sm"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4a8 8 0 0 0-8 8v3"/><path d="M12 8a4 4 0 0 0-4 4v4"/><path d="M12 12v5"/><path d="M16 12a4 4 0 0 0-4-4"/><path d="M20 12a8 8 0 0 0-3-6.2"/></svg></span>Biometric access</li>
-          <li><span class="glyph sm"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.2"/><path d="M3.8 12h16.4"/><path d="M12 3.8c2.2 2.4 3.3 5.2 3.3 8.2s-1.1 5.8-3.3 8.2c-2.2-2.4-3.3-5.2-3.3-8.2s1.1-5.8 3.3-8.2z"/></svg></span>Global use cases</li>
-        </ul>
-      </div>
-    </section>
-
-    <section class="why" id="security">
-      <p class="eyebrow ruled centred">Why QuVault</p>
-      <h2>Security That Puts <em>People First</em></h2>
-      <p class="why-lede">Advanced cryptography. Human verification. A more open financial future.</p>
-      <ul class="why-grid">
-        <li>
-          <span class="glyph round"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4a8 8 0 0 0-8 8v3"/><path d="M12 8a4 4 0 0 0-4 4v4"/><path d="M12 12v5"/><path d="M16 12a4 4 0 0 0-4-4"/><path d="M20 12a8 8 0 0 0-3-6.2"/></svg></span>
-          <h3>Human Verified</h3>
-          <p>Your hand is the key.<br>No one else can move<br>your assets.</p>
-        </li>
-        <li>
-          <span class="glyph round"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 19 6v6c0 4.2-2.8 7.3-7 8.5-4.2-1.2-7-4.3-7-8.5V6z"/><path d="m9 12 2.2 2.2L15.5 10"/></svg></span>
-          <h3>Post Quantum Secure</h3>
-          <p>Built with NIST approved<br>algorithms for a quantum<br>safe future.</p>
-        </li>
-        <li>
-          <span class="glyph round"><svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6.6" rx="6.6" ry="2.6"/><path d="M5.4 6.6v10.8c0 1.5 3 2.6 6.6 2.6s6.6-1.1 6.6-2.6V6.6"/><path d="M5.4 12c0 1.5 3 2.6 6.6 2.6s6.6-1.1 6.6-2.6"/></svg></span>
-          <h3>Multi Asset Support</h3>
-          <p>Secure Bitcoin, Ethereum<br>and more in one place.</p>
-        </li>
-        <li>
-          <span class="glyph round"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="9.5" rx="2.2"/><path d="M8.2 10.5V8a3.8 3.8 0 0 1 7.6 0v2.5"/><path d="M12 14.4v2"/></svg></span>
-          <h3>You Control</h3>
-          <p>Your keys. Your assets.<br>Always in your control.</p>
-        </li>
-      </ul>
-    </section>
-
-    <section class="how" id="technology">
-      <header>
-        <div>
-          <p class="eyebrow spaced">Simple. Secure. Yours.</p>
-          <h2>How It Works</h2>
-        </div>
-        <div class="how-nav">
-          <span>Get started in minutes</span>
-          <button class="round-btn" type="button" aria-label="Previous step" disabled>
-            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m12.5 4.5-6 5.5 6 5.5"/></svg>
-          </button>
-          <button class="round-btn on" type="button" aria-label="Next step">
-            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7.5 4.5 6 5.5-6 5.5"/></svg>
-          </button>
-        </div>
-      </header>
-      <ol class="how-steps">
-        <li>
-          <span class="step-no">1</span>
-          <div>
-            <h3>Create Your Account</h3>
-            <p>Set up QuVault with a few simple steps.</p>
-          </div>
-        </li>
-        <li>
-          <span class="step-no">2</span>
-          <div>
-            <h3>Verify with Your Hand</h3>
-            <p>Link your biometric profile securely.</p>
-          </div>
-        </li>
-        <li>
-          <span class="step-no">3</span>
-          <div>
-            <h3>Start Securing Your Assets</h3>
-            <p>Your coins move only when you are there.</p>
-          </div>
-        </li>
-      </ol>
-    </section>
-
-    <section class="built" id="uses">
-      <div class="built-copy">
-        <p class="eyebrow spaced">Trusted by a global generation</p>
-        <h2>Built for Today.<br>Ready for Tomorrow.</h2>
-        <p>QuVault combines human authentication with post quantum technology to protect what
-          matters most. A safer, more open financial future is within reach.</p>
-        <button class="btn brand lg" id="built-cta" type="button" disabled>
-          Our Technology
-          <svg class="chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.5 4.5 6 5.5-6 5.5"/></svg>
-        </button>
-      </div>
-      <dl class="built-stats">
-        <div><dt>100%</dt><dd>Human verified</dd></div>
-        <div><dt>NIST</dt><dd>Approved algorithms</dd></div>
-        <div><dt>Global</dt><dd>Asset support</dd></div>
-        <div><dt>24/7</dt><dd>Your control</dd></div>
-      </dl>
-    </section>
-
-    <section class="voices">
-      <div class="voices-copy">
-        <p class="eyebrow spaced">Real people. Real confidence.</p>
-        <blockquote>&ldquo;QuVault gives me complete peace of mind.<br>My assets are secure, and I&rsquo;m in control.&rdquo;</blockquote>
-        <figure class="voice-who">
-          <!-- ASSET MISSING: portrait of the person quoted. Nothing is invented in its place. -->
-          <span class="portrait" data-missing="portrait"></span>
-          <figcaption>
-            <b>Daniel M.</b>
-            <small>Investor and Early User</small>
-          </figcaption>
-        </figure>
-        <div class="dots" role="tablist" aria-label="Testimonials">
-          <button class="dot on" type="button" role="tab" aria-selected="true" aria-label="First"></button>
-          <button class="dot" type="button" role="tab" aria-selected="false" aria-label="Second"></button>
-          <button class="dot" type="button" role="tab" aria-selected="false" aria-label="Third"></button>
-        </div>
-      </div>
-      <!-- ASSET MISSING: the mountain photograph that fills the right of this section. -->
-      <div class="voices-art" data-missing="mountains">
-        <p class="stack-note light">A more secure<br>tomorrow<br>together</p>
-      </div>
-    </section>
-
-    <!-- ASSET MISSING: the Earth-from-space photograph behind this band. -->
-    <section class="join" data-missing="earth">
-      <div class="join-copy">
-        <p class="eyebrow spaced">Join QuVault today</p>
-        <h2>Take Control of<br>Your Financial Future</h2>
-        <p>Human verification. Post quantum security.<br>A more open tomorrow.</p>
-      </div>
-      <div class="join-cta">
-        <button class="btn brand xl" id="join-cta" type="button" disabled>
-          Create Your Account
-          <svg class="chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.5 4.5 6 5.5-6 5.5"/></svg>
-        </button>
-        <p class="fine">It only takes a few minutes.</p>
-      </div>
-    </section>
-
-    <footer class="site-foot" id="contact">
-      <div class="foot-top">
-        <div class="foot-brand">
-          <a class="home-mark" href="#home">
-            <img src="/qufi-mark.png" alt="" width="46" height="46">
-            <span>
-              <b>QuVault</b>
-              <small>Human secures value</small>
-            </span>
-          </a>
-          <p>A more secure, more open financial future. Powered by human verification and post
-            quantum technology.</p>
-          <ul class="socials">
-            <li><a href="#contact" aria-label="LinkedIn"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.2 9.4v9.2M6.2 5.6v.1M10.4 18.6V9.4m0 3.2c0-1.8 1.3-3.2 3.1-3.2s3.3 1.4 3.3 3.2v6"/></svg></a></li>
-            <li><a href="#contact" aria-label="X"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5.6 5.6 12.8 12.8M18.4 5.6 5.6 18.4"/></svg></a></li>
-            <li><a href="#contact" aria-label="YouTube"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.4" y="6.6" width="17.2" height="10.8" rx="3.2"/><path d="m10.4 9.8 4.6 2.6-4.6 2.6z"/></svg></a></li>
-            <li><a href="#contact" aria-label="GitHub"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.4 19.2c-3.4 1-3.4-1.8-4.8-2.2m9.6 3.8v-2.9c0-.9.1-1.3-.4-1.8 2.3-.3 4.5-1.2 4.5-5a3.9 3.9 0 0 0-1.1-2.7 3.6 3.6 0 0 0-.1-2.7s-.9-.3-2.9 1.1a10 10 0 0 0-5 0C7.2 5.4 6.3 5.7 6.3 5.7a3.6 3.6 0 0 0-.1 2.7A3.9 3.9 0 0 0 5.1 11c0 3.8 2.2 4.7 4.5 5-.3.3-.4.7-.4 1.2v2.7"/></svg></a></li>
-            <li><a href="#contact" aria-label="Discord"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.4 7.4a13 13 0 0 1 7.2 0M7.6 16.6a13 13 0 0 0 8.8 0M9 17.8c-1.6 0-3.2-2.2-3.6-5.2C5 9.6 6 7.6 8.4 7v0M15 17.8c1.6 0 3.2-2.2 3.6-5.2.4-3-.6-5-3-5.6v0"/><circle cx="9.6" cy="13" r="1.1"/><circle cx="14.4" cy="13" r="1.1"/></svg></a></li>
-          </ul>
-        </div>
-
-        <nav class="foot-cols" aria-label="Footer">
-          <div>
-            <h3>Product</h3>
-            <a href="#security">Features</a>
-            <a href="#technology">Technology</a>
-            <a href="#uses">Use Cases</a>
-            <a href="#security">Security</a>
-            <a href="#contact">Pricing</a>
-          </div>
-          <div>
-            <h3>Company</h3>
-            <a href="#about">About Us</a>
-            <a href="#contact">Careers</a>
-            <a href="#contact">News</a>
-            <a href="#contact">Blog</a>
-            <a href="#contact">Contact</a>
-          </div>
-          <div>
-            <h3>Resources</h3>
-            <a href="#contact">Help Centre</a>
-            <a href="#contact">Documentation</a>
-            <a href="#contact">Privacy Policy</a>
-            <a href="#contact">Terms of Service</a>
-            <a href="#contact">Compliance</a>
-          </div>
-        </nav>
-
-        <form class="foot-signup" id="foot-signup">
-          <h3>Stay Updated</h3>
-          <p>Get the latest from QuVault.</p>
-          <div class="signup-row">
-            <input id="signup-email" type="email" placeholder="Your email address" aria-label="Your email address" autocomplete="email">
-            <button class="round-btn on" id="signup-go" type="submit" aria-label="Sign up">
-              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11m-4.5-4.5L15 10l-4.5 4.5"/></svg>
-            </button>
-          </div>
-          <label class="check"><input id="signup-consent" type="checkbox"><span>I agree to receive updates from QuVault.</span></label>
-          <p class="fine" id="signup-note" role="status"></p>
-        </form>
-      </div>
-
-      <div class="foot-bottom">
-        <small>&copy; 2026 QuVault. All rights reserved.</small>
-        <small>Your Hand. A Safer Tomorrow.</small>
-      </div>
-    </footer>
-
+    <!-- Not in the artwork, and needed: the palm route in, and anywhere to report a failure. -->
+    <div class="exact-foot">
+      <button class="link palm-link" id="signin-palm" type="button" disabled>or sign in with your palm</button>
+      <p class="error" id="signin-error" role="alert"></p>
+    </div>
   </main>
 
   <main id="view-about" class="view home about" hidden>
@@ -828,7 +554,7 @@
               <div class="seg" id="chain-threshold" role="group" aria-label="Signatures on the chain" hidden></div>
               <p class="fine" id="chain-note"></p>
               <div class="row" id="chain-actions"></div>
-              <p class="error" id="chain-error" role="alert"></p>
+              <p class="error" id="lock-error" role="alert"></p>
             </section>
           </section>
         </section>
