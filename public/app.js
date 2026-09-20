@@ -85,6 +85,8 @@ function toast(message) {
 function show(view) {
   for (const name of VIEWS) $(`view-${name}`).hidden = name !== view;
   $('who').hidden = view !== 'wallet' && view !== 'create';
+  // The home page carries its own header, so the app's one steps out of its way.
+  document.querySelector('.top').hidden = view === 'signin';
 }
 
 /*
@@ -106,7 +108,6 @@ async function boot() {
   try {
     state.config = await api('/api/config');
     $('network-chip').textContent = state.config.network;
-    $('pitch-network').textContent = state.config.network;
     if (!state.config.configured || !state.config.vaultReady || !state.config.palmEnabled) return showSetup();
     let redirectError = '';
     try {
@@ -218,14 +219,26 @@ addEventListener('hashchange', () => route(location.hash, { remember: false }));
 
 /* ------------------------------------------------------ sign-in */
 
+/** Every way in from the home page, and whether it asks Veyns for a palm or lets them choose. */
+const SIGNIN_BUTTONS = [
+  ['signin-top', 'browser'],
+  ['signin-browser', 'browser'],
+  ['signin-create', 'browser'],
+  ['signin-palm', 'palm'],
+];
+
 async function showSignin() {
   show('signin');
-  $('signin-browser').hidden = state.config.requirePalmSignin;
-  $('signin-browser').disabled = $('signin-palm').disabled = true;
+  const ready = state => { for (const [id] of SIGNIN_BUTTONS) $(id).disabled = state; };
+  // A vault that insists on a palm has nothing to offer the ordinary way in.
+  for (const id of ['signin-top', 'signin-browser', 'signin-create']) {
+    $(id).hidden = state.config.requirePalmSignin;
+  }
+  ready(true);
   try {
     const { nonce } = await api('/api/login/start', {});
     state.loginNonce = nonce;
-    $('signin-browser').disabled = $('signin-palm').disabled = false;
+    ready(false);
   } catch (error) {
     $('signin-error').textContent = friendly(error);
   }
@@ -236,7 +249,7 @@ async function signIn(method) {
   if (!nonce) return;
   state.loginNonce = null;
   $('signin-error').textContent = '';
-  $('signin-browser').disabled = $('signin-palm').disabled = true;
+  for (const [id] of SIGNIN_BUTTONS) $(id).disabled = true;
   try {
     $('signin-error').textContent = 'Opening Veyns…';
     await signInWithRedirect(method, nonce);
@@ -246,8 +259,20 @@ async function signIn(method) {
   }
 }
 
-$('signin-browser').addEventListener('click', () => signIn('browser'));
-$('signin-palm').addEventListener('click', () => signIn('palm'));
+for (const [id, method] of SIGNIN_BUTTONS) $(id).addEventListener('click', () => signIn(method));
+
+/*
+ * The hand is a photograph the product ships with. If it is not there the page still reads,
+ * because a broken image on the first screen somebody sees is worse than no image at all.
+ */
+{
+  const image = $('hero-hand-image');
+  image.addEventListener('load', () => {
+    image.hidden = false;
+    image.closest('.hand-frame').classList.add('has-image');
+  });
+  image.addEventListener('error', () => { image.remove(); });
+}
 $('signout').addEventListener('click', async () => {
   await api('/api/logout', {}).catch(() => {});
   state.data = null;

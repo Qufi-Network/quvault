@@ -325,18 +325,7 @@ select { padding: 0 10px; }
 .view { position: relative; max-width: 1120px; margin: 0 auto; padding: 26px 28px 96px; }
 .view.narrow { max-width: 600px; padding-top: 7vh; }
 .view.narrow > * + * { margin-top: 18px; }
-.view.split {
-  display: grid;
-  grid-template-columns: minmax(0, 1.05fr) minmax(320px, .92fr);
-  gap: 60px;
-  align-items: center;
-  padding-top: 8vh;
-}
-.pitch > * + * { margin-top: 18px; }
-.pitch h1 { font-size: clamp(36px, 5.2vw, 56px); letter-spacing: -.035em; line-height: 1.05; }
-.pitch em { font-style: normal; color: var(--brand); }
 .lede { max-width: 46ch; color: var(--text-2); font-size: 17px; }
-.signin-card { display: grid; gap: 10px; padding: 26px; box-shadow: var(--lift-2); }
 
 .facts { margin: 0; padding: 0; list-style: none; display: grid; gap: 11px; }
 .facts li { position: relative; padding-left: 25px; font-size: 14.5px; color: var(--text-2); }
@@ -934,7 +923,6 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
 @media (max-width: 860px) {
   .top { padding: 11px 16px; }
   .view { padding: 16px 16px 72px; }
-  .view.split { grid-template-columns: minmax(0, 1fr); gap: 30px; padding-top: 4vh; }
   .wide-card { grid-template-columns: minmax(0, 1fr); }
   .qr svg { max-width: 210px; margin: 0 auto; }
   .notice, .alert { flex-direction: column; align-items: flex-start; }
@@ -963,4 +951,289 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
   *, *::before, *::after { transition-duration: 1ms !important; }
   .btn:active, .icon-btn:active, .tab:active, .seg-item:active, .nav:active, .account:active,
   .network-choice:active, .account-card:hover, .account-card:active { transform: none; }
+}
+
+/* ----------------------------------------------------------- the home page */
+
+/*
+ * The first thing anybody sees. It carries the whole argument on one screen: a hand, a mark
+ * that breathes in the palm of it, and the sentence the product is actually about. The pulse
+ * is the only motion on the page, and it stops when the system asks for that.
+ */
+.home {
+  --navy: #0a1f44;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  background:
+    radial-gradient(70vw 52vh at 76% -6%, rgba(10, 98, 255, .10), transparent 62%),
+    radial-gradient(48vw 40vh at 2% 6%, rgba(10, 98, 255, .06), transparent 64%),
+    var(--surface);
+}
+
+.home-top {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  padding: 22px clamp(20px, 5vw, 68px);
+}
+.home-mark { display: flex; align-items: center; gap: 13px; text-decoration: none; color: inherit; }
+.home-mark img { width: 52px; height: 52px; }
+.home-mark span { display: grid; gap: 3px; }
+.home-mark b { font-size: 27px; font-weight: 700; letter-spacing: -.028em; color: var(--navy); }
+.home-mark small {
+  font: 600 9.5px/1 var(--sans);
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.home-nav { display: flex; gap: clamp(18px, 3vw, 42px); margin-inline: auto; }
+.home-nav a {
+  color: var(--text-2);
+  font: 500 15px/1 var(--sans);
+  letter-spacing: -.01em;
+  text-decoration: none;
+  padding: 6px 2px;
+  border-radius: 6px;
+  transition: color var(--quick);
+}
+.home-nav a:hover { color: var(--brand); }
+.home-top .btn { padding: 0 30px; height: 44px; font-size: 15px; }
+
+/* ------------------------------------------------------------------- hero */
+
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.02fr);
+  align-items: center;
+  gap: clamp(20px, 4vw, 56px);
+  padding: clamp(8px, 2vw, 26px) clamp(20px, 5vw, 68px) clamp(40px, 6vw, 84px);
+}
+.hero-copy { min-width: 0; max-width: 620px; }
+.eyebrow.spaced { letter-spacing: .26em; font-size: 11.5px; color: var(--muted); }
+
+.hero h1 {
+  margin: 20px 0 22px;
+  font-size: clamp(38px, 5.4vw, 68px);
+  font-weight: 700;
+  line-height: 1.04;
+  letter-spacing: -.035em;
+  color: var(--navy);
+}
+.hero h1 em { font-style: normal; color: var(--brand); }
+.hero .lede { max-width: 30em; font-size: clamp(16px, 1.25vw, 18.5px); line-height: 1.55; color: var(--text-2); }
+
+.hero-marks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: clamp(16px, 2.4vw, 34px);
+  margin: 30px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.hero-marks li { display: flex; align-items: center; gap: 12px; }
+.hero-marks span:last-child { font: 500 13.5px/1.35 var(--sans); letter-spacing: -.01em; color: var(--text); }
+
+.glyph {
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  flex: none;
+  border-radius: 15px;
+  background: var(--brand-tint);
+  color: var(--brand);
+}
+.glyph svg { width: 25px; height: 25px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+
+.hero-cta { display: flex; align-items: center; flex-wrap: wrap; gap: clamp(16px, 2.5vw, 38px); margin-top: 38px; }
+.btn.xl { height: 66px; padding: 0 38px; font-size: 19px; font-weight: 600; }
+.btn .chev, .link .chev { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: round; stroke-linejoin: round; }
+.btn.xl .chev { width: 20px; height: 20px; margin-left: 4px; }
+.link.go { display: inline-flex; align-items: center; gap: 7px; font-size: 16px; font-weight: 600; }
+.link.palm-link { display: block; margin-top: 18px; font-size: 14px; color: var(--muted); }
+.link.palm-link:hover { color: var(--brand); }
+.home .error { margin-top: 10px; }
+.eyebrow.foot-note { margin-top: 26px; }
+
+/* -------------------------------------------------------------- the hand */
+
+.hero-hand { position: relative; display: flex; justify-content: center; min-width: 0; }
+.hand-note {
+  position: absolute;
+  top: 26%;
+  right: 0;
+  font: 600 10.5px/1.7 var(--sans);
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-align: right;
+}
+.hand-frame { position: relative; width: min(100%, 560px); aspect-ratio: 1 / 1.12; }
+.hand-frame img { width: 100%; height: 100%; object-fit: contain; object-position: bottom; }
+
+/* Until the photograph is in place, a shape that reads as deliberate rather than broken. */
+.hand-fallback {
+  position: absolute;
+  inset: 0;
+  border-radius: 50% 50% 34% 34% / 46% 46% 54% 54%;
+  background:
+    radial-gradient(46% 38% at 50% 46%, rgba(10, 98, 255, .20), transparent 70%),
+    linear-gradient(180deg, rgba(10, 98, 255, .10), rgba(10, 98, 255, .03) 60%, transparent);
+  border: 1px solid rgba(10, 98, 255, .14);
+}
+.hand-frame.has-image .hand-fallback { display: none; }
+
+/* the corner brackets of a scanner */
+.hand-frame::before, .hand-frame::after {
+  content: "";
+  position: absolute;
+  width: clamp(48px, 9%, 72px);
+  height: clamp(48px, 9%, 72px);
+  border: 1.5px solid rgba(10, 98, 255, .28);
+}
+.hand-frame::before { top: 12%; left: 6%; border-right: 0; border-bottom: 0; border-radius: 6px 0 0 0; }
+.hand-frame::after { bottom: 16%; right: 6%; border-left: 0; border-top: 0; border-radius: 0 0 6px 0; }
+
+.palm-q {
+  position: absolute;
+  left: 50%;
+  top: 52%;
+  width: clamp(160px, 40%, 250px);
+  transform: translate(-50%, -50%);
+  overflow: visible;
+}
+.palm-q .ring { fill: none; stroke: var(--brand); transform-origin: 110px 110px; }
+.palm-q .ring-1 { stroke-width: 2.2; opacity: .85; }
+.palm-q .ring-2 { stroke-width: 1.4; opacity: .5; stroke-dasharray: 5 9; }
+.palm-q .ring-3 { stroke-width: 1; opacity: .28; stroke-dasharray: 2 12; }
+.palm-q .disc { fill: rgba(10, 98, 255, .16); stroke: rgba(10, 98, 255, .55); stroke-width: 1.2; transform-origin: 110px 110px; }
+.palm-q .glow { transform-origin: 110px 110px; }
+.palm-q .sweep { transform-origin: 110px 110px; opacity: .8; }
+.palm-q .orbit { transform-origin: 110px 110px; }
+.palm-q .spark { fill: #6aa8ff; }
+.palm-q .spark-b { fill: rgba(106, 168, 255, .6); }
+
+/*
+ * Both names sit in the palm at rest, one above the other: QuVault holds the coins, Veyns is
+ * what reads the hand. They are readable with no animation at all, because a browser that
+ * gives no frames — or a person who has asked for less motion — should still see the mark
+ * rather than an empty circle.
+ */
+.palm-q .q {
+  fill: var(--brand);
+  font: 700 52px/1 var(--sans);
+  letter-spacing: -.02em;
+}
+.palm-q .veyns {
+  fill: #6aa8ff;
+  font: 600 11px/1 var(--sans);
+  letter-spacing: .3em;
+  opacity: .55;
+}
+
+/*
+ * One beat, shared by everything: the rings go out, the disc breathes, the scanner turns, and
+ * the two names hand over to each other at the peak of it.
+ */
+@media (prefers-reduced-motion: no-preference) {
+  .palm-q .ring-1 { animation: pulse-ring 3.2s var(--ease) infinite; }
+  .palm-q .ring-2 { animation: pulse-ring 3.2s var(--ease) .4s infinite; }
+  .palm-q .ring-3 { animation: pulse-ring 3.2s var(--ease) .8s infinite; }
+  .palm-q .glow { animation: pulse-glow 3.2s var(--ease) infinite; }
+  .palm-q .disc { animation: pulse-disc 3.2s var(--ease) infinite; }
+  .palm-q .sweep { animation: sweep-round 3.2s linear infinite; }
+  .palm-q .orbit { animation: sweep-round 8s linear infinite reverse; }
+  .palm-q .q { animation: breathe-q 3.2s var(--ease) infinite; }
+  .palm-q .veyns { animation: read-veyns 3.2s var(--ease) infinite; }
+
+  @keyframes pulse-ring {
+    0% { transform: scale(.9); opacity: .15; }
+    40% { opacity: .85; }
+    100% { transform: scale(1.14); opacity: 0; }
+  }
+  @keyframes pulse-glow {
+    0%, 100% { transform: scale(.94); opacity: .55; }
+    50% { transform: scale(1.06); opacity: 1; }
+  }
+  @keyframes pulse-disc {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.06); }
+  }
+  @keyframes sweep-round {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+  /* The Q breathes with the ring; Veyns answers a beat later, the way a reading lands. */
+  @keyframes breathe-q {
+    0%, 100% { opacity: .88; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.04); }
+  }
+  @keyframes read-veyns {
+    0%, 30% { opacity: .35; letter-spacing: .3em; }
+    62% { opacity: 1; letter-spacing: .42em; }
+    100% { opacity: .35; letter-spacing: .3em; }
+  }
+  .palm-q .q, .palm-q .veyns { transform-box: fill-box; transform-origin: center; }
+}
+
+/* --------------------------------------------------------------- features */
+
+.home-features {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
+  gap: clamp(24px, 3vw, 46px);
+  padding: clamp(30px, 4vw, 54px) clamp(20px, 5vw, 68px) clamp(54px, 7vw, 92px);
+}
+.home-features article { display: grid; gap: 12px; align-content: start; }
+.home-features h2 { font-size: 21px; font-weight: 700; letter-spacing: -.024em; color: var(--navy); }
+.home-features p { font-size: 15px; line-height: 1.5; color: var(--text-2); }
+
+/* ----------------------------------------------------------------- footer */
+
+.home-foot {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 28px;
+  flex-wrap: wrap;
+  padding: clamp(64px, 9vw, 120px) clamp(20px, 5vw, 68px) clamp(40px, 5vw, 62px);
+  border-radius: 100% 100% 0 0 / 70px 70px 0 0;
+  background:
+    radial-gradient(120% 90% at 50% 130%, rgba(46, 130, 255, .38), transparent 62%),
+    linear-gradient(180deg, #071630, #04101f);
+  color: #fff;
+}
+.home-foot-line {
+  font: 600 10.5px/2 var(--sans);
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, .62);
+}
+.home-foot-mark { display: flex; align-items: center; gap: 12px; text-align: right; }
+.home-foot-mark span { display: grid; gap: 3px; }
+.home-foot-mark b { font-size: 21px; font-weight: 700; letter-spacing: -.026em; }
+.home-foot-mark small {
+  font: 600 9px/1 var(--sans);
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, .5);
+}
+
+@media (max-width: 900px) {
+  .home-nav { display: none; }
+  .hero { grid-template-columns: minmax(0, 1fr); }
+  .hero-hand { order: -1; }
+  .hand-note { display: none; }
+  .hand-frame { width: min(100%, 380px); }
+  .home-foot { flex-direction: column; align-items: flex-start; }
+  .home-foot-mark { text-align: left; }
+}
+@media (max-width: 520px) {
+  .home-top { gap: 14px; }
+  .home-mark img { width: 42px; height: 42px; }
+  .home-mark b { font-size: 22px; }
+  .btn.xl { width: 100%; height: 58px; padding: 0 28px; font-size: 17px; }
+  .hero-cta { gap: 18px; }
 }

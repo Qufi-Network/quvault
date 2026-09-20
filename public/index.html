@@ -38,24 +38,143 @@
     <p class="fine">Restart or redeploy after setting them.</p>
   </main>
 
-  <main id="view-signin" class="view split" hidden>
-    <section class="pitch">
-      <p class="eyebrow">Bitcoin <span id="pitch-network">testnet4</span> · Veyns palm</p>
-      <h1>Your coins move<br><em>only for your hand.</em></h1>
-      <p class="lede">Every withdrawal is bound to a palm approval covering that exact transaction, and your vault signs the record of it with a key the server never has.</p>
-      <ul class="facts">
-        <li><b>Human verified</b> — the palm approves the exact transaction, not a session</li>
-        <li><b>Post-quantum</b> — ML-DSA-65 authorisation, ML-KEM-768 at rest</li>
-        <li><b>Test coins only</b>, no real value</li>
-      </ul>
+  <main id="view-signin" class="view home" hidden>
+    <header class="home-top">
+      <a class="home-mark" href="/">
+        <img src="/qufi-mark.png" alt="" width="52" height="52">
+        <span>
+          <b>QuVault</b>
+          <small>Human secures value</small>
+        </span>
+      </a>
+      <nav class="home-nav">
+        <a href="#security">Security</a>
+        <a href="#technology">Technology</a>
+        <a href="#uses">Use Cases</a>
+        <a href="#about">About</a>
+      </nav>
+      <button class="btn brand" id="signin-top" type="button" disabled>Sign In</button>
+    </header>
+
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow spaced">Human verified. Post quantum.</p>
+        <h1>Your Coins Move<br>Only for <em>Your Hand.</em></h1>
+        <p class="lede">QuVault protects your digital assets with post-quantum cryptography and
+          biometric verification. Your keys stay secure. Your assets move only when it&rsquo;s you.</p>
+
+        <ul class="hero-marks">
+          <li>
+            <span class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4a8 8 0 0 0-8 8v3"/><path d="M12 8a4 4 0 0 0-4 4v4"/><path d="M12 12v5"/><path d="M16 12a4 4 0 0 0-4-4"/><path d="M20 12a8 8 0 0 0-3-6.2"/></svg></span>
+            <span>Biometric<br>verified</span>
+          </li>
+          <li>
+            <span class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 19 6v6c0 4.2-2.8 7.3-7 8.5-4.2-1.2-7-4.3-7-8.5V6z"/><path d="m9 12 2.2 2.2L15.5 10"/></svg></span>
+            <span>Post quantum<br>secure</span>
+          </li>
+          <li>
+            <span class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="9.5" rx="2.2"/><path d="M8.2 10.5V8a3.8 3.8 0 0 1 7.6 0v2.5"/><path d="M12 14.4v2"/></svg></span>
+            <span>You control<br>your assets</span>
+          </li>
+        </ul>
+
+        <div class="hero-cta">
+          <button class="btn brand xl" id="signin-browser" type="button" disabled>
+            Sign In to QuVault
+            <svg class="chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.5 4.5 6 5.5-6 5.5"/></svg>
+          </button>
+          <button class="link go" id="signin-create" type="button" disabled>
+            Create an Account
+            <svg class="chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.5 4.5 6 5.5-6 5.5"/></svg>
+          </button>
+        </div>
+        <button class="link palm-link" id="signin-palm" type="button" disabled>or sign in with your palm</button>
+        <p class="error" id="signin-error" role="alert"></p>
+        <p class="eyebrow spaced foot-note">Secure today. Ready for tomorrow.</p>
+      </div>
+
+      <div class="hero-hand">
+        <p class="hand-note">Your hand<br>your key</p>
+        <div class="hand-frame">
+          <img id="hero-hand-image" src="/hand.png" alt="A hand held up to be scanned" hidden>
+          <div class="hand-fallback" id="hero-hand-fallback"></div>
+          <!--
+            The mark is drawn over the image rather than baked into it, so it can breathe, and
+            so the two names in this product can take turns: QuVault holds the coins, Veyns is
+            what reads the hand. One beat each, on the same pulse.
+          -->
+          <svg class="palm-q" viewBox="0 0 220 220" aria-hidden="true">
+            <defs>
+              <radialGradient id="palm-glow">
+                <stop offset="0%" stop-color="rgba(10,98,255,.38)"/>
+                <stop offset="70%" stop-color="rgba(10,98,255,.10)"/>
+                <stop offset="100%" stop-color="rgba(10,98,255,0)"/>
+              </radialGradient>
+              <linearGradient id="palm-sweep" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%" stop-color="rgba(90,170,255,0)"/>
+                <stop offset="100%" stop-color="rgba(90,170,255,.9)"/>
+              </linearGradient>
+            </defs>
+
+            <circle class="glow" cx="110" cy="110" r="104" fill="url(#palm-glow)"/>
+            <circle class="ring ring-3" cx="110" cy="110" r="96"/>
+            <circle class="ring ring-2" cx="110" cy="110" r="74"/>
+            <circle class="ring ring-1" cx="110" cy="110" r="54"/>
+
+            <!-- a scanner passing over the palm -->
+            <g class="sweep">
+              <path d="M110 110 L110 26" stroke="url(#palm-sweep)" stroke-width="3" stroke-linecap="round" fill="none"/>
+            </g>
+
+            <!-- points of light that travel the outer ring -->
+            <g class="orbit">
+              <circle class="spark" cx="110" cy="14" r="2.6"/>
+              <circle class="spark spark-b" cx="110" cy="206" r="1.9"/>
+            </g>
+
+            <circle class="disc" cx="110" cy="110" r="48"/>
+            <g class="marks">
+              <text class="q" x="110" y="100" text-anchor="middle" dominant-baseline="central">Q</text>
+              <text class="veyns" x="110" y="138" text-anchor="middle" dominant-baseline="central">VEYNS</text>
+            </g>
+          </svg>
+        </div>
+      </div>
     </section>
-    <section class="card signin-card">
-      <p class="eyebrow">Sign in</p>
-      <button class="btn brand wide lg" id="signin-browser" type="button" disabled>Continue with Veyns</button>
-      <button class="btn ghost wide lg" id="signin-palm" type="button" disabled>Sign in with palm</button>
-      <p class="error" id="signin-error" role="alert"></p>
-      <p class="fine">Veyns opens in a small window. QuVault only receives a private account key, never your palm.</p>
+
+    <section class="home-features" id="security">
+      <article>
+        <span class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6.5" rx="7" ry="2.8"/><path d="M5 6.5v11c0 1.6 3.1 2.8 7 2.8s7-1.2 7-2.8v-11"/><path d="M5 12c0 1.6 3.1 2.8 7 2.8s7-1.2 7-2.8"/></svg></span>
+        <h2>Multi asset support</h2>
+        <p>Secure your Bitcoin, Ethereum and more.</p>
+      </article>
+      <article id="technology">
+        <span class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="9.5" rx="2.2"/><path d="M8.2 10.5V8a3.8 3.8 0 0 1 7.6 0v2.5"/><path d="M12 14.4v2"/></svg></span>
+        <h2>Post quantum cryptography</h2>
+        <p>Built with NIST approved algorithms for a quantum safe future.</p>
+      </article>
+      <article id="uses">
+        <span class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4a8 8 0 0 0-8 8v3"/><path d="M12 8a4 4 0 0 0-4 4v4"/><path d="M12 12v5"/><path d="M16 12a4 4 0 0 0-4-4"/><path d="M20 12a8 8 0 0 0-3-6.2"/></svg></span>
+        <h2>Biometric access</h2>
+        <p>Authorise transactions with your hand. Simple, fast and secure.</p>
+      </article>
+      <article id="about">
+        <span class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 19 6v6c0 4.2-2.8 7.3-7 8.5-4.2-1.2-7-4.3-7-8.5V6z"/><path d="m9 12 2.2 2.2L15.5 10"/></svg></span>
+        <h2>Self custody</h2>
+        <p>Your keys. Your assets. Always in your control.</p>
+      </article>
     </section>
+
+    <footer class="home-foot">
+      <p class="home-foot-line">A safer<br>financial future<br>for a brighter tomorrow</p>
+      <div class="home-foot-mark">
+        <img src="/qufi-mark.png" alt="" width="34" height="34">
+        <span>
+          <b>QuVault</b>
+          <small>Built for a more secure tomorrow</small>
+        </span>
+      </div>
+    </footer>
   </main>
 
   <main id="view-create" class="view narrow" hidden>
