@@ -235,6 +235,8 @@ const SIGNIN_BUTTONS = [
   ['signin-create', 'browser'],
   ['signin-palm', 'palm'],
   ['about-join', 'browser'],
+  ['built-cta', 'browser'],
+  ['join-cta', 'browser'],
 ];
 
 /** Home or About, whichever the address bar asks for. Both can sign you in. */
@@ -282,6 +284,32 @@ async function signIn(method) {
 }
 
 for (const [id, method] of SIGNIN_BUTTONS) $(id).addEventListener('click', () => signIn(method));
+
+/* The small-screen menu, which closes itself once it has taken somebody somewhere. */
+{
+  const header = $('marketing-top');
+  const toggle = $('nav-toggle');
+  const shut = () => { header.classList.remove('open'); toggle.setAttribute('aria-expanded', 'false'); };
+  toggle.addEventListener('click', () => {
+    const open = header.classList.toggle('open');
+    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+  $('marketing-nav').addEventListener('click', event => { if (event.target.closest('a')) shut(); });
+}
+
+/*
+ * The newsletter sign-up. There is nowhere to send an address yet, so rather than pretend to
+ * take one it says plainly that it is not connected — a form that silently swallows what
+ * somebody typed is worse than one that admits it cannot help.
+ */
+$('foot-signup').addEventListener('submit', event => {
+  event.preventDefault();
+  const email = $('signup-email').value.trim();
+  if (!email) return;
+  $('signup-note').textContent = $('signup-consent').checked
+    ? 'Updates are not connected yet — nothing has been sent or stored.'
+    : 'Tick the box first, and note that updates are not connected yet.';
+});
 
 /*
  * The hand is a photograph the product ships with. If it is not there the page still reads,
