@@ -10,7 +10,7 @@ import { serverKeys, seal, open as openSealed, sealRoot, rootSealMatches } from 
 import { createChain, createPrices, ChainError } from './chain.js';
 import {
   createKey, publicKeyOf, addressOf, planSpend, signPlan, isValidAddress, toBtc, verifyAgainstPlan, WalletError,
-  multisigAddressOf, multisigOf,
+  multisigAddressOf, multisigOf, psbtForPlan, signersOfPsbt, combinePsbts, finalizePsbt, signatureCount,
 } from './bitcoin.js';
 import { DEFAULT_POLICY, PolicyError, describePolicy, requiredFor, requiredToChange, validatePolicy } from './policy.js';
 import { NETWORKS, createBalances, format, networkList } from './networks.js';
@@ -113,6 +113,7 @@ const SQL = {
   setPayload: 'UPDATE operations SET payload = $1 WHERE id = $2',
   markUnlocked: 'UPDATE operations SET unlocked_at = $2 WHERE id = $1 AND unlocked_at IS NULL',
   setAuthorization: 'UPDATE operations SET human_authorization = $1 WHERE id = $2',
+  setPsbt: 'UPDATE operations SET psbt = $1 WHERE id = $2',
 
   approvalsOf: `SELECT a.*, u.id AS member_id FROM approvals a JOIN users u ON u.id = a.user_id WHERE a.operation_id = $1`,
   approvalById: 'SELECT * FROM approvals WHERE id = $1',
@@ -267,6 +268,15 @@ export function createApp(options) {
    * row has not been written yet, falls back to what the vault as a whole was set to.
    */
   const policyOfAccount = (account, wallet) => (account?.policy ? JSON.parse(account.policy) : policyOf(wallet));
+
+  /**
+   * What an account's coins are locked to today: the owner's single key, or the quorum the
+   * chain keeps. Everything that plans, signs or checks a spend asks this, so there is one
+   * answer to the question rather than one per call site.
+   */
+  const lockOfAccount = (account, wallet) => (account?.required
+    ? { address: account.address, publicKeys: JSON.parse(account.quorum_keys), required: account.required }
+    : { address: wallet.address, publicKey: Buffer.from(wallet.public_key, 'hex'), required: null });
 
   const signersOf = (account, members) => {
     const roster = members.map(m => m.member_id);
@@ -799,6 +809,13 @@ export function createApp(options) {
    */
   async function unlockFor({ user, params: [id] }) {
     const op = await ownOperation(id, user);
+    // Spending from an account the chain guards is signed by each signer in turn, with their
+    // own key. Owner or not, what comes back is that person's key and the transaction the
+    // quorum is collecting — never the owner's key standing in for everybody's.
+    if (op.kind === 'withdraw') {
+      const account = await one('accountOn', op.wallet_user_id, 'bitcoin');
+      if (account?.required) return quorumUnlock(op, account, user);
+    }
     if (op.wallet_user_id !== user.id) throw new HttpError(403, 'Only the account owner can unlock this wallet.');
     if (!['create', 'withdraw', 'recovery', 'account', 'upgrade', 'attestation', 'signing', 'lock'].includes(op.kind)) {
       throw new HttpError(409, 'Nothing to unlock for this request.');
@@ -831,6 +848,59 @@ export function createApp(options) {
       salt: wallet.salt,
       ...(['withdraw', 'lock'].includes(op.kind) && op.payload && JSON.parse(op.payload).inputs
         ? await withdrawalUnlock(op, wallet) : {}),
+    };
+  }
+
+  /** When the last palm a request needed landed, which is when there was anything to sign. */
+  const signableAt = (op, approvals) => {
+    const times = approvals
+      .filter(a => a.status === 'approved')
+      .map(a => a.closed_at ?? a.created_at)
+      .sort((a, b) => a - b);
+    return times[op.required - 1] ?? times.at(-1) ?? 0;
+  };
+
+  /**
+   * What one signer's browser needs to add its signature: their own key, which only their own
+   * palm opens, and the transaction the quorum is collecting.
+   *
+   * The window here runs from the moment the request became signable — when the last palm it
+   * needed landed — and not from the first opening of the key. A quorum's approvals arrive
+   * hours apart, and whoever approved first would otherwise find their window long gone by
+   * the time there was anything to sign.
+   */
+  async function quorumUnlock(op, account, user) {
+    if (!['running', 'done'].includes(op.status)) {
+      throw new HttpError(409, 'This request is still collecting palm approvals.');
+    }
+    if (op.txid) throw new HttpError(409, 'That transaction has already been sent.');
+
+    const member = await one('memberIn', op.wallet_user_id, user.id);
+    const keys = JSON.parse(account.quorum_keys);
+    if (!member?.public_key || !keys.includes(member.public_key)) {
+      throw new HttpError(403, 'Your key is not one of the ones this account is locked to.');
+    }
+    const approvals = await all('approvalsOf', op.id);
+    const approval = approvals.find(a => a.user_id === user.id && a.status === 'approved');
+    if (!approval) throw new HttpError(409, 'Put your palm to this request first.');
+    if (now() > signableAt(op, approvals) + UNLOCK_SECONDS) {
+      throw new HttpError(409, 'That approval has been used. Ask for a new palm scan.');
+    }
+
+    const mine = await one('walletOf', user.id);
+    if (mine?.custody !== 'client') throw new HttpError(409, 'Move your own vault into this browser first.');
+    const plan = JSON.parse(op.payload);
+    return {
+      unlock: openSealed(mine.unlock_sealed, vault()).toString('base64'),
+      salt: mine.salt,
+      keyIndex: member.key_index,
+      signingKey: member.public_key,
+      psbt: op.psbt || psbtForPlan(lockOfAccount(account), plan),
+      plan,
+      address: account.address,
+      transactionHash: plan.transactionHash,
+      required: account.required,
+      signatures: signersOfPsbt(op.psbt || psbtForPlan(lockOfAccount(account), plan)).length,
     };
   }
 
@@ -921,6 +991,82 @@ export function createApp(options) {
       if (op.kind === 'lock') await lockAccount(op);
       await query('finishOperation', 'done', txid, null, now(), op.id);
       return { txid };
+    } catch (error) {
+      if (!(error instanceof ChainError)) throw error;
+      await query('finishOperation', 'failed', null, error.message, now(), op.id);
+      throw new HttpError(502, error.message);
+    }
+  }
+
+  /*
+   * One signer's signature, added to what the quorum has collected so far.
+   *
+   * The transaction the signatures gather on is rebuilt here from the stored plan every time,
+   * so a signature can only ever be collected for the transaction the palms approved. What a
+   * browser sends is compared against what was already there, and the only thing it is allowed
+   * to have added is a signature from its own key: nobody can put words in another signer's
+   * mouth, and nobody can reach the threshold on their own.
+   *
+   * This server can put signatures together. It cannot make one, because no signer's key is
+   * here — which is the whole point of moving the threshold onto the chain.
+   */
+  async function addSignature({ user, params: [id], body }) {
+    const op = await ownOperation(id, user);
+    if (op.kind !== 'withdraw') throw new HttpError(409, 'That request is not a withdrawal.');
+    if (op.status === 'done' && op.txid) return { txid: op.txid, signatures: op.required, required: op.required };
+    if (op.status !== 'running') throw new HttpError(409, 'This withdrawal is not ready to sign.');
+
+    const account = await one('accountOn', op.wallet_user_id, 'bitcoin');
+    if (!account?.required) throw new HttpError(409, 'That account is not spent by signatures.');
+    const member = await one('memberIn', op.wallet_user_id, user.id);
+    const keys = JSON.parse(account.quorum_keys);
+    if (!member?.public_key || !keys.includes(member.public_key)) {
+      throw new HttpError(403, 'Your key is not one of the ones this account is locked to.');
+    }
+    const approvals = await all('approvalsOf', op.id);
+    if (!approvals.some(a => a.user_id === user.id && a.status === 'approved')) {
+      throw new HttpError(409, 'Put your palm to this request first.');
+    }
+
+    const plan = JSON.parse(op.payload);
+    const lock = lockOfAccount(account);
+    const bound = bindPlan(lock, plan);
+    if (bound.digest !== plan.transactionHash || bound.digest !== JSON.parse(op.details).transaction_hash) {
+      throw new HttpError(409, 'The stored transaction no longer matches the one that was approved.');
+    }
+
+    const base = psbtForPlan(lock, plan);
+    const before = signersOfPsbt(op.psbt || base);
+    let merged;
+    try {
+      merged = combinePsbts([base, op.psbt, String(body.psbt ?? '')].filter(Boolean));
+    } catch (error) {
+      throw new HttpError(400, error instanceof WalletError ? error.message : 'That signature is not for this transaction.');
+    }
+    const added = signersOfPsbt(merged).filter(key => !before.includes(key));
+    if (added.length !== 1 || added[0] !== member.public_key) {
+      throw new HttpError(400, added.length ? 'A browser may only add a signature from its own key.' : 'That added no signature.');
+    }
+    await query('setPsbt', merged, op.id);
+
+    const signatures = before.length + 1;
+    if (signatures < account.required) return { signatures, required: account.required, txid: null };
+
+    // Enough of them. The finished transaction is checked against the approved plan exactly as
+    // a single-key one is, because being signed by the right people is not the same as paying
+    // the right people.
+    let finished;
+    try {
+      finished = finalizePsbt(merged);
+      verifyAgainstPlan(finished.hex, plan);
+    } catch (error) {
+      if (error instanceof WalletError) throw new HttpError(400, error.message);
+      throw error;
+    }
+    try {
+      const txid = await chain.broadcast(finished.hex);
+      await query('finishOperation', 'done', txid, null, now(), op.id);
+      return { signatures, required: account.required, txid };
     } catch (error) {
       if (!(error instanceof ChainError)) throw error;
       await query('finishOperation', 'failed', null, error.message, now(), op.id);
@@ -1685,9 +1831,7 @@ export function createApp(options) {
     const wallet = await one('walletOf', user.id);
     if (!wallet) throw new HttpError(409, 'Create the wallet first.');
     const account = await one('accountOn', user.id, 'bitcoin');
-    if (account?.required) {
-      throw new HttpError(409, 'Spending from a quorum on the chain is not wired up yet.');
-    }
+    const lock = lockOfAccount(account, wallet);
 
     const to = String(body.to ?? '').trim();
     if (!isValidAddress(to)) throw new HttpError(400, `That is not a valid ${network} address.`);
@@ -1697,18 +1841,22 @@ export function createApp(options) {
 
     let plan;
     try {
-      const [utxos, suggested] = await Promise.all([chain.spendableUtxos(wallet.address), chain.feeRate()]);
+      const [utxos, suggested] = await Promise.all([chain.spendableUtxos(lock.address), chain.feeRate()]);
       const feeRate = Number(body.feeRate) > 0 ? Number(body.feeRate) : suggested;
-      plan = planSpend({ publicKey: Buffer.from(wallet.public_key, 'hex'), utxos, toAddress: to, amountSats, feeRate });
+      plan = planSpend({ ...lock, utxos, toAddress: to, amountSats, feeRate });
     } catch (error) {
       if (error instanceof WalletError || error instanceof ChainError) throw new HttpError(400, error.message);
       throw error;
     }
 
     const leaving = plan.sentSats + plan.feeSats;
-    const { signers, required, rule } = await quorumFor(user.id, 'bitcoin', leaving);
+    const ladder = await quorumFor(user.id, 'bitcoin', leaving);
+    // An account the chain guards has one threshold, because a script cannot read the amount
+    // being sent. That threshold is the number of signatures, and every signature costs a palm.
+    const { signers, rule } = ladder;
+    const required = lock.required ?? ladder.required;
     // The digest of the exact transaction is part of what the palm approves, not a note beside it.
-    const bound = bindPlan(wallet, plan);
+    const bound = bindPlan(lock, plan);
     const statement = `Send ${toBtc(plan.sentSats)} tBTC to ${to}`;
     const details = {
       action: 'withdraw',
@@ -1726,6 +1874,8 @@ export function createApp(options) {
       walletOwnerId: user.id, user, kind: 'withdraw', statement, details,
       payload: { ...plan, transactionHash: bound.digest }, required, networkId: 'bitcoin',
     });
+    // A quorum starts collecting signatures from the unsigned transaction itself.
+    if (lock.required) await query('setPsbt', psbtForPlan(lock, plan), op.id);
     return { operation: operationView(op, [], user), plan, rule, transactionHash: bound.digest };
   }
 
@@ -1923,6 +2073,7 @@ export function createApp(options) {
     { method: 'POST', path: '/api/wallet/reset', handler: completeReset, auth: true },
     { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/unlock$/, handler: unlockFor, auth: true },
     { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/broadcast$/, handler: broadcastSigned, auth: true },
+    { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/signature$/, handler: addSignature, auth: true },
     { method: 'GET', path: /^\/api\/operations\/([\w-]{8,64})\/receipt$/, handler: getReceipt, auth: true },
     { method: 'POST', path: '/api/policy', handler: requestPolicy, auth: true },
     { method: 'POST', path: '/api/recovery', handler: requestRecovery, auth: true },

@@ -282,6 +282,36 @@ export function signPlan(mnemonic, plan, expectedAddress, approved = {}) {
   return { hex: tx.hex, txid: tx.id };
 }
 
+/**
+ * One signer putting their name to a spend from an account the chain guards.
+ *
+ * The transaction is re-hashed here against what the palm approved, exactly as a single-key
+ * spend is, before anything is signed. What goes back is the same partly signed transaction
+ * with one more signature on it — this browser's — and never a key.
+ */
+export function signQuorum(mnemonic, { psbt, plan, index, address, transactionHash, network }) {
+  const { privateKey, publicKey } = cosignerFrom(mnemonic, index);
+  if (transactionHash) {
+    const here = planDigest({ network, from: address, plan });
+    if (here !== transactionHash) {
+      throw new Error('This is not the transaction that was approved. Nothing has been signed.');
+    }
+  }
+  const tx = btc.Transaction.fromPSBT(base64nopadDecode(psbt));
+  let signed = 0;
+  try {
+    signed = tx.sign(privateKey);
+  } catch {
+    signed = 0;
+  }
+  if (!signed) throw new Error('This browser does not hold a key for that account.');
+  return { psbt: base64nopadEncode(tx.toPSBT()), signingKey: toHexKey(publicKey) };
+}
+
+const toHexKey = bytes => hex.encode(bytes);
+const base64nopadEncode = bytes => btoa(String.fromCharCode(...bytes));
+const base64nopadDecode = text => Uint8Array.from(atob(text), c => c.charCodeAt(0));
+
 /* ------------------------------------------------------------- storage */
 
 const aesKey = async (unlockSecret, salt) => crypto.subtle.importKey(

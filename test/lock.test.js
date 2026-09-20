@@ -170,9 +170,13 @@ test('an account is locked once, and its coins are not spent the old way afterwa
   assert.equal(again.status, 409);
   assert.match(again.body.error, /already locked/);
 
-  // The single key that used to be enough is not a way in any more.
-  const spend = await alex.post('/api/withdrawals', { to: 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx', amount: 100_000 });
-  assert.equal(spend.status, 409);
+  // And a spend from it is now planned against the script, not against the old single key.
+  const account = ok(await alex.get('/api/wallet')).accounts[0];
+  env.world.chain.utxos = [{ txid: 'c'.repeat(64), vout: 0, value: 500_000 }];
+  const spend = ok(await alex.post('/api/withdrawals', { to: 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx', amount: 100_000 }));
+  assert.equal(spend.operation.required, 2, 'the threshold is the one the chain keeps');
+  assert.equal(spend.plan.outputs.find(o => o.sats === spend.plan.changeSats).address, account.address,
+    'and the change comes back to the script');
 });
 
 test('the statement the palms approve names the transaction, the keys and the threshold', async t => {

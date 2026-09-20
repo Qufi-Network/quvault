@@ -243,6 +243,18 @@ export function signatureCount(psbt) {
   return counts.length ? Math.min(...counts) : 0;
 }
 
+/**
+ * Whose keys have signed, by public key. A signature counts only where it is on every input,
+ * so a transaction signed in one place and not another is not mistaken for a finished one.
+ */
+export function signersOfPsbt(psbt) {
+  const tx = readPsbt(psbt);
+  const perInput = [...Array(tx.inputsLength).keys()].map(i =>
+    new Set((tx.getInput(i).partialSig ?? []).map(([key]) => hex.encode(key))));
+  if (!perInput.length) return [];
+  return [...perInput[0]].filter(key => perInput.every(set => set.has(key))).sort();
+}
+
 /** Puts the signers' work together. Work for a different transaction is refused outright. */
 export function combinePsbts(psbts) {
   const parts = psbts.map(readPsbt);

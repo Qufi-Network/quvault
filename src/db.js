@@ -211,6 +211,13 @@ const SCHEMA = [
   'ALTER TABLE accounts ADD COLUMN IF NOT EXISTS previous_address TEXT',
 
   /*
+   * v15: the half-signed transaction a quorum is collecting. Signatures arrive one browser at
+   * a time and have to wait somewhere for the rest; the partly signed transaction is that
+   * place. It is not a secret — it is the approved transaction plus the signatures so far.
+   */
+  'ALTER TABLE operations ADD COLUMN IF NOT EXISTS psbt TEXT',
+
+  /*
    * Which kinds of operation exist is decided by the code that is running, so the constraint
    * is simply restated on every migration: one statement, every old name dropped, today's
    * list added. Versioned names were a trap — a later version dropping an earlier one made
