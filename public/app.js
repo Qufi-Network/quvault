@@ -6,7 +6,7 @@ import {
 
 const $ = id => document.getElementById(id);
 
-const VIEWS = ['loading', 'setup', 'signin', 'create', 'wallet'];
+const VIEWS = ['loading', 'setup', 'signin', 'about', 'create', 'wallet'];
 const VAULT_PANES = ['dashboard', 'security'];
 const ACCOUNT_TABS = [
   { key: 'overview', label: 'Overview' },
@@ -82,11 +82,20 @@ function toast(message) {
   toastTimer = setTimeout(() => { node.hidden = true; }, 6000);
 }
 
+/** The pages somebody sees before they are signed in, and the header they share. */
+const MARKETING = ['signin', 'about'];
+
 function show(view) {
   for (const name of VIEWS) $(`view-${name}`).hidden = name !== view;
   $('who').hidden = view !== 'wallet' && view !== 'create';
-  // The home page carries its own header, so the app's one steps out of its way.
-  document.querySelector('.top').hidden = view === 'signin';
+  // Those pages carry their own header, so the app's one steps out of their way.
+  const marketing = MARKETING.includes(view);
+  document.querySelector('.top').hidden = marketing;
+  $('marketing-top').hidden = !marketing;
+  for (const link of $('marketing-nav').querySelectorAll('a')) {
+    const here = (link.getAttribute('href') === '#about') === (view === 'about');
+    link.classList.toggle('on', here && ['#about', '#home'].includes(link.getAttribute('href')));
+  }
 }
 
 /*
@@ -225,10 +234,12 @@ const SIGNIN_BUTTONS = [
   ['signin-browser', 'browser'],
   ['signin-create', 'browser'],
   ['signin-palm', 'palm'],
+  ['about-join', 'browser'],
 ];
 
+/** Home or About, whichever the address bar asks for. Both can sign you in. */
 async function showSignin() {
-  show('signin');
+  show(location.hash === '#about' ? 'about' : 'signin');
   const ready = state => { for (const [id] of SIGNIN_BUTTONS) $(id).disabled = state; };
   // A vault that insists on a palm has nothing to offer the ordinary way in.
   for (const id of ['signin-top', 'signin-browser', 'signin-create']) {
@@ -243,6 +254,17 @@ async function showSignin() {
     $('signin-error').textContent = friendly(error);
   }
 }
+
+/*
+ * Moving between the pages somebody sees before signing in. A sign-in nonce is already in
+ * hand by then, so switching page is only ever a matter of which one is on show.
+ */
+window.addEventListener('hashchange', () => {
+  if (!MARKETING.includes(VIEWS.find(name => !$(`view-${name}`).hidden))) return;
+  const wanted = location.hash === '#about' ? 'about' : 'signin';
+  show(wanted);
+  if (wanted === 'signin') window.scrollTo({ top: 0 });
+});
 
 async function signIn(method) {
   const nonce = state.loginNonce;

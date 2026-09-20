@@ -15,6 +15,18 @@
 <body>
   <div class="field" aria-hidden="true"></div>
 
+  <!-- Defined once, used by the palm on every page that shows a hand. -->
+  <svg class="sr-defs" aria-hidden="true" focusable="false">
+    <defs>
+      <radialGradient id="palm-glow">
+        <stop offset="0%" stop-color="rgba(150, 215, 255, .55)"/>
+        <stop offset="38%" stop-color="rgba(80, 175, 255, .34)"/>
+        <stop offset="72%" stop-color="rgba(50, 140, 255, .10)"/>
+        <stop offset="100%" stop-color="rgba(50, 140, 255, 0)"/>
+      </radialGradient>
+    </defs>
+  </svg>
+
   <header class="top">
     <a class="mark" href="/">
       <img src="/qufi-mark.png" alt="" width="30" height="30">
@@ -38,24 +50,26 @@
     <p class="fine">Restart or redeploy after setting them.</p>
   </main>
 
-  <main id="view-signin" class="view home" hidden>
-    <header class="home-top">
-      <a class="home-mark" href="/">
-        <img src="/qufi-mark.png" alt="" width="52" height="52">
-        <span>
-          <b>QuVault</b>
-          <small>Human secures value</small>
-        </span>
-      </a>
-      <nav class="home-nav">
-        <a href="#security">Security</a>
-        <a href="#technology">Technology</a>
-        <a href="#uses">Use Cases</a>
-        <a href="#about">About</a>
-      </nav>
-      <button class="btn brand" id="signin-top" type="button" disabled>Sign In</button>
-    </header>
+  <!-- One header for both pages somebody sees before they are signed in. -->
+  <header class="home-top" id="marketing-top" hidden>
+    <a class="home-mark" href="#home">
+      <img src="/qufi-mark.png" alt="" width="52" height="52">
+      <span>
+        <b>QuVault</b>
+        <small>Human secures value</small>
+      </span>
+    </a>
+    <nav class="home-nav" id="marketing-nav">
+      <a href="#home">Home</a>
+      <a href="#about">About</a>
+      <a href="#technology">Technology</a>
+      <a href="#uses">Use Cases</a>
+      <a href="#security">Security</a>
+    </nav>
+    <button class="btn brand" id="signin-top" type="button" disabled>Sign In</button>
+  </header>
 
+  <main id="view-signin" class="view home" hidden>
     <section class="hero">
       <div class="hero-copy">
         <p class="eyebrow spaced">Human verified. Post quantum.</p>
@@ -107,26 +121,11 @@
           <img class="vein-flow" src="/hand.webp" alt="" aria-hidden="true" width="1145" height="1374">
           <div class="hand-fallback" id="hero-hand-fallback"></div>
           <!--
-            The Q is part of the photograph, so nothing here draws a second one. What is added
-            is the life around it: rings leaving the palm, a scanner turning over it, and the
-            name of the thing that actually reads a hand. The overlay is anchored on the Q
-            itself — measured at 49.9% across and 59.8% down the image — so it sits in the palm
-            at every size rather than near it.
-          -->
-          <!--
-            The Q is in the photograph. All this does is breathe light onto it, centred on
-            where the mark actually is, so the mark itself appears to pulse without a second
-            one being drawn over the top of it.
+            The Q is in the photograph. All this does is breathe light onto it, anchored on
+            where the mark actually is — measured at 49.9% across and 59.8% down the image — so
+            the mark itself appears to pulse without a second one drawn over the top of it.
           -->
           <svg class="palm-q" viewBox="0 0 400 400" aria-hidden="true">
-            <defs>
-              <radialGradient id="palm-glow">
-                <stop offset="0%" stop-color="rgba(150, 215, 255, .55)"/>
-                <stop offset="38%" stop-color="rgba(80, 175, 255, .34)"/>
-                <stop offset="72%" stop-color="rgba(50, 140, 255, .10)"/>
-                <stop offset="100%" stop-color="rgba(50, 140, 255, 0)"/>
-              </radialGradient>
-            </defs>
             <circle class="glow" cx="200" cy="200" r="108" fill="url(#palm-glow)"/>
           </svg>
         </div>
@@ -157,6 +156,129 @@
     </section>
 
     <footer class="home-foot">
+      <p class="home-foot-line">A safer<br>financial future<br>for a brighter tomorrow</p>
+      <div class="home-foot-mark">
+        <img src="/qufi-mark.png" alt="" width="34" height="34">
+        <span>
+          <b>QuVault</b>
+          <small>Built for a more secure tomorrow</small>
+        </span>
+      </div>
+    </footer>
+  </main>
+
+  <main id="view-about" class="view home about" hidden>
+    <section class="about-hero">
+      <div class="about-hero-copy">
+        <p class="eyebrow spaced">About us</p>
+        <h1>A More <em>Human</em><br>Financial Future</h1>
+        <p class="lede">QuVault is building a safer, more resilient world for digital assets,
+          where advanced cryptography meets something irreplaceable. You.</p>
+        <span class="rule"></span>
+        <p class="eyebrow spaced">Your hand. Your key. A safer tomorrow.</p>
+      </div>
+
+      <div class="about-hero-art">
+        <p class="stack-note">Human<br>verified<br>post<br>quantum</p>
+        <div class="hand-frame about-hand">
+          <img src="/hand.webp" alt="A hand held up to be scanned" width="1145" height="1374">
+          <img class="vein-glow" src="/hand.webp" alt="" aria-hidden="true" width="1145" height="1374">
+          <img class="vein-flow" src="/hand.webp" alt="" aria-hidden="true" width="1145" height="1374">
+          <svg class="palm-q" viewBox="0 0 400 400" aria-hidden="true">
+            <circle class="glow" cx="200" cy="200" r="108" fill="url(#palm-glow)"/>
+          </svg>
+        </div>
+      </div>
+    </section>
+
+    <section class="about-purpose">
+      <div>
+        <p class="eyebrow ruled">Our purpose</p>
+        <h2>Protecting What<br>Moves Your World</h2>
+      </div>
+      <p class="lede">QuVault exists to give individuals, institutions and innovators complete
+        confidence in their digital assets. By combining biometric verification with post-quantum
+        cryptography, we ensure your coins, tokens and data move only when you are there to
+        authorise them.</p>
+    </section>
+
+    <section class="home-features about-features">
+      <article>
+        <span class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 19 6v6c0 4.2-2.8 7.3-7 8.5-4.2-1.2-7-4.3-7-8.5V6z"/><path d="m9 12 2.2 2.2L15.5 10"/></svg></span>
+        <h2>Built for a safer future</h2>
+        <p>Designed for today.<br>Ready for tomorrow.</p>
+      </article>
+      <article>
+        <span class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4a8 8 0 0 0-8 8v3"/><path d="M12 8a4 4 0 0 0-4 4v4"/><path d="M12 12v5"/><path d="M16 12a4 4 0 0 0-4-4"/><path d="M20 12a8 8 0 0 0-3-6.2"/></svg></span>
+        <h2>Human at the core</h2>
+        <p>Your hand is the key.<br>No one else can move your assets.</p>
+      </article>
+      <article>
+        <span class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3.6 8 4.2-8 4.2-8-4.2z"/><path d="m4 12 8 4.2 8-4.2"/><path d="m4 16.2 8 4.2 8-4.2"/></svg></span>
+        <h2>Advanced by design</h2>
+        <p>Post-quantum security<br>from the ground up.</p>
+      </article>
+      <article>
+        <span class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.2"/><path d="M3.8 12h16.4"/><path d="M12 3.8c2.2 2.4 3.3 5.2 3.3 8.2s-1.1 5.8-3.3 8.2c-2.2-2.4-3.3-5.2-3.3-8.2s1.1-5.8 3.3-8.2z"/></svg></span>
+        <h2>Open to a better world</h2>
+        <p>Enabling a more secure<br>and inclusive financial future.</p>
+      </article>
+    </section>
+
+    <section class="about-vision">
+      <div class="about-vision-copy">
+        <p class="eyebrow ruled light">Our vision</p>
+        <h2>A World Where Value<br>Is Truly Yours</h2>
+        <p>We envision a global financial system that is more secure, more human and more open.
+          Where advanced technology protects freedom, opportunity and trust for everyone.</p>
+      </div>
+      <ul class="about-vision-list">
+        <li>People</li>
+        <li>Technology</li>
+        <li>Trust</li>
+        <li>A brighter tomorrow</li>
+      </ul>
+    </section>
+
+    <section class="about-stats">
+      <div><b>100%</b><small>Human verified</small></div>
+      <div><b>Post quantum</b><small>Security</small></div>
+      <div><b>Global</b><small>Use cases</small></div>
+      <div><b>A safer</b><small>Tomorrow</small></div>
+    </section>
+
+    <section class="about-story">
+      <div>
+        <p class="eyebrow ruled">Our story</p>
+        <h2>Innovation with<br>A Human Touch</h2>
+        <p class="lede">QuVault was founded by a team of technologists, security experts and
+          industry leaders who believe that the future of finance should be both highly advanced
+          and deeply human. We combine world-class cryptography with biometric verification to
+          create a new standard for asset protection.</p>
+        <div class="hero-cta">
+          <button class="btn brand lg" id="about-join" type="button" disabled>
+            Join the Journey
+            <svg class="chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.5 4.5 6 5.5-6 5.5"/></svg>
+          </button>
+          <a class="link go" href="#contact">
+            Contact Us
+            <svg class="chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.5 4.5 6 5.5-6 5.5"/></svg>
+          </a>
+        </div>
+      </div>
+      <figure class="about-story-art">
+        <p class="stack-note light">Real security<br>creates<br>real freedom</p>
+        <div class="about-story-mark">
+          <img src="/qufi-mark.png" alt="" width="46" height="46">
+          <span>
+            <b>QuVault</b>
+            <small>Human secures value</small>
+          </span>
+        </div>
+      </figure>
+    </section>
+
+    <footer class="home-foot" id="contact">
       <p class="home-foot-line">A safer<br>financial future<br>for a brighter tomorrow</p>
       <div class="home-foot-mark">
         <img src="/qufi-mark.png" alt="" width="34" height="34">

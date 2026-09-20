@@ -944,6 +944,226 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
   .tabs { width: 100%; }
 }
 
+
+/* ------------------------------------------------------------- about us */
+
+.sr-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+.about { background: var(--surface); }
+.eyebrow.ruled { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
+.eyebrow.ruled::before { content: ""; width: 34px; height: 2px; background: var(--brand); flex: none; }
+.eyebrow.ruled.light { color: rgba(255, 255, 255, .72); }
+.eyebrow.ruled.light::before { background: #5aa2ff; }
+.rule { display: block; width: 36px; height: 2px; margin: 30px 0 22px; background: #5aa2ff; }
+
+/*
+ * The hero is night: a dark band with the world curving away under the hand, and the same
+ * hand as the home page with the same life in it. The curve at the foot of it is the one the
+ * footer uses upside down, so the two ends of the page rhyme.
+ */
+.about-hero {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: clamp(20px, 4vw, 48px);
+  padding: clamp(36px, 5vw, 78px) clamp(20px, 5vw, 68px) clamp(48px, 7vw, 96px);
+  border-radius: 0 0 100% 100% / 0 0 64px 64px;
+  background:
+    radial-gradient(70% 90% at 50% 118%, rgba(52, 140, 255, .42), transparent 64%),
+    radial-gradient(40% 55% at 78% 28%, rgba(46, 130, 255, .26), transparent 70%),
+    linear-gradient(180deg, #04101f 0%, #071a35 52%, #082445 100%);
+  color: #fff;
+  overflow: hidden;
+}
+.about-hero-copy { position: relative; z-index: 1; min-width: 0; }
+.about-hero .eyebrow.spaced { color: rgba(255, 255, 255, .6); }
+.about-hero h1 {
+  margin: 18px 0 22px;
+  font-size: clamp(34px, 4.6vw, 58px);
+  font-weight: 700;
+  line-height: 1.06;
+  letter-spacing: -.035em;
+  color: #fff;
+}
+.about-hero h1 em { font-style: normal; color: #4f9dff; }
+.about-hero .lede { max-width: 27em; color: rgba(255, 255, 255, .8); font-size: clamp(15px, 1.15vw, 17.5px); }
+
+.about-hero-art { position: relative; display: flex; justify-content: center; min-width: 0; perspective: 1400px; }
+.hand-frame.about-hand { width: min(100%, 470px); }
+/* On a dark ground the hand needs a halo rather than a shadow to sit in the page. */
+.hand-frame.about-hand img:first-of-type { filter: drop-shadow(0 0 60px rgba(60, 150, 255, .34)); }
+.hand-frame.about-hand::before { display: none; }
+
+.stack-note {
+  position: absolute;
+  top: 16%;
+  right: 0;
+  z-index: 1;
+  padding-left: 14px;
+  border-left: 1px solid rgba(255, 255, 255, .28);
+  font: 600 10.5px/2 var(--sans);
+  letter-spacing: .24em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, .72);
+}
+.stack-note.light { position: static; border-left: 0; padding-left: 0; }
+
+/* ----------------------------------------------------------- our purpose */
+
+.about-purpose {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  gap: clamp(24px, 4vw, 64px);
+  align-items: start;
+  padding: clamp(46px, 6vw, 86px) clamp(20px, 5vw, 68px) clamp(24px, 3vw, 40px);
+}
+.about-purpose h2 {
+  font-size: clamp(28px, 3.4vw, 42px);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -.032em;
+  color: var(--navy, #0a1f44);
+}
+.about-purpose .lede { max-width: 34em; font-size: clamp(15px, 1.1vw, 17px); color: var(--text-2); }
+
+.about-features { padding-top: clamp(28px, 3vw, 44px); }
+.about-features h2 { font-size: 17.5px; }
+.about-features p { font-size: 14.5px; }
+
+/* ------------------------------------------------------------ our vision */
+
+.about-vision {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: clamp(24px, 4vw, 56px);
+  flex-wrap: wrap;
+  margin: clamp(28px, 4vw, 52px) clamp(20px, 5vw, 68px);
+  padding: clamp(36px, 5vw, 62px) clamp(26px, 4vw, 54px);
+  border-radius: var(--r-lg);
+  background:
+    radial-gradient(80% 120% at 88% 108%, rgba(60, 130, 220, .38), transparent 62%),
+    linear-gradient(120deg, #04101f 0%, #061a31 46%, #0b2b4e 100%);
+  color: #fff;
+}
+.about-vision-copy { min-width: 0; max-width: 34em; }
+.about-vision h2 {
+  margin-bottom: 18px;
+  font-size: clamp(26px, 3.1vw, 38px);
+  font-weight: 700;
+  line-height: 1.12;
+  letter-spacing: -.03em;
+  color: #fff;
+}
+.about-vision p { color: rgba(255, 255, 255, .78); font-size: clamp(14.5px, 1.05vw, 16.5px); line-height: 1.6; }
+.about-vision-list {
+  margin: 0;
+  padding: 0 0 0 16px;
+  list-style: none;
+  border-left: 1px solid rgba(255, 255, 255, .26);
+  display: grid;
+  gap: 9px;
+  font: 600 10.5px/1.4 var(--sans);
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, .74);
+  text-align: left;
+}
+
+/* ------------------------------------------------------------- the count */
+
+.about-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
+  padding: clamp(18px, 2.4vw, 34px) clamp(20px, 5vw, 68px);
+}
+.about-stats div {
+  display: grid;
+  gap: 7px;
+  justify-items: center;
+  padding: 10px 14px;
+  border-left: 1px solid var(--hair);
+  text-align: center;
+}
+.about-stats div:first-child { border-left: 0; }
+.about-stats b { font-size: clamp(17px, 1.6vw, 21px); font-weight: 700; letter-spacing: -.02em; color: var(--brand); }
+.about-stats small {
+  font: 600 9.5px/1 var(--sans);
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* -------------------------------------------------------------- our story */
+
+.about-story {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.04fr);
+  align-items: center;
+  gap: clamp(26px, 4vw, 60px);
+  padding: clamp(40px, 5vw, 72px) clamp(20px, 5vw, 68px) clamp(54px, 7vw, 92px);
+}
+.about-story h2 {
+  margin-bottom: 20px;
+  font-size: clamp(26px, 3.1vw, 38px);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -.03em;
+  color: var(--navy, #0a1f44);
+}
+.about-story .lede { max-width: 32em; font-size: clamp(14.5px, 1.05vw, 16.5px); color: var(--text-2); }
+.about-story .hero-cta { margin-top: 30px; }
+
+/*
+ * A photograph belongs here. Until one is dropped in this stands on its own rather than
+ * showing a hole: the same night the hero is made of, with the mark sitting in it.
+ */
+.about-story-art {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 40px;
+  min-height: clamp(260px, 30vw, 330px);
+  margin: 0;
+  padding: clamp(24px, 3vw, 38px);
+  border-radius: var(--r-lg);
+  background:
+    radial-gradient(70% 80% at 22% 14%, rgba(120, 165, 215, .30), transparent 66%),
+    linear-gradient(160deg, #24384f 0%, #142639 44%, #0a1929 100%);
+  color: #fff;
+  overflow: hidden;
+}
+.about-story-art::after {
+  content: "";
+  position: absolute;
+  inset: auto -10% -22% -10%;
+  height: 62%;
+  background: radial-gradient(60% 100% at 50% 100%, rgba(10, 25, 45, .9), transparent 70%);
+  pointer-events: none;
+}
+.about-story-mark { position: relative; z-index: 1; display: flex; align-items: center; gap: 12px; align-self: flex-end; }
+.about-story-mark span { display: grid; gap: 3px; }
+.about-story-mark b { font-size: 21px; font-weight: 700; letter-spacing: -.026em; }
+.about-story-mark small {
+  font: 600 8.5px/1 var(--sans);
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, .58);
+}
+
+@media (max-width: 900px) {
+  .about-hero, .about-purpose, .about-story { grid-template-columns: minmax(0, 1fr); }
+  .about-hero-art { order: -1; }
+  .hand-frame.about-hand { width: min(100%, 320px); }
+  .stack-note { display: none; }
+  .stack-note.light { display: block; }
+  .about-vision { flex-direction: column; align-items: flex-start; }
+  .about-vision-list { border-left: 0; padding-left: 0; }
+  .about-stats div { border-left: 0; }
+}
+
 /* --------------------------------------------------------- less motion */
 
 /* Hover lifts and press compressions are motion too, not only the keyframes above. */
@@ -1162,9 +1382,9 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
 
   /* Half a beat behind the pulse reaching the palm, so the mark reads as answering it. */
   @keyframes q-pulse {
-    0%, 100% { opacity: .34; transform: scale(.94); }
-    38% { opacity: .92; transform: scale(1.06); }
-    62% { opacity: .5; transform: scale(.99); }
+    0%, 100% { opacity: .38; transform: scale(.93); }
+    38% { opacity: 1; transform: scale(1.1); }
+    62% { opacity: .56; transform: scale(1); }
   }
 }
 
@@ -1191,7 +1411,7 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
 }
 
 /* The charge the hand is holding: the whole network alight, breathing. */
-.hand-frame .vein-glow { opacity: .17; }
+.hand-frame .vein-glow { opacity: .2; }
 
 /*
  * And a pulse travelling up it. The mask is three times the height of the hand with one
@@ -1221,8 +1441,8 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
   .hand-frame .vein-flow { animation: vein-rise 7s cubic-bezier(.45, .05, .35, 1) infinite; }
 
   @keyframes vein-rest {
-    0%, 100% { opacity: .12; }
-    38% { opacity: .26; }
+    0%, 100% { opacity: .14; }
+    38% { opacity: .34; }
   }
   /*
    * The band brightest as it crosses the palm, which is where the mark is and where anyone
@@ -1231,10 +1451,10 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
    */
   @keyframes vein-rise {
     0% { -webkit-mask-position: 0% 100%; mask-position: 0% 100%; opacity: 0; }
-    14% { opacity: .38; }
-    36% { opacity: .72; }
-    58% { opacity: .54; }
-    80% { opacity: .3; }
+    14% { opacity: .46; }
+    36% { opacity: .88; }
+    58% { opacity: .66; }
+    80% { opacity: .36; }
     94%, 100% { -webkit-mask-position: 0% 0%; mask-position: 0% 0%; opacity: 0; }
   }
 }
