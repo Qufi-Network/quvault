@@ -163,6 +163,25 @@ const SCHEMA = [
   'ALTER TABLE wallets ADD COLUMN IF NOT EXISTS attestation_root_seal TEXT',
 
   /*
+   * v11: a signer joins by invitation. The vault's quorum authorises an invitation, which
+   * carries a code; whoever holds that code proves their own palm to redeem it. The code is
+   * the only secret, it is single use, and it expires.
+   */
+  `CREATE TABLE IF NOT EXISTS invites (
+    code           TEXT PRIMARY KEY,
+    wallet_user_id TEXT NOT NULL REFERENCES users(id),
+    network        TEXT NOT NULL,
+    label          TEXT NOT NULL,
+    created_by     TEXT NOT NULL REFERENCES users(id),
+    created_at     BIGINT NOT NULL,
+    expires_at     BIGINT NOT NULL,
+    status         TEXT NOT NULL CHECK (status IN ('open', 'used', 'cancelled')),
+    used_by        TEXT REFERENCES users(id),
+    used_at        BIGINT
+  )`,
+  'CREATE INDEX IF NOT EXISTS invites_wallet ON invites (wallet_user_id, status)',
+
+  /*
    * Which kinds of operation exist is decided by the code that is running, so the constraint
    * is simply restated on every migration: one statement, every old name dropped, today's
    * list added. Versioned names were a trap — a later version dropping an earlier one made
@@ -176,7 +195,7 @@ const SCHEMA = [
      DROP CONSTRAINT IF EXISTS operations_kind_v7,
      DROP CONSTRAINT IF EXISTS operations_kind,
      ADD CONSTRAINT operations_kind
-       CHECK (kind IN ('create', 'withdraw', 'policy', 'recovery', 'account', 'upgrade', 'reset', 'attestation'))`,
+       CHECK (kind IN ('create', 'withdraw', 'policy', 'recovery', 'account', 'upgrade', 'reset', 'attestation', 'invite', 'join'))`,
 ];
 
 const INT8 = 20; // Timestamps are BIGINT; read them back as numbers.

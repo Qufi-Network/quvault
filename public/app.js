@@ -7,7 +7,13 @@ import {
 const $ = id => document.getElementById(id);
 
 const VIEWS = ['loading', 'setup', 'signin', 'create', 'wallet'];
-const TABS = ['dashboard', 'send', 'receive', 'settings'];
+const VAULT_PANES = ['dashboard', 'security'];
+const ACCOUNT_TABS = [
+  { key: 'overview', label: 'Overview' },
+  { key: 'send', label: 'Send' },
+  { key: 'receive', label: 'Receive' },
+  { key: 'rules', label: 'Signers and rules' },
+];
 const RANGES = [
   { key: 'day', label: 'Day', seconds: 86_400 },
   { key: 'week', label: 'Week', seconds: 7 * 86_400 },
@@ -15,7 +21,12 @@ const RANGES = [
   { key: 'max', label: '3M', seconds: 120 * 86_400 },
 ];
 
-const state = { config: null, data: null, price: null, range: 'week', loginNonce: null, draft: null, account: 'bitcoin' };
+const state = {
+  config: null, data: null, price: null, range: 'week', loginNonce: null, draft: null,
+  account: 'bitcoin', // which account is open
+  tab: 'overview',    // which of its tabs
+  pane: 'dashboard',  // 'dashboard', 'security', or 'account'
+};
 
 // A letter for each network, so an account is recognisable before its name is read.
 const MARKS = { bitcoin: '₿', ethereum: 'Ξ', tron: 'T', solana: '◎', stellar: '✦' };
@@ -129,14 +140,23 @@ async function refresh() {
   state.data = data;
   await device.load();
   if (!data.wallet) {
+    // Someone can sign for another vault without having one of their own: say so first.
     $('my-code').textContent = data.me.code;
     renderRequests($('create-pending'), data.pending);
+    const waiting = (data.pending || []).filter(op => op.needsYou);
+    $('signer-alert').hidden = waiting.length === 0;
+    if (waiting.length) {
+      $('signer-alert-title').textContent = waiting.length === 1
+        ? 'Something needs your palm'
+        : `${waiting.length} requests need your palm`;
+      $('signer-alert-what').textContent = `${waiting[0].statement} — ${waiting[0].approvedBy.length} of ${waiting[0].required} approvals so far.`;
+    }
     show('create');
     return;
   }
   renderWallet(data);
   show('wallet');
-  setTab(location.hash.slice(1) || 'dashboard', { remember: false });
+  route(location.hash || '#dashboard', { remember: false });
 }
 
 function showSetup() {
@@ -151,24 +171,50 @@ function showSetup() {
   show('setup');
 }
 
-/* ------------------------------------------------------- dashboard tabs */
+/* ----------------------------------------------------------- routing */
 
-function setTab(name, { remember = true } = {}) {
-  const tab = TABS.includes(name) ? name : 'dashboard';
-  for (const pane of document.querySelectorAll('.pane')) pane.hidden = pane.dataset.pane !== tab;
-  for (const node of document.querySelectorAll('.side .tab')) {
-    const active = node.dataset.tab === tab;
+/*
+ * Two levels, and the address bar says which: the vault (#overview, #security) and one of its
+ * accounts with its own tabs (#bitcoin, #bitcoin/send). Anything unrecognised lands on the
+ * vault overview rather than on nothing.
+ */
+function route(hash, { remember = true } = {}) {
+  const [first, second] = String(hash || '').replace(/^#/, '').split('/').filter(Boolean);
+  const accounts = (state.data?.accounts || []).map(account => account.network);
+
+  if (first === 'security') {
+    state.pane = 'security';
+  } else if (first && accounts.includes(first)) {
+    state.pane = 'account';
+    state.account = first;
+    state.tab = ACCOUNT_TABS.some(tab => tab.key === second) ? second : 'overview';
+  } else {
+    state.pane = 'dashboard';
+  }
+
+  for (const pane of document.querySelectorAll('.pane')) pane.hidden = pane.dataset.pane !== state.pane;
+  for (const node of document.querySelectorAll('.side .nav')) {
+    const active = node.dataset.nav === state.pane;
     node.classList.toggle('active', active);
     node.setAttribute('aria-current', active ? 'page' : 'false');
   }
-  if (tab === 'dashboard') loadPrice();
-  if (remember && location.hash.slice(1) !== tab) history.replaceState(null, '', `#${tab}`);
+  if (state.data) {
+    renderAccounts(state.data);
+    if (state.pane === 'account') renderAccount(state.data);
+  }
+  if (state.pane === 'dashboard') loadPrice();
+  const path = state.pane === 'account' ? `${state.account}${state.tab === 'overview' ? '' : `/${state.tab}`}` : state.pane;
+  if (remember && location.hash.slice(1) !== path) history.replaceState(null, '', `#${path}`);
+  window.scrollTo({ top: 0, behavior: 'instant' });
 }
 
-for (const node of document.querySelectorAll('.side .tab')) {
-  node.addEventListener('click', () => setTab(node.dataset.tab));
+/** Opens an account, on a given tab. */
+const openAccount = (network, tab = 'overview') => route(`${network}/${tab}`);
+
+for (const node of document.querySelectorAll('.side .nav')) {
+  node.addEventListener('click', () => route(node.dataset.nav));
 }
-addEventListener('hashchange', () => setTab(location.hash.slice(1), { remember: false }));
+addEventListener('hashchange', () => route(location.hash, { remember: false }));
 
 /* ------------------------------------------------------ sign-in */
 
@@ -519,52 +565,47 @@ $('create-wallet').addEventListener('click', async () => {
 });
 
 function renderWallet(data) {
-  const { wallet, balance, spendable, coins, chainHistory, feeRate, chainError, policy, members, me } = data;
+  const { wallet, balance, spendable, coins, chainHistory, chainError, members, me } = data;
   const total = balance ? balance.confirmed + balance.pending : 0;
   const myName = members.find(m => m.id === me.id)?.label || 'there';
   const hour = new Date().getHours();
   $('greeting').textContent = `Good ${hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening'}, ${myName}.`;
   const count = (data.accounts || []).length;
-  $('greeting-note').textContent = `Here is the summary of your ${count} account${count === 1 ? '' : 's'}.`;
+  $('greeting-note').textContent = `${count} account${count === 1 ? '' : 's'}, ${members.length} signer${members.length === 1 ? '' : 's'}.`;
 
-  // Totals
   $('balance').textContent = btc(total);
   const notes = [];
   if (balance?.pending) notes.push(`${fmtSats(balance.pending)} sats still unconfirmed`);
   if (coins) notes.push(`${coins} spendable coin${coins === 1 ? '' : 's'} (${fmtSats(spendable)} sats)`);
-  else if (balance && !balance.txCount) notes.push('No coins yet — open Receive funds for your address.');
-  notes.push(device.holdsKeyFor(wallet) ? 'Key held in this browser only' : 'Key not on this device — restore it in Settings');
+  else if (balance && !balance.txCount) notes.push('No coins yet — open an account to find its address.');
+  notes.push(device.holdsKeyFor(wallet) ? 'Key held in this browser only' : 'Key not on this device — restore it in Security');
   $('balance-note').textContent = notes.join(' · ');
   $('chain-error').textContent = chainError || '';
-  $('fee-note').textContent = feeRate ? `Network suggests ${feeRate} sat/vB` : '';
-
-  const spending = (data.accounts || []).find(account => account.network === 'bitcoin');
-  $('send-rule-note').textContent = spending ? `Your thresholds: ${spending.rulesText}.` : '';
   $('accounts-note').textContent = `${members.length} signer${members.length === 1 ? '' : 's'} across this vault`;
 
   renderAccounts(data);
-  renderSettings(data);
-  renderAccountPanes(data);
+  renderSecurity(data);
+  if (state.pane === 'account') renderAccount(data);
   $('legacy-lane').hidden = wallet.custody === 'client';
-  checkLineage(data);
   renderRequests($('pending'), data.pending);
-  renderRequests($('send-pending'), data.pending.filter(op => op.kind === 'withdraw'));
   $('pending-lane').hidden = data.pending.length === 0;
+  renderAlerts(data);
   renderHistory(chainHistory || [], data.history || []);
   paintFiat();
 }
 
-/** The sidebar list and the account cards: one per network, all from the same phrase. */
+/** The sidebar list and the cards on the vault overview: one per network. */
 function renderAccounts(data) {
   const accounts = data.accounts || [];
   if (!accounts.some(account => account.network === state.account)) {
     state.account = accounts[0]?.network || 'bitcoin';
   }
+  const open = state.pane === 'account' ? state.account : null;
 
   $('account-list').replaceChildren(...accounts.map(account => el('button', {
-    class: `account${account.network === state.account ? ' active' : ''}`,
+    class: `account${account.network === open ? ' active' : ''}`,
     type: 'button',
-    onclick: () => selectAccount(account.network),
+    onclick: () => openAccount(account.network),
   },
     el('span', { class: 'account-mark' }, MARKS[account.network] || account.symbol.slice(0, 1)),
     el('span', { class: 'account-text' }, el('b', {}, account.label), el('small', {}, account.chain)),
@@ -572,48 +613,94 @@ function renderAccounts(data) {
 
   $('accounts').replaceChildren(
     ...accounts.map(account => accountCard(account, data)),
-    el('button', { class: 'account-card muted add', type: 'button', onclick: openNewAccount },
-      el('header', {},
-        el('span', { class: 'account-mark big ghost' }, '+'),
-        el('div', {}, el('b', {}, 'Add an account'), el('small', {}, 'new network'))),
-      el('p', { class: 'quiet small' }, 'Ethereum, Tron, Solana or Stellar, from this same phrase and the same palm rules.')),
+    el('button', { class: 'account-card add', type: 'button', onclick: openNewAccount },
+      el('span', { class: 'account-mark big ghost' }, '+'),
+      el('div', { class: 'stack tight' },
+        el('b', {}, 'Add an account'),
+        el('small', { class: 'quiet' }, 'Ethereum, Tron, Solana or Stellar, from this same phrase'))),
   );
 }
 
 function accountCard(account, data) {
-  const { coins } = data;
   const bitcoin = account.network === 'bitcoin';
-  return el('article', { class: `account-card${account.network === state.account ? ' active' : ''}` },
+  const coins = bitcoin && data.coins ? `${data.coins} coin${data.coins === 1 ? '' : 's'}` : null;
+  return el('article', {
+    class: 'account-card',
+    tabindex: '0',
+    role: 'button',
+    onclick: () => openAccount(account.network),
+    onkeydown: event => { if (event.key === 'Enter' || event.key === ' ') openAccount(account.network); },
+  },
     el('header', {},
       el('span', { class: 'account-mark big' }, MARKS[account.network] || account.symbol.slice(0, 1)),
-      el('div', {}, el('b', {}, `${account.label} account`), el('small', {}, account.chain)),
-      el('span', { class: 'chip soft' }, bitcoin
-        ? (coins ? `${coins} coin${coins === 1 ? '' : 's'}` : 'empty')
-        : (account.canSend ? 'send and receive' : 'receive only'))),
+      el('div', {}, el('b', {}, account.label), el('small', {}, account.chain)),
+      el('span', { class: `chip soft${account.canSend ? '' : ' muted'}` }, coins ?? (account.canSend ? 'send and receive' : 'receive only'))),
     el('p', { class: 'account-balance' }, account.formatted ?? '—', el('span', { class: 'unit' }, account.symbol)),
-    bitcoin ? el('p', { class: 'quiet small', id: 'account-fiat' }, '') : null,
-    el('p', { class: 'quiet small' }, `${account.rulesText}`),
+    bitcoin ? el('p', { class: 'quiet small', id: 'account-fiat-card' }, '') : null,
+    el('p', { class: 'quiet small rule-line' }, account.rulesText),
     el('p', { class: 'account-address' }, account.address),
     el('div', { class: 'row' },
-      account.canSend ? button('Send', 'btn brand small', () => { selectAccount(account.network); setTab('send'); }) : null,
-      button('Receive', 'btn ghost small', () => { selectAccount(account.network); setTab('receive'); })));
+      account.canSend
+        ? button('Send', 'btn brand sm', event => { event.stopPropagation(); openAccount(account.network, 'send'); })
+        : null,
+      button('Receive', 'btn ghost sm', event => { event.stopPropagation(); openAccount(account.network, 'receive'); })));
 }
 
-/** Points Send, Receive and the account details at one account. */
-function selectAccount(networkId) {
-  state.account = networkId;
-  if (!state.data) return;
-  renderAccounts(state.data);
-  renderAccountPanes(state.data);
-  renderSettings(state.data); // its signers and threshold are its own
-}
+/* ------------------------------------------------------- one account */
 
-function renderAccountPanes(data) {
+/** Everything inside the account pane: its header, its tabs, and whichever tab is open. */
+function renderAccount(data) {
   const accounts = data.accounts || [];
   const account = accounts.find(item => item.network === state.account) || accounts[0];
   if (!account) return;
-  for (const node of document.querySelectorAll('.account-name')) node.textContent = `${account.label} account`;
 
+  $('account-mark').textContent = MARKS[account.network] || account.symbol.slice(0, 1);
+  $('account-title').textContent = `${account.label} account`;
+  $('account-subtitle').textContent = `${account.chain} · ${account.signers.length} signer${account.signers.length === 1 ? '' : 's'}`;
+  $('account-chip').textContent = account.canSend ? 'send and receive' : 'receive only';
+  $('account-chip').classList.toggle('muted', !account.canSend);
+  $('account-explorer').href = account.explorer;
+
+  // The tab strip, with the one that cannot work here left out rather than shown broken.
+  const tabs = ACCOUNT_TABS.filter(tab => tab.key !== 'send' || account.canSend);
+  if (!tabs.some(tab => tab.key === state.tab)) state.tab = 'overview';
+  $('account-tabs').replaceChildren(...tabs.map(tab => el('button', {
+    class: `tab${tab.key === state.tab ? ' active' : ''}`,
+    type: 'button',
+    role: 'tab',
+    'aria-selected': tab.key === state.tab ? 'true' : 'false',
+    onclick: () => openAccount(account.network, tab.key),
+  }, tab.label)));
+  for (const pane of document.querySelectorAll('.subpane')) pane.hidden = pane.dataset.sub !== state.tab;
+
+  renderAccountOverview(account, data);
+  renderAccountReceive(account, data);
+  renderAccountSend(account, data);
+  renderRules(account, data);
+  checkLineage(data);
+}
+
+function renderAccountOverview(account, data) {
+  $('account-balance').textContent = account.formatted ?? '—';
+  $('account-unit').textContent = account.symbol;
+  $('account-address').textContent = account.address;
+  $('account-network').textContent = `${account.label} · ${account.chain}`;
+  $('account-protection').textContent = data.wallet.protection;
+  $('account-send').hidden = !account.canSend;
+  $('rules-chip').textContent = `${account.changeRequired} to change`;
+  $('rules-summary').textContent = account.rulesText;
+  $('signer-chips').replaceChildren(...account.signers.map(signer => el('span', { class: 'signer-chip' },
+    el('span', { class: 'avatar' }, initials(signer.label)),
+    signer.label,
+    signer.owner ? el('small', {}, 'owner') : null)));
+
+  const mine = data.pending.filter(op => op.network === account.network || (account.network === 'bitcoin' && !op.network));
+  renderRequests($('account-pending'), mine);
+  $('account-pending-lane').hidden = mine.length === 0;
+  paintFiat();
+}
+
+function renderAccountReceive(account, data) {
   $('address').textContent = account.address;
   $('explorer-link').href = account.explorer;
   $('qr').innerHTML = account.qr || ''; // A QR code this server generated; no external content.
@@ -623,16 +710,19 @@ function renderAccountPanes(data) {
   $('receive-note').textContent = account.network === 'bitcoin'
     ? (data.balance?.txCount ? `${data.balance.txCount} transaction${data.balance.txCount === 1 ? '' : 's'} so far.` : '')
     : `Balance ${account.formatted ?? 'unknown'} ${account.symbol}.`;
+}
 
+function renderAccountSend(account, data) {
   $('send-form').hidden = !account.canSend;
-  $('send-rule-note').hidden = !account.canSend;
+  $('send-rule-note').textContent = account.canSend ? `This account: ${account.rulesText}.` : '';
+  $('fee-note').textContent = data.feeRate ? `Network suggests ${data.feeRate} sat/vB` : '';
   $('send-soon').hidden = account.canSend;
   $('send-soon').textContent = account.canSend ? ''
-    : `Signing for ${account.label} is the next step. This account receives and shows its balance today; the Bitcoin account can already spend under your palm rules.`;
-
-  $('settings-network').textContent = `${account.label} · ${account.chain}`;
-  $('settings-address').textContent = account.address;
+    : `Signing for ${account.label} is the next step. This account receives and shows its balance today.`;
+  renderRequests($('send-pending'), data.pending.filter(op => op.kind === 'withdraw'));
 }
+
+const initials = name => String(name || '?').trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase();
 
 /* --------------------------------------------------- adding an account */
 
@@ -859,6 +949,7 @@ function openReset() {
 
 $('reset-vault').addEventListener('click', openReset);
 $('reset-cancel').addEventListener('click', () => $('reset').close());
+$('reset-keep').addEventListener('click', () => $('reset').close());
 
 $('reset-form').addEventListener('submit', async event => {
   event.preventDefault();
@@ -879,6 +970,33 @@ $('reset-form').addEventListener('submit', async event => {
   }
 });
 $('move-vault').addEventListener('click', () => startMove($('device-error')));
+
+/**
+ * What is waiting for this person, said once and loudly. The page polls, so a request raised
+ * by another signer turns up here within a few seconds without anyone refreshing anything.
+ */
+function renderAlerts(data) {
+  const waiting = (data.pending || []).filter(op => op.needsYou);
+  $('alert-lane').hidden = waiting.length === 0;
+  if (!waiting.length) {
+    state.alerted = new Set();
+    return;
+  }
+  const first = waiting[0];
+  $('alert-title').textContent = waiting.length === 1
+    ? 'Something is waiting for your palm'
+    : `${waiting.length} requests are waiting for your palm`;
+  $('alert-what').textContent = `${first.statement} — ${first.approvedBy.length} of ${first.required} approvals so far.`;
+  $('alert-go').onclick = () => openApproval(first, busyText(first));
+
+  // Say it once per request, rather than every poll.
+  state.alerted ??= new Set();
+  for (const op of waiting) {
+    if (state.alerted.has(op.id)) continue;
+    state.alerted.add(op.id);
+    if (state.data) toast(`Waiting for your palm: ${op.statement}`);
+  }
+}
 
 function renderRequests(container, requests) {
   const { me, labels = {} } = state.data;
@@ -951,46 +1069,55 @@ async function copy(text, message) {
   }
 }
 
-/* ----------------------------------------------------------- settings */
+/* ------------------------------------------------------ vault security */
 
-/** The editable copy of one account's signers and thresholds, rebuilt from the server view. */
-function renderSettings(data) {
+/** The vault's own pane: the keys behind it, and the way to end it. */
+function renderSecurity(data) {
   const { me, wallet } = data;
-  const account = (data.accounts || []).find(item => item.network === state.account) || data.accounts?.[0];
   $('my-code').textContent = me.code;
-  $('settings-protection').textContent = wallet.protection;
 
   const legacy = wallet.custody !== 'client';
   const holds = device.holdsKeyFor(wallet);
+  $('device-chip').textContent = legacy ? 'server-held' : holds ? 'in this browser' : 'not on this device';
+  $('device-chip').classList.toggle('warn', legacy || !holds);
   $('device-state').textContent = legacy
     ? 'This vault was made before keys lived in the browser: its key is sealed on the server, so there is no recovery phrase and no other-network accounts.'
     : holds
-      ? 'This browser holds the key for this wallet. The server has never seen it.'
-      : 'This browser does not hold the key. Restore it here with your twelve words, or use the browser that made the wallet.';
+      ? 'This browser holds the key for this vault. The server has never seen it.'
+      : 'This browser does not hold the key. Restore it here with your twelve words, or use the browser that made the vault.';
   $('show-phrase').hidden = legacy || !holds;
   $('restore-device').hidden = legacy || holds;
   $('move-vault').hidden = !legacy;
+
   const attestation = wallet.attestation;
   $('attestation-key').textContent = attestation?.keyId
-    ? `${attestation.algorithm} · ${attestation.keyId} · epoch ${attestation.epoch} · from ${attestation.rootKeyId}`
+    ? `${attestation.keyId} · epoch ${attestation.epoch} · from ${attestation.rootKeyId}`
     : attestation?.broken ? `lineage broken: ${attestation.broken}` : 'none registered';
   $('rotate-attestation').hidden = legacy;
-  $('rotate-attestation').textContent = attestation?.keyId
-    ? 'Replace the authorisation key'
-    : 'Register the authorisation key';
+  $('rotate-attestation').textContent = attestation?.keyId ? 'Replace the authorisation key' : 'Register the authorisation key';
+
   $('reset-note').textContent = legacy
     ? `Erasing destroys the key this server holds for ${wallet.address}. Anything left at that address goes with it, so sweep it somewhere on the way out.`
     : `Erasing removes the vault here and the key in this browser. Your twelve words are the only way back to ${wallet.address}, so send the coins on or write the words down first.`;
+}
 
-  if (!account) return;
-  state.draft = {
-    network: account.network,
-    rules: account.policy.rules.map(rule => ({ ...rule })),
-    members: account.signers.map(signer => ({ ...signer })),
-    removed: [],
-  };
+/* ------------------------------------------- one account's signers and rules */
+
+/** The editable copy of one account's signers and thresholds, rebuilt from the server view. */
+function renderRules(account, data) {
+  // Keep an edit in progress if it belongs to this account; otherwise start from the server.
+  if (state.draft?.network !== account.network) {
+    state.draft = {
+      network: account.network,
+      rules: account.policy.rules.map(rule => ({ ...rule })),
+      members: account.signers.map(signer => ({ ...signer })),
+      removed: [],
+    };
+  }
   $('signers-note').textContent = `Everyone who can approve for the ${account.label} account with their palm.`;
-  $('settings-required').textContent = `Changes here need ${account.changeRequired} palm approval${account.changeRequired === 1 ? '' : 's'} from its signers`;
+  drawInvites(account).catch(() => {});
+  $('settings-required').textContent = `${account.changeRequired} palm${account.changeRequired === 1 ? '' : 's'} to change`;
+  void data;
   drawSettings();
 }
 
@@ -998,83 +1125,224 @@ function drawSettings() {
   const draft = state.draft;
   if (!draft) return;
   const count = draft.members.length;
+  const account = (state.data?.accounts || []).find(item => item.network === draft.network);
 
+  /* signers */
   $('signer-rows').replaceChildren(...draft.members.map(member => el('div', { class: 'member-row' },
-    el('span', {},
-      member.label,
-      member.owner ? el('small', {}, 'owner') : null,
-      member.id === state.data.me.id ? el('small', {}, 'you') : null,
-      el('small', { class: 'palm-id' }, member.palmId || (member.isNew ? 'palm id on approval' : 'no palm yet'))),
-    member.owner ? el('span', { class: 'quiet small' }, 'cannot be removed') : button('Remove', 'link', () => {
-      if (!member.isNew) draft.removed.push(member.id);
-      draft.members = draft.members.filter(m => m.id !== member.id);
-      for (const rule of draft.rules) rule.approvals = Math.min(rule.approvals, draft.members.length);
-      drawSettings();
-    }))));
+    el('span', { class: 'avatar' }, initials(member.label)),
+    el('span', { class: 'member-who' },
+      el('b', {}, member.label),
+      el('small', {}, [
+        member.owner ? 'owner' : null,
+        member.id === state.data.me.id ? 'you' : null,
+        member.palmId || (member.isNew ? 'palm id on approval' : 'no palm yet'),
+      ].filter(Boolean).join(' · '))),
+    member.owner
+      ? el('span', { class: 'chip soft muted' }, 'always signs')
+      : el('button', {
+        class: 'icon-btn danger', type: 'button', title: `Remove ${member.label}`, 'aria-label': `Remove ${member.label}`,
+        onclick: () => {
+          if (!member.isNew) draft.removed.push(member.id);
+          draft.members = draft.members.filter(m => m.id !== member.id);
+          for (const rule of draft.rules) rule.approvals = Math.min(rule.approvals, draft.members.length);
+          drawSettings();
+        },
+      }, el('span', {}, '\u00d7')))));
 
-  // Quick pick: the common "M of N" choices for every amount.
-  $('presets').replaceChildren(
-    el('span', { class: 'quiet small' }, 'Every amount:'),
-    ...Array.from({ length: count }, (_, i) => i + 1).map(m =>
-      button(`${m} of ${count}`, `chip pick${draft.rules.length === 1 && draft.rules[0].approvals === m ? ' on' : ''}`, () => {
-        draft.rules = [{ upToSats: null, approvals: m }];
-        drawSettings();
-      })));
+  /* the every-amount threshold, as one segmented control */
+  const single = draft.rules.length === 1;
+  $('presets').replaceChildren(...Array.from({ length: count }, (_, i) => i + 1).map(m => el('button', {
+    class: `seg-item${single && draft.rules[0].approvals === m ? ' on' : ''}`,
+    type: 'button',
+    'aria-pressed': single && draft.rules[0].approvals === m ? 'true' : 'false',
+    onclick: () => { draft.rules = [{ upToSats: null, approvals: m }]; drawSettings(); },
+  }, `${m} of ${count}`)));
 
-  $('rule-rows').replaceChildren(...draft.rules.map((rule, index) => {
+  /* amount steps, only when there is more than the one rule */
+  $('rule-rows').replaceChildren(...(single ? [] : draft.rules.map((rule, index) => {
     const last = index === draft.rules.length - 1;
-    const select = el('select', {
-      onchange: event => { rule.approvals = Number(event.target.value); drawSettings(); },
-    }, ...Array.from({ length: count }, (_, i) => el('option', { value: String(i + 1), selected: rule.approvals === i + 1 }, `${i + 1} of ${count}`)));
     return el('div', { class: 'rule-row' },
-      el('span', { class: 'quiet small' }, last ? 'Any larger amount' : 'Amounts up to'),
-      last ? el('span', { class: 'quiet small' }, '') : el('input', {
-        inputmode: 'numeric', value: rule.upToSats === null ? '' : String(rule.upToSats), placeholder: 'sats',
-        oninput: event => { rule.upToSats = event.target.value === '' ? null : Number(event.target.value); },
+      el('span', { class: 'rule-when' }, last ? 'Anything larger' : 'Up to'),
+      last ? el('span', {}) : el('input', {
+        class: 'amount-input',
+        inputmode: 'numeric',
+        value: rule.upToSats === null ? '' : String(rule.upToSats),
+        placeholder: 'sats',
+        'aria-label': 'Amount limit in satoshis',
+        oninput: event => { rule.upToSats = event.target.value === '' ? null : Number(event.target.value); drawSummary(); },
       }),
-      select,
-      draft.rules.length > 1 ? button('Remove', 'link', () => {
-        draft.rules.splice(index, 1);
-        draft.rules.at(-1).upToSats = null;
-        drawSettings();
-      }) : el('span', {}));
-  }));
+      stepper(rule.approvals, count, value => { rule.approvals = value; drawSettings(); }),
+      last ? el('span', {}) : el('button', {
+        class: 'icon-btn', type: 'button', 'aria-label': 'Remove this step',
+        onclick: () => { draft.rules.splice(index, 1); draft.rules.at(-1).upToSats = null; drawSettings(); },
+      }, el('span', {}, '\u00d7')));
+  })));
 
-  const account = (state.data.accounts || []).find(item => item.network === draft.network);
+  $('add-rule').textContent = single ? '+ Different rule for larger amounts' : '+ Add an amount step';
+  drawSummary();
+
+  /* the save bar only exists when there is something to save */
   const same = JSON.stringify(draft.rules) === JSON.stringify(account?.policy.rules)
     && draft.removed.length === 0
     && draft.members.length === (account?.signers.length ?? 0);
+  const onRules = state.pane === 'account' && state.tab === 'rules';
+  $('save-bar').hidden = same || !onRules;
   $('save-settings').disabled = same;
-  $('change-cost').textContent = same
-    ? 'Nothing changed yet.'
-    : `Proposing this asks ${account?.changeRequired ?? 1} of the current signers for a palm scan.`;
+  const added = draft.members.filter(m => m.isNew).length;
+  const changes = [
+    added ? `${added} signer${added === 1 ? '' : 's'} added` : null,
+    draft.removed.length ? `${draft.removed.length} removed` : null,
+    JSON.stringify(draft.rules) === JSON.stringify(account?.policy.rules) ? null : 'threshold changed',
+  ].filter(Boolean);
+  $('change-cost').textContent = same ? '' :
+    `${changes.join(' · ')} — needs ${account?.changeRequired ?? 1} palm${(account?.changeRequired ?? 1) === 1 ? '' : 's'} from the current signers.`;
+}
+
+/** Plain language, so the rules can be read rather than decoded. */
+function drawSummary() {
+  const draft = state.draft;
+  if (!draft) return;
+  const count = draft.members.length;
+  const parts = draft.rules.map((rule, index) => (rule.upToSats === null
+    ? `${index === 0 ? 'any amount' : 'anything larger'} needs ${rule.approvals} of ${count}`
+    : `up to ${fmtSats(rule.upToSats)} sats needs ${rule.approvals} of ${count}`));
+  $('threshold-summary').textContent = `In plain words: ${parts.join('; ')}.`;
+}
+
+/** A minus/number/plus control: easier to reach than a select, and always in range. */
+function stepper(value, max, onChange) {
+  const step = delta => onChange(Math.min(max, Math.max(1, value + delta)));
+  return el('div', { class: 'stepper' },
+    el('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Fewer palms', disabled: value <= 1, onclick: () => step(-1) }, el('span', {}, '\u2212')),
+    el('span', { class: 'stepper-value' }, `${value} of ${max}`),
+    el('button', { class: 'icon-btn', type: 'button', 'aria-label': 'More palms', disabled: value >= max, onclick: () => step(1) }, el('span', {}, '+')));
 }
 
 $('add-rule').addEventListener('click', () => {
   const draft = state.draft;
   const last = draft.rules.at(-1);
-  draft.rules.splice(draft.rules.length - 1, 0, { upToSats: 100_000, approvals: Math.min(last.approvals, draft.members.length) });
+  draft.rules.splice(draft.rules.length - 1, 0, {
+    upToSats: 100_000,
+    approvals: Math.max(1, Math.min(last.approvals - 1, draft.members.length)),
+  });
   drawSettings();
 });
 
+$('discard-settings').addEventListener('click', () => {
+  state.draft = null;
+  if (state.data) renderAccount(state.data);
+});
+
+/* ------------------------------------------------------- invitations */
+
+/*
+ * Adding a signer is an invitation, not an edit. The vault's own quorum authorises it, the
+ * code that comes out is passed to the person by hand, and their palm is what redeems it.
+ * Nobody is added to an account because someone typed their name.
+ */
 $('add-member').addEventListener('click', () => {
-  const code = $('new-member-code').value.trim();
-  const label = $('new-member-label').value.trim();
-  $('rules-error').textContent = '';
-  if (!code || !label) {
-    $('rules-error').textContent = 'Enter both the approver code and a name.';
+  const account = accountNow();
+  if (!account) return;
+  $('invite-error').textContent = '';
+  $('invite-name').value = '';
+  $('invite-explains').textContent =
+    `Creating the invitation takes ${account.changeRequired} palm approval${account.changeRequired === 1 ? '' : 's'} from the signers of the ${account.label} account. You will get a code to send them.`;
+  $('invite').showModal();
+  $('invite-name').focus();
+});
+const closeInvite = () => $('invite').close();
+$('invite-cancel').addEventListener('click', closeInvite);
+$('invite-close').addEventListener('click', closeInvite);
+
+$('invite-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const label = $('invite-name').value.trim();
+  $('invite-error').textContent = '';
+  if (!label) {
+    $('invite-error').textContent = 'Give them a name, so the other signers know who this is.';
     return;
   }
-  state.draft.members.push({ id: code, label, owner: false, isNew: true });
-  $('new-member-code').value = '';
-  $('new-member-label').value = '';
-  drawSettings();
+  try {
+    const { operation } = await api('/api/invites/approval', { network: state.account, label });
+    $('invite').close();
+    openApproval(operation, 'Creating the invitation…');
+  } catch (error) {
+    $('invite-error').textContent = friendly(error);
+  }
 });
+
+/** Shows a code that now exists, big enough to read out over a phone. */
+function showInviteCode(code, label) {
+  if (!code) return;
+  $('invite-code-for').textContent = label ? `Send this code to ${label}.` : 'Send this code to them.';
+  $('invite-code-value').textContent = code;
+  state.lastInvite = code;
+  $('invite-code').showModal();
+}
+$('invite-code-done').addEventListener('click', () => $('invite-code').close());
+$('invite-code-copy').addEventListener('click', () => copy(state.lastInvite ?? '', 'Invitation code copied.'));
+
+/* The other side of it: redeeming a code with your own palm. */
+function openJoin() {
+  $('join-error').textContent = '';
+  $('join-code').value = '';
+  $('join').showModal();
+  $('join-code').focus();
+}
+$('join-vault').addEventListener('click', openJoin);
+$('join-vault-empty').addEventListener('click', openJoin);
+$('join-cancel').addEventListener('click', () => $('join').close());
+$('join-close').addEventListener('click', () => $('join').close());
+
+$('join-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const code = $('join-code').value.trim();
+  $('join-error').textContent = '';
+  if (!code) {
+    $('join-error').textContent = 'Type the code you were sent.';
+    return;
+  }
+  try {
+    const { operation } = await api('/api/invites/join', { code });
+    $('join').close();
+    openApproval(operation, 'Joining the vault…');
+  } catch (error) {
+    $('join-error').textContent = friendly(error);
+  }
+});
+
+/** The invitations this account has out, waiting to be redeemed. */
+async function drawInvites(account) {
+  let invites = [];
+  try {
+    ({ invites } = await api('/api/invites'));
+  } catch {
+    invites = [];
+  }
+  const mine = invites.filter(invite => invite.network === account.network);
+  $('invite-rows').replaceChildren(...mine.map(invite => el('div', { class: 'invite-row' },
+    el('span', { class: 'avatar ghost' }, initials(invite.label)),
+    el('span', { class: 'member-who' },
+      el('b', {}, `${invite.label} — invited`),
+      el('small', {}, `${invite.code} · expires ${when(invite.expiresAt)}`)),
+    button('Copy', 'link', () => copy(invite.code, 'Invitation code copied.')),
+    button('Cancel', 'link', async () => {
+      await api('/api/invites/cancel', { code: invite.code }).catch(error => toast(friendly(error)));
+      refresh().catch(() => {});
+    }))));
+}
+
+const accountNow = () => (state.data?.accounts || []).find(item => item.network === state.account);
+
+$('open-rules').addEventListener('click', () => openAccount(state.account, 'rules'));
+$('account-send').addEventListener('click', () => openAccount(state.account, 'send'));
+$('account-receive').addEventListener('click', () => openAccount(state.account, 'receive'));
 
 $('save-settings').addEventListener('click', async () => {
   $('rules-error').textContent = '';
   const draft = state.draft;
   const add = draft.members.filter(m => m.isNew).map(m => ({ code: m.id, label: m.label }));
+  $('save-settings').disabled = true;
   try {
     const { operation } = await api('/api/policy', {
       network: draft.network, rules: draft.rules, add, remove: draft.removed,
@@ -1082,6 +1350,7 @@ $('save-settings').addEventListener('click', async () => {
     openApproval(operation, 'Applying the new settings…');
   } catch (error) {
     $('rules-error').textContent = friendly(error);
+    $('save-settings').disabled = false;
   }
 });
 
@@ -1106,6 +1375,7 @@ async function showRestore(operation) {
 }
 
 $('restore-cancel').addEventListener('click', () => $('restore').close());
+$('restore-close').addEventListener('click', () => $('restore').close());
 
 $('restore-form').addEventListener('submit', async event => {
   event.preventDefault();
@@ -1481,7 +1751,11 @@ async function settled(current, operation) {
       const account = await device.create(operation);
       toast(`Wallet ready: ${account.address.slice(0, 12)}…`);
     } else if (operation.kind === 'withdraw') {
-      // The quorum is complete; this browser is the only place that can sign it.
+      // A co-signer completes the quorum; only the vault owner's device can sign the coins away.
+      if (operation.walletOwner !== state.data?.me?.id || !device.holdsKeyFor(state.data?.wallet)) {
+        toast('Approved. The vault owner’s device will sign and send it.');
+        return refresh().catch(() => {});
+      }
       toast('Human verified. Signing on this device…');
       const { txid, receipt } = await device.send(operation);
       toast(`Sent. Transaction ${shortId(txid)} is on the network.`);
@@ -1491,6 +1765,17 @@ async function settled(current, operation) {
     } else if (operation.kind === 'recovery') {
       if (state.recoveryIntent === 'restore') await showRestore(operation);
       else await showPhrase(operation);
+    } else if (operation.kind === 'invite') {
+      // The code exists only once the approvals have landed, so it comes back with the settled
+      // operation; if that raced, the vault view has it a moment later.
+      let code = operation.inviteCode;
+      if (!code) {
+        const data = await api('/api/wallet');
+        code = [...(data.history || []), ...(data.pending || [])].find(item => item.id === operation.id)?.inviteCode;
+      }
+      showInviteCode(code, operation.details?.invitee);
+    } else if (operation.kind === 'join') {
+      toast('You are a signer on that vault now. Its requests will appear here.');
     } else if (operation.kind === 'attestation') {
       const { attestation } = await device.rotateAttestation(operation);
       toast(attestation.epoch === 1

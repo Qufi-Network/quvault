@@ -72,6 +72,13 @@ const SQL = {
              WHERE wallet_user_id = $3 AND member_id = $4`,
   bindPalmId: 'UPDATE members SET palm_id = $1 WHERE wallet_user_id = $2 AND member_id = $3 AND palm_id IS NULL',
   deleteMember: 'DELETE FROM members WHERE wallet_user_id = $1 AND member_id = $2 AND is_owner = false',
+
+  insertInvite: `INSERT INTO invites (code, wallet_user_id, network, label, created_by, created_at, expires_at, status)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, 'open')`,
+  inviteByCode: `SELECT * FROM invites WHERE code = $1`,
+  openInvitesOf: `SELECT * FROM invites WHERE wallet_user_id = $1 AND status = 'open' AND expires_at > $2 ORDER BY created_at DESC`,
+  useInvite: `UPDATE invites SET status = 'used', used_by = $1, used_at = $2 WHERE code = $3 AND status = 'open'`,
+  cancelInvite: `UPDATE invites SET status = 'cancelled' WHERE code = $1 AND wallet_user_id = $2 AND status = 'open'`,
   // Erasing a vault: approvals hang off operations, so they go first.
   deleteApprovalsOfWallet: 'DELETE FROM approvals WHERE operation_id IN (SELECT id FROM operations WHERE wallet_user_id = $1)',
   deleteOperationsOfWallet: 'DELETE FROM operations WHERE wallet_user_id = $1',
@@ -337,10 +344,14 @@ export function createApp(options) {
       approvalUrl: approvals.find(a => a.user_id === me.id).status === 'open'
         ? approvals.find(a => a.user_id === me.id).approval_url : null,
     } : null,
+    // Waiting for the palm of whoever is reading this: the one thing a dashboard must shout about.
+    needsYou: op.status === 'collecting' && approvals.find(a => a.user_id === me?.id)?.status !== 'approved',
     txid: op.txid,
     error: op.error,
     // Whether a signed record of the human authorisation exists for this request.
     humanVerified: Boolean(op.human_authorization),
+    // Present on an approved invitation: the code to pass to the person invited.
+    inviteCode: op.kind === 'invite' && op.payload ? (JSON.parse(op.payload).code ?? null) : null,
     // Which account the request is about, so the browser knows what to derive or to sign with.
     network: op.network ?? (op.kind === 'account' && op.payload ? JSON.parse(op.payload).network : null),
     startedBy: op.started_by,
@@ -625,6 +636,8 @@ export function createApp(options) {
         : op.kind === 'policy' ? await applyPolicy(op)
         // Recovery and new accounts do nothing here: finishing them lets the owner's device
         // open the phrase, or derive the new network's address.
+        : op.kind === 'invite' ? await issueInvite(op)
+        : op.kind === 'join' ? await acceptInvite(op)
         : op.kind === 'upgrade' ? await prepareUpgrade(op)
         // Erasing happens when the owner's browser confirms it, so the key is cleared there too.
         : op.kind === 'reset' ? { txid: null }
@@ -1194,6 +1207,122 @@ export function createApp(options) {
     return { attestation: attestationView(await one('walletOf', user.id)) };
   }
 
+  const INVITE_SECONDS = 7 * 24 * 3600;
+
+  /**
+   * An invitation to sign for one account. The quorum that could change the signers is the
+   * quorum that authorises this; afterwards the code itself is what the invited person needs,
+   * together with their own palm. The code is generated when the approvals land, not before.
+   */
+  async function requestInvite({ user, body }) {
+    requirePalmReady();
+    const wallet = await one('walletOf', user.id);
+    if (!wallet) throw new HttpError(409, 'Create the vault first.');
+    const networkId = String(body.network ?? 'bitcoin');
+    const network = NETWORKS[networkId];
+    if (!network) throw new HttpError(400, 'That is not one of the networks here.');
+    const account = await one('accountOn', user.id, networkId);
+    if (!account) throw new HttpError(409, `This vault has no ${network.label} account.`);
+    const label = String(body.label ?? '').replace(/\s+/g, ' ').trim().slice(0, 40);
+    if (!label) throw new HttpError(400, 'Give the person a name so the others know who they are.');
+
+    const { required, signers } = await changeQuorum(user.id, networkId);
+    const statement = `Invite ${label} to approve for my ${network.label} account`;
+    const details = {
+      action: 'invite a signer',
+      network: `${network.label} ${network.chain}`,
+      invitee: label,
+      effect: 'whoever redeems the code with their own palm becomes a signer',
+      signers_after: String(signers.length + 1),
+      expires: '7 days',
+    };
+    const op = await newOperation({
+      walletOwnerId: user.id, user, kind: 'invite', statement, details,
+      payload: { network: networkId, label }, required, networkId,
+    });
+    return { operation: operationView(op, [], user) };
+  }
+
+  /** Once approved, the code exists. It is written into the operation so the owner can read it. */
+  async function issueInvite(op) {
+    const payload = JSON.parse(op.payload);
+    const code = `QV-${randomId(6).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6)}-${randomId(6).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6)}`;
+    const time = now();
+    await query('insertInvite', code, op.wallet_user_id, payload.network, payload.label, op.started_by, time, time + INVITE_SECONDS);
+    await query('setPayload', JSON.stringify({ ...payload, code, expiresAt: time + INVITE_SECONDS }), op.id);
+    return { txid: null };
+  }
+
+  /** The invited person redeems a code with their own palm, and joins on approval. */
+  async function requestJoin({ user, body }) {
+    requirePalmReady();
+    const code = String(body.code ?? '').trim().toUpperCase();
+    const invite = await one('inviteByCode', code);
+    if (!invite || invite.status !== 'open') throw new HttpError(404, 'That invitation code is not open. Ask for a new one.');
+    if (invite.expires_at <= now()) throw new HttpError(409, 'That invitation has expired. Ask for a new one.');
+    if (invite.wallet_user_id === user.id) throw new HttpError(409, 'That is an invitation to your own vault.');
+    if (await one('memberIn', invite.wallet_user_id, user.id)) throw new HttpError(409, 'You already sign for that vault.');
+
+    const wallet = await one('walletOf', invite.wallet_user_id);
+    const network = NETWORKS[invite.network];
+    const statement = `Join ${wallet ? wallet.address.slice(0, 10) : 'a'}… as a signer for its ${network?.label ?? invite.network} account`;
+    const details = {
+      action: 'join as a signer',
+      network: `${network?.label ?? invite.network} ${network?.chain ?? ''}`.trim(),
+      invited_as: invite.label,
+      effect: 'your palm can approve transactions for that account from now on',
+    };
+    // Only the invited person's own palm: the vault already authorised the invitation itself.
+    const op = await newOperation({
+      walletOwnerId: invite.wallet_user_id, user, kind: 'join', statement, details,
+      payload: { code, network: invite.network, label: invite.label }, required: 1, networkId: invite.network,
+    });
+    return { operation: operationView(op, [], user) };
+  }
+
+  /** Joining, once that palm lands: onto the roster, onto the account, and the code is spent. */
+  async function acceptInvite(op) {
+    const payload = JSON.parse(op.payload);
+    const invite = await one('inviteByCode', payload.code);
+    if (!invite || invite.status !== 'open') throw new HttpError(409, 'That invitation is no longer open.');
+    const joiner = await one('userById', op.started_by);
+    const time = now();
+    const [account, members] = await Promise.all([
+      one('accountOn', op.wallet_user_id, payload.network), all('membersOf', op.wallet_user_id),
+    ]);
+    if (!account) throw new HttpError(409, 'That account no longer exists.');
+    const signers = [...new Set([...signersOf(account, members), joiner.id])];
+
+    await transaction(async q => {
+      const used = await q('useInvite', joiner.id, time, payload.code);
+      if (!used.count) throw new HttpError(409, 'That invitation was already used.');
+      await q('insertMember', op.wallet_user_id, joiner.id, payload.label, false, time);
+      await q('setAccountPolicy', account.policy ?? JSON.stringify(DEFAULT_POLICY), JSON.stringify(signers), op.wallet_user_id, payload.network);
+    });
+    await assignPalmId(op.wallet_user_id, joiner.id);
+    return { txid: null };
+  }
+
+  /** The invitations this vault has out, so the owner can pass the code on again or cancel it. */
+  async function listInvites({ user }) {
+    const rows = await all('openInvitesOf', user.id, now());
+    return {
+      invites: rows.map(row => ({
+        code: row.code,
+        network: row.network,
+        label: row.label,
+        createdAt: row.created_at,
+        expiresAt: row.expires_at,
+      })),
+    };
+  }
+
+  async function cancelInvite({ user, body }) {
+    const cancelled = await query('cancelInvite', String(body.code ?? '').trim().toUpperCase(), user.id);
+    if (!cancelled.count) throw new HttpError(404, 'That invitation is not open.');
+    return { ok: true };
+  }
+
   /** Asks for the palm approvals that move a server-held vault into the owner's browser. */
   async function requestUpgrade({ user }) {
     requirePalmReady();
@@ -1404,7 +1533,11 @@ export function createApp(options) {
   async function ownOperation(id, user) {
     const op = await one('operationById', id);
     if (!op) throw new HttpError(404, 'Request not found.');
-    const allowed = op.wallet_user_id === user.id || await one('memberIn', op.wallet_user_id, user.id);
+    // The vault owner, anyone on its roster, and whoever started the request — an invited
+    // person is none of the first two until their palm has landed.
+    const allowed = op.wallet_user_id === user.id
+      || op.started_by === user.id
+      || await one('memberIn', op.wallet_user_id, user.id);
     if (!allowed) throw new HttpError(404, 'Request not found.');
     return op;
   }
@@ -1415,7 +1548,10 @@ export function createApp(options) {
     const op = await ownOperation(id, user);
     if (op.status !== 'collecting') throw new HttpError(409, 'This request is no longer collecting approvals.');
     if (op.expires_at <= now()) throw new HttpError(409, 'This request has expired.');
-    if (op.kind !== 'create') {
+    if (op.kind === 'join') {
+      // The vault authorised the invitation; this palm is the invited person proving it is them.
+      if (op.started_by !== user.id) throw new HttpError(403, 'Only the invited person can accept this.');
+    } else if (op.kind !== 'create') {
       const member = await one('memberIn', op.wallet_user_id, user.id);
       if (!member) throw new HttpError(403, 'You are not an approver for this wallet.');
       if (op.network) {
@@ -1575,6 +1711,10 @@ export function createApp(options) {
     { method: 'POST', path: '/api/wallet/register', handler: registerWallet, auth: true },
     { method: 'POST', path: '/api/wallet/upgrade/approval', handler: requestUpgrade, auth: true },
     { method: 'POST', path: '/api/wallet/upgrade', handler: completeUpgrade, auth: true },
+    { method: 'POST', path: '/api/invites/approval', handler: requestInvite, auth: true },
+    { method: 'GET', path: '/api/invites', handler: listInvites, auth: true },
+    { method: 'POST', path: '/api/invites/cancel', handler: cancelInvite, auth: true },
+    { method: 'POST', path: '/api/invites/join', handler: requestJoin, auth: true },
     { method: 'POST', path: '/api/attestation/approval', handler: requestAttestationRotation, auth: true },
     { method: 'POST', path: '/api/attestation/register', handler: registerAttestationKey, auth: true },
     { method: 'POST', path: '/api/wallet/reset/approval', handler: requestReset, auth: true },

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>QuVault</title>
-  <meta name="description" content="A testnet Bitcoin wallet sealed with post-quantum encryption and spendable only with palm approvals.">
+  <meta name="description" content="A testnet Bitcoin vault whose transactions are bound to a palm approval and sealed with post-quantum encryption.">
   <link rel="icon" href="/qufi-mark.png" type="image/png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -17,7 +17,7 @@
 
   <header class="top">
     <a class="mark" href="/">
-      <img src="/qufi-mark.png" alt="" width="34" height="34">
+      <img src="/qufi-mark.png" alt="" width="30" height="30">
       <span>QuVault</span>
     </a>
     <div class="who" id="who" hidden>
@@ -42,10 +42,10 @@
     <section class="pitch">
       <p class="eyebrow">Bitcoin <span id="pitch-network">testnet4</span> · Veyns palm</p>
       <h1>Your coins move<br><em>only for your hand.</em></h1>
-      <p class="lede">The wallet key is created under a palm scan and sealed with post-quantum encryption. Every withdrawal needs palm approvals bound to that exact transaction — one palm, or several, by your own rules.</p>
+      <p class="lede">Every withdrawal is bound to a palm approval covering that exact transaction, and your vault signs the record of it with a key the server never has.</p>
       <ul class="facts">
-        <li><b>ML-KEM-768 + X25519</b> seal the stored key</li>
-        <li><b>Rules by amount</b> decide how many palms a spend needs</li>
+        <li><b>Human verified</b> — the palm approves the exact transaction, not a session</li>
+        <li><b>Post-quantum</b> — ML-DSA-65 authorisation, ML-KEM-768 at rest</li>
         <li><b>Test coins only</b>, no real value</li>
       </ul>
     </section>
@@ -59,59 +59,73 @@
   </main>
 
   <main id="view-create" class="view narrow" hidden>
+    <section class="card alert" id="signer-alert" hidden>
+      <div class="alert-body">
+        <p class="eyebrow">Waiting for you</p>
+        <h2 id="signer-alert-title">Something needs your palm</h2>
+        <p class="quiet" id="signer-alert-what"></p>
+      </div>
+    </section>
     <p class="eyebrow">First step</p>
     <h1>Create your vault</h1>
     <p class="lede">A new key is made in this browser and never leaves it. The palm scan you do now binds the vault to your account and releases the secret that encrypts the key on this device.</p>
     <ul class="facts">
       <li>Nobody can spend from it without a palm approval</li>
       <li>Twelve words restore it anywhere, shown only after two palm scans</li>
-      <li>You can add other approvers and amount rules afterwards</li>
-      <li>You can receive coins straight away</li>
+      <li>You can add other signers and amount rules afterwards</li>
     </ul>
-    <label for="create-label">Your name on this wallet</label>
+    <label for="create-label">Your name on this vault</label>
     <input id="create-label" maxlength="40" placeholder="Alex" autocomplete="nickname">
-    <button class="btn brand wide" id="create-wallet" type="button">Create wallet with a palm scan</button>
+    <button class="btn brand wide" id="create-wallet" type="button">Create vault with a palm scan</button>
     <p class="error" id="create-error" role="alert"></p>
+    <p class="fine">Invited to sign for someone else? <button class="link" id="join-vault-empty" type="button">Enter their invitation code</button></p>
     <div id="create-pending"></div>
   </main>
 
   <main id="view-wallet" class="shell" hidden>
-    <nav class="side" aria-label="Wallet sections">
-      <p class="side-label">Menu</p>
-      <button class="tab" data-tab="dashboard" type="button">
-        <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="M10 3v7l4.5 3"/></svg>
-        Dashboard
+    <nav class="side" aria-label="Vault navigation">
+      <p class="side-label">Vault</p>
+      <button class="nav" data-nav="dashboard" type="button">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="6" height="6" rx="1.5"/><rect x="11" y="3" width="6" height="6" rx="1.5"/><rect x="3" y="11" width="6" height="6" rx="1.5"/><rect x="11" y="11" width="6" height="6" rx="1.5"/></svg>
+        <span>Overview</span>
       </button>
-      <button class="tab" data-tab="send" type="button">
-        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 15.5V4.5"/><path d="M5.5 9 10 4.5 14.5 9"/></svg>
-        Send funds
-      </button>
-      <button class="tab" data-tab="receive" type="button">
-        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4.5v11"/><path d="M14.5 11 10 15.5 5.5 11"/></svg>
-        Receive funds
-      </button>
-      <button class="tab" data-tab="settings" type="button">
-        <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="2.6"/><path d="M10 2.6v2M10 15.4v2M17.4 10h-2M4.6 10h-2M15.2 4.8l-1.4 1.4M6.2 13.8l-1.4 1.4M15.2 15.2l-1.4-1.4M6.2 6.2 4.8 4.8"/></svg>
-        Settings
+      <button class="nav" data-nav="security" type="button">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.6 4.4 5v4.3c0 3.3 2.3 6.4 5.6 7.4 3.3-1 5.6-4.1 5.6-7.4V5Z"/><path d="M7.6 10.2 9.3 12l3.2-3.4"/></svg>
+        <span>Security</span>
       </button>
 
       <div class="side-head spaced">
         <p class="side-label">Accounts</p>
-        <button class="add-account" id="add-account" type="button" aria-label="Add an account" title="Add an account">+</button>
+        <button class="icon-btn" id="add-account" type="button" aria-label="Add an account" title="Add an account">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 5v10M5 10h10"/></svg>
+        </button>
       </div>
-      <div id="account-list"></div>
-      <p class="side-note">Every account comes from the same recovery phrase and answers to the same palm rules.</p>
+      <div id="account-list" class="account-list"></div>
+      <p class="side-note">Every account comes from the same recovery phrase and keeps its own signers and thresholds.</p>
     </nav>
 
     <div class="panes">
+      <!-- vault: overview -->
       <section class="pane" data-pane="dashboard">
         <header class="pane-head">
           <div>
+            <p class="eyebrow">Vault</p>
             <h1 class="pane-title" id="greeting">Good day.</h1>
             <p class="quiet" id="greeting-note"></p>
           </div>
           <div class="ranges" id="ranges" role="group" aria-label="Chart range"></div>
         </header>
+
+        <section class="lane no-top" id="alert-lane" hidden>
+          <div class="card alert">
+            <div class="alert-body">
+              <p class="eyebrow">Waiting for you</p>
+              <h2 id="alert-title">A transfer is waiting for your palm</h2>
+              <p class="quiet" id="alert-what"></p>
+            </div>
+            <button class="btn brand" id="alert-go" type="button">Review it</button>
+          </div>
+        </section>
 
         <section class="lane no-top" id="legacy-lane" hidden>
           <div class="card notice">
@@ -153,153 +167,222 @@
         </section>
 
         <section class="lane">
-          <header class="lane-head"><h2>Activity</h2></header>
+          <header class="lane-head"><h2>Activity</h2><p class="quiet">Everything this vault has done.</p></header>
           <ol class="ledger" id="history"></ol>
         </section>
       </section>
 
-      <section class="pane" data-pane="send" hidden>
+      <!-- vault: security -->
+      <section class="pane" data-pane="security" hidden>
         <header class="pane-head">
           <div>
-            <p class="eyebrow account-name">Bitcoin account</p>
-            <h1 class="pane-title">Send funds</h1>
-          </div>
-          <p class="quiet" id="fee-note"></p>
-        </header>
-
-        <form id="send-form" class="card send">
-          <label for="send-to">To address</label>
-          <input id="send-to" autocomplete="off" spellcheck="false" placeholder="tb1…" required>
-          <div class="two">
-            <div>
-              <label for="send-amount">Amount <span class="optional">satoshis</span></label>
-              <input id="send-amount" inputmode="numeric" placeholder="50000">
-            </div>
-            <div>
-              <label for="send-fee">Fee rate <span class="optional">sat/vB, optional</span></label>
-              <input id="send-fee" inputmode="numeric" placeholder="auto">
-            </div>
-          </div>
-          <label class="check"><input type="checkbox" id="send-max"> <span>Send everything (the fee comes out of the amount)</span></label>
-          <button class="btn brand wide" type="submit">Review withdrawal</button>
-          <p class="error" id="send-error" role="alert"></p>
-        </form>
-
-        <p class="error" id="lineage-warning" role="alert" hidden></p>
-        <p class="fine spread" id="send-rule-note"></p>
-        <p class="quiet" id="send-soon" hidden></p>
-        <div class="requests" id="send-pending"></div>
-      </section>
-
-      <section class="pane" data-pane="receive" hidden>
-        <header class="pane-head">
-          <div>
-            <p class="eyebrow account-name">Bitcoin account</p>
-            <h1 class="pane-title">Receive funds</h1>
+            <p class="eyebrow">Vault</p>
+            <h1 class="pane-title">Security</h1>
+            <p class="quiet">The keys behind this vault, and how to end it.</p>
           </div>
         </header>
 
-        <div class="card receive wide-card">
-          <div class="qr" id="qr"></div>
-          <div class="receive-body">
-            <p class="eyebrow">Your address</p>
-            <p class="address" id="address"></p>
-            <div class="row">
-              <button class="btn ghost small" id="copy-address" type="button">Copy address</button>
-              <a class="btn ghost small" id="explorer-link" target="_blank" rel="noopener">Explorer</a>
-            </div>
-            <p class="fine" id="receive-hint">Send test coins here from a testnet4 faucet. They appear after one confirmation, and receiving never needs a palm scan.</p>
-            <p class="quiet" id="receive-note"></p>
-          </div>
-        </div>
-      </section>
-
-      <section class="pane" data-pane="settings" hidden>
-        <header class="pane-head">
-          <div>
-            <p class="eyebrow account-name">Bitcoin account</p>
-            <h1 class="pane-title">Settings</h1>
-          </div>
-          <p class="quiet" id="settings-required"></p>
-        </header>
-
-        <section class="lane no-top">
-          <header class="lane-head"><h2>Signers</h2><p class="quiet" id="signers-note">Everyone who can approve for this account with their palm.</p></header>
-          <div class="card settings-card">
-            <div class="member-rows" id="signer-rows"></div>
-            <div class="two">
-              <div>
-                <label for="new-member-code">Add by approver code</label>
-                <input id="new-member-code" autocomplete="off" spellcheck="false" placeholder="their code">
-              </div>
-              <div>
-                <label for="new-member-label">Their name</label>
-                <input id="new-member-label" maxlength="40" placeholder="Bob">
-              </div>
-            </div>
-            <button class="btn ghost small" id="add-member" type="button">Add signer</button>
-            <p class="fine">Your approver code: <code id="my-code"></code> <button class="link" id="copy-code" type="button">Copy</button> — give it to an account owner so they can add you.</p>
-          </div>
-        </section>
-
-        <section class="lane">
-          <header class="lane-head">
-            <h2>Approval threshold</h2>
-            <p class="quiet">How many palm prints each amount needs.</p>
-          </header>
-          <div class="card settings-card">
-            <div class="presets" id="presets"></div>
-            <div class="rule-rows" id="rule-rows"></div>
-            <button class="link" id="add-rule" type="button">Add an amount step</button>
-            <p class="error" id="rules-error" role="alert"></p>
-            <div class="sheet-foot">
-              <p class="fine" id="change-cost"></p>
-              <button class="btn brand small" id="save-settings" type="button">Propose changes</button>
-            </div>
-          </div>
-        </section>
-
-        <section class="lane">
-          <header class="lane-head"><h2>This device and your phrase</h2></header>
-          <div class="card settings-card">
+        <div class="grid-2">
+          <section class="card stack">
+            <header class="card-head">
+              <h2>This device and your phrase</h2>
+              <span class="chip soft" id="device-chip">&mdash;</span>
+            </header>
             <p class="quiet" id="device-state"></p>
             <div class="row">
-              <button class="btn ghost small" id="show-phrase" type="button">Show recovery phrase</button>
-              <button class="btn ghost small" id="restore-device" type="button">Restore on this device</button>
-              <button class="btn brand small" id="move-vault" type="button" hidden>Move this vault into this browser</button>
+              <button class="btn ghost sm" id="show-phrase" type="button">Show recovery phrase</button>
+              <button class="btn ghost sm" id="restore-device" type="button">Restore on this device</button>
+              <button class="btn brand sm" id="move-vault" type="button" hidden>Move this vault into this browser</button>
             </div>
             <p class="fine">Both keys live in this browser and never reach the server: the one that spends, and the one that signs your authorisation records. Showing or restoring the phrase takes two palm scans, one per hand.</p>
             <p class="error" id="device-error" role="alert"></p>
-            <div class="detail-row"><span class="quiet">Authorisation key</span><code id="attestation-key"></code></div>
+          </section>
+
+          <section class="card stack">
+            <header class="card-head">
+              <h2>Authorisation key</h2>
+              <span class="chip soft">ML-DSA-65</span>
+            </header>
+            <p class="quiet">Signs the record that proves a palm approved a transaction. The server holds only its public half.</p>
+            <div class="kv"><span>Key</span><code id="attestation-key">&mdash;</code></div>
             <div class="row">
-              <button class="btn ghost small" id="rotate-attestation" type="button">Replace the authorisation key</button>
+              <button class="btn ghost sm" id="rotate-attestation" type="button">Replace the authorisation key</button>
+            </div>
+          </section>
+
+          <section class="card stack">
+            <header class="card-head"><h2>Signing for others</h2></header>
+            <p class="quiet">Someone invited you to approve for their vault? Redeem the code they sent you with your own palm.</p>
+            <div class="row"><button class="btn ghost sm" id="join-vault" type="button">Enter an invitation code</button></div>
+          </section>
+
+          <section class="card stack">
+            <header class="card-head"><h2>Your approver code</h2></header>
+            <p class="quiet">Give this to a vault owner so they can add you as a signer.</p>
+            <div class="kv"><span>Code</span><code id="my-code">&mdash;</code></div>
+            <div class="row"><button class="btn ghost sm" id="copy-code" type="button">Copy code</button></div>
+          </section>
+
+          <section class="card stack danger-card">
+            <header class="card-head"><h2>Start over</h2></header>
+            <p class="quiet" id="reset-note"></p>
+            <div class="row">
+              <button class="btn ghost sm danger" id="reset-vault" type="button">Erase this vault</button>
+            </div>
+            <p class="error" id="reset-error" role="alert"></p>
+          </section>
+        </div>
+      </section>
+
+      <!-- one account, with its own tabs -->
+      <section class="pane" data-pane="account" hidden>
+        <header class="pane-head account-head">
+          <div class="account-title">
+            <span class="account-mark big" id="account-mark">₿</span>
+            <div>
+              <h1 class="pane-title" id="account-title">Bitcoin</h1>
+              <p class="quiet" id="account-subtitle"></p>
+            </div>
+          </div>
+          <div class="row">
+            <span class="chip soft" id="account-chip">&mdash;</span>
+            <a class="btn ghost sm" id="account-explorer" target="_blank" rel="noopener">Explorer</a>
+          </div>
+        </header>
+
+        <div class="tabs" id="account-tabs" role="tablist" aria-label="Account sections"></div>
+
+        <section class="subpane" data-sub="overview">
+          <div class="grid-2">
+            <section class="card stack balance-card">
+              <p class="eyebrow">Balance</p>
+              <p class="amount"><span id="account-balance">0.00000000</span><span class="unit" id="account-unit">tBTC</span></p>
+              <p class="quiet small" id="account-fiat"></p>
+              <div class="row">
+                <button class="btn brand sm" id="account-send" type="button">Send</button>
+                <button class="btn ghost sm" id="account-receive" type="button">Receive</button>
+              </div>
+            </section>
+
+            <section class="card stack">
+              <header class="card-head"><h2>Approval rules</h2><span class="chip soft" id="rules-chip">&mdash;</span></header>
+              <p class="quiet" id="rules-summary"></p>
+              <div class="signer-chips" id="signer-chips"></div>
+              <div class="row"><button class="btn ghost sm" id="open-rules" type="button">Manage signers and rules</button></div>
+            </section>
+          </div>
+
+          <section class="lane">
+            <header class="lane-head"><h2>Account</h2></header>
+            <div class="card kv-card">
+              <div class="kv"><span>Receiving address</span><code id="account-address"></code></div>
+              <div class="kv"><span>Network</span><b id="account-network"></b></div>
+              <div class="kv"><span>Key protection</span><b id="account-protection"></b></div>
+            </div>
+          </section>
+
+          <section class="lane" id="account-pending-lane" hidden>
+            <header class="lane-head"><h2>Waiting for approval</h2></header>
+            <div class="requests" id="account-pending"></div>
+          </section>
+        </section>
+
+        <section class="subpane" data-sub="send" hidden>
+          <p class="error" id="lineage-warning" role="alert" hidden></p>
+          <p class="notice-line" id="send-soon" hidden></p>
+
+          <form id="send-form" class="card stack send">
+            <header class="card-head">
+              <h2>Send funds</h2>
+              <span class="quiet small" id="fee-note"></span>
+            </header>
+            <div class="field-row">
+              <label for="send-to">To address</label>
+              <input id="send-to" autocomplete="off" spellcheck="false" placeholder="tb1…" required>
+            </div>
+            <div class="two">
+              <div class="field-row">
+                <label for="send-amount">Amount <span class="optional">satoshis</span></label>
+                <input id="send-amount" inputmode="numeric" placeholder="50000">
+              </div>
+              <div class="field-row">
+                <label for="send-fee">Fee rate <span class="optional">sat/vB, optional</span></label>
+                <input id="send-fee" inputmode="numeric" placeholder="auto">
+              </div>
+            </div>
+            <label class="check"><input type="checkbox" id="send-max"> <span>Send everything (the fee comes out of the amount)</span></label>
+            <p class="fine" id="send-rule-note"></p>
+            <div class="card-foot">
+              <p class="error" id="send-error" role="alert"></p>
+              <button class="btn brand" type="submit">Review withdrawal</button>
+            </div>
+          </form>
+
+          <div class="requests" id="send-pending"></div>
+        </section>
+
+        <section class="subpane" data-sub="receive" hidden>
+          <div class="card receive wide-card">
+            <div class="qr" id="qr"></div>
+            <div class="receive-body">
+              <p class="eyebrow">Your address</p>
+              <p class="address" id="address"></p>
+              <div class="row">
+                <button class="btn ghost sm" id="copy-address" type="button">Copy address</button>
+                <a class="btn ghost sm" id="explorer-link" target="_blank" rel="noopener">Open in explorer</a>
+              </div>
+              <p class="fine" id="receive-hint"></p>
+              <p class="quiet" id="receive-note"></p>
             </div>
           </div>
         </section>
-        <section class="lane">
-          <header class="lane-head"><h2>Start over</h2><p class="quiet">Erase this vault and begin again.</p></header>
-          <div class="card settings-card">
-            <p class="quiet" id="reset-note"></p>
-            <button class="btn ghost small danger" id="reset-vault" type="button">Erase this vault and start over</button>
-            <p class="error" id="reset-error" role="alert"></p>
-          </div>
-        </section>
 
-        <section class="lane">
-          <header class="lane-head"><h2>Selected account</h2></header>
-          <div class="card settings-card">
-            <div class="detail-row"><span class="quiet">Network</span><b id="settings-network"></b></div>
-            <div class="detail-row"><span class="quiet">Address</span><code id="settings-address"></code></div>
-            <div class="detail-row"><span class="quiet">Key protection</span><b id="settings-protection"></b></div>
+        <section class="subpane" data-sub="rules" hidden>
+          <div class="grid-2">
+            <section class="card stack">
+              <header class="card-head">
+                <h2>Signers</h2>
+                <button class="btn ghost sm" id="add-member" type="button">Invite a signer</button>
+              </header>
+              <p class="quiet small" id="signers-note"></p>
+              <div class="member-rows" id="signer-rows"></div>
+              <div class="invites" id="invite-rows"></div>
+            </section>
+
+            <section class="card stack">
+              <header class="card-head">
+                <h2>Threshold</h2>
+                <span class="chip soft" id="settings-required">&mdash;</span>
+              </header>
+              <p class="quiet small">How many palms each amount needs before it can leave this account.</p>
+              <div class="seg" id="presets" role="group" aria-label="Palms for every amount"></div>
+              <div class="rule-rows" id="rule-rows"></div>
+              <button class="link" id="add-rule" type="button">+ Add an amount step</button>
+              <p class="quiet small" id="threshold-summary"></p>
+              <p class="error" id="rules-error" role="alert"></p>
+            </section>
           </div>
         </section>
       </section>
+    </div>
+
+    <div class="save-bar" id="save-bar" hidden>
+      <p class="save-what" id="change-cost"></p>
+      <div class="row">
+        <button class="btn ghost sm" id="discard-settings" type="button">Discard</button>
+        <button class="btn brand sm" id="save-settings" type="button">Propose changes</button>
+      </div>
     </div>
   </main>
 
   <dialog id="approval" aria-labelledby="approval-statement">
     <div class="sheet">
-      <p class="eyebrow pulseline" id="approval-kind">Palm approval</p>
+      <header class="sheet-head">
+        <p class="eyebrow pulseline" id="approval-kind">Palm approval</p>
+        <button class="icon-btn close" id="approval-cancel" type="button" aria-label="Cancel">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 5.5 9 9M14.5 5.5l-9 9"/></svg>
+        </button>
+      </header>
       <p class="statement" id="approval-statement"></p>
       <dl class="details" id="approval-details"></dl>
       <p class="quorum" id="approval-quorum"></p>
@@ -311,86 +394,164 @@
       </div>
 
       <p class="error" id="approval-error" role="alert"></p>
-      <div class="sheet-foot">
+      <footer class="sheet-foot">
         <p class="fine">Veyns shows this statement word for word. The signature covers this exact action.</p>
-        <button class="link" id="approval-cancel" type="button">Cancel</button>
-      </div>
+      </footer>
     </div>
   </dialog>
-
 
   <dialog id="new-account" aria-labelledby="new-account-title">
     <div class="sheet">
-      <p class="eyebrow" id="new-account-title">Add an account</p>
+      <header class="sheet-head">
+        <p class="eyebrow" id="new-account-title">Add an account</p>
+        <button class="icon-btn close" id="new-account-cancel" type="button" aria-label="Close">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 5.5 9 9M14.5 5.5l-9 9"/></svg>
+        </button>
+      </header>
       <ol class="wizard-steps" id="wizard-steps"></ol>
       <div id="wizard"></div>
       <p class="error" id="new-account-error" role="alert"></p>
-      <div class="sheet-foot">
-        <button class="link" id="new-account-cancel" type="button">Cancel</button>
-        <div class="row">
-          <button class="btn ghost small" id="wizard-back" type="button">Back</button>
-          <button class="btn brand small" id="wizard-next" type="button">Continue</button>
-        </div>
-      </div>
+      <footer class="sheet-foot end">
+        <button class="btn ghost sm" id="wizard-back" type="button">Back</button>
+        <button class="btn brand sm" id="wizard-next" type="button">Continue</button>
+      </footer>
     </div>
   </dialog>
 
-  <dialog id="reset" aria-labelledby="reset-title">
-    <form class="sheet" id="reset-form">
-      <p class="eyebrow" id="reset-title">Erase this vault</p>
-      <p class="statement">This cannot be undone.</p>
-      <dl class="details" id="reset-details"></dl>
-      <div id="reset-coins">
-        <label for="reset-to">Send the coins here first <span class="optional">a testnet4 address</span></label>
-        <input id="reset-to" autocomplete="off" spellcheck="false" placeholder="tb1…">
-        <label class="check"><input type="checkbox" id="reset-accept"> <span>Or erase anyway, and let those coins go</span></label>
+  <dialog id="invite" aria-labelledby="invite-title">
+    <form class="sheet" id="invite-form">
+      <header class="sheet-head">
+        <p class="eyebrow" id="invite-title">Invite a signer</p>
+        <button class="icon-btn close" id="invite-cancel" type="button" aria-label="Close">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 5.5 9 9M14.5 5.5l-9 9"/></svg>
+        </button>
+      </header>
+      <p class="fine" id="invite-explains"></p>
+      <div class="field-row">
+        <label for="invite-name">Their name</label>
+        <input id="invite-name" maxlength="40" placeholder="Bob" autocomplete="off">
       </div>
-      <p class="error" id="reset-dialog-error" role="alert"></p>
-      <div class="sheet-foot">
-        <button class="link" id="reset-cancel" type="button">Keep the vault</button>
-        <button class="btn brand small" type="submit">Erase with a palm scan</button>
+      <p class="error" id="invite-error" role="alert"></p>
+      <footer class="sheet-foot end">
+        <button class="btn ghost sm" id="invite-close" type="button">Cancel</button>
+        <button class="btn brand sm" type="submit">Create invitation with a palm scan</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="invite-code" aria-labelledby="invite-code-title">
+    <div class="sheet">
+      <header class="sheet-head">
+        <p class="eyebrow verified" id="invite-code-title">Invitation ready</p>
+        <button class="icon-btn close" id="invite-code-done" type="button" aria-label="Close">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 5.5 9 9M14.5 5.5l-9 9"/></svg>
+        </button>
+      </header>
+      <p class="statement" id="invite-code-for">Send this code to them.</p>
+      <p class="code-block" id="invite-code-value">&mdash;</p>
+      <p class="fine">They enter it in QuVault and approve with their own palm. It works once, expires in seven days, and grants nothing until their palm has been scanned.</p>
+      <footer class="sheet-foot end">
+        <button class="btn ghost sm" id="invite-code-copy" type="button">Copy code</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <dialog id="join" aria-labelledby="join-title">
+    <form class="sheet" id="join-form">
+      <header class="sheet-head">
+        <p class="eyebrow" id="join-title">Join a vault</p>
+        <button class="icon-btn close" id="join-cancel" type="button" aria-label="Close">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 5.5 9 9M14.5 5.5l-9 9"/></svg>
+        </button>
+      </header>
+      <p class="fine">Type the invitation code you were sent. Your own palm scan is what accepts it, and nothing changes until it does.</p>
+      <div class="field-row">
+        <label for="join-code">Invitation code</label>
+        <input id="join-code" placeholder="QV-XXXXXX-XXXXXX" autocomplete="off" spellcheck="false">
       </div>
+      <p class="error" id="join-error" role="alert"></p>
+      <footer class="sheet-foot end">
+        <button class="btn ghost sm" id="join-close" type="button">Cancel</button>
+        <button class="btn brand sm" type="submit">Join with a palm scan</button>
+      </footer>
     </form>
   </dialog>
 
   <dialog id="receipt" aria-labelledby="receipt-title">
     <div class="sheet">
-      <p class="eyebrow verified" id="receipt-title">Human verified</p>
+      <header class="sheet-head">
+        <p class="eyebrow verified" id="receipt-title">Human verified</p>
+        <button class="icon-btn close" id="receipt-done" type="button" aria-label="Close">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 5.5 9 9M14.5 5.5l-9 9"/></svg>
+        </button>
+      </header>
       <p class="statement" id="receipt-headline">Transaction authorised.</p>
       <ul class="ticks" id="receipt-ticks"></ul>
       <dl class="details" id="receipt-details"></dl>
       <p class="fine">This record carries no biometric data. It says a palm approval covering this exact transaction was verified, and it is signed with ML-DSA-65 so anyone can check that for themselves.</p>
-      <div class="sheet-foot">
+      <footer class="sheet-foot">
         <button class="link" id="receipt-copy" type="button">Copy the record</button>
-        <button class="btn brand small" id="receipt-done" type="button">Done</button>
-      </div>
+      </footer>
     </div>
+  </dialog>
+
+  <dialog id="reset" aria-labelledby="reset-title">
+    <form class="sheet" id="reset-form">
+      <header class="sheet-head">
+        <p class="eyebrow danger-text" id="reset-title">Erase this vault</p>
+        <button class="icon-btn close" id="reset-cancel" type="button" aria-label="Keep the vault">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 5.5 9 9M14.5 5.5l-9 9"/></svg>
+        </button>
+      </header>
+      <p class="statement">This cannot be undone.</p>
+      <dl class="details" id="reset-details"></dl>
+      <div id="reset-coins">
+        <div class="field-row">
+          <label for="reset-to">Send the coins here first <span class="optional">a testnet4 address</span></label>
+          <input id="reset-to" autocomplete="off" spellcheck="false" placeholder="tb1…">
+        </div>
+        <label class="check"><input type="checkbox" id="reset-accept"> <span>Or erase anyway, and let those coins go</span></label>
+      </div>
+      <p class="error" id="reset-dialog-error" role="alert"></p>
+      <footer class="sheet-foot end">
+        <button class="btn ghost sm" id="reset-keep" type="button">Keep the vault</button>
+        <button class="btn brand sm danger-solid" type="submit">Erase with a palm scan</button>
+      </footer>
+    </form>
   </dialog>
 
   <dialog id="phrase" aria-labelledby="phrase-title">
     <div class="sheet">
-      <p class="eyebrow seal" id="phrase-title">Recovery phrase</p>
-      <p class="fine">Write these twelve words down on paper, in order. Anyone who sees them can spend this wallet. They are shown only after two palm scans, and they are the only way back if this browser is lost.</p>
+      <header class="sheet-head">
+        <p class="eyebrow seal" id="phrase-title">Recovery phrase</p>
+      </header>
+      <p class="fine">Write these twelve words down on paper, in order. Anyone who sees them can spend this vault. They are shown only after two palm scans, and they are the only way back if this browser is lost.</p>
       <ol class="words" id="phrase-words"></ol>
-      <div class="sheet-foot">
+      <footer class="sheet-foot end">
         <p class="fine">QuVault never sends these words anywhere.</p>
-        <button class="btn brand small" id="phrase-done" type="button">I have written it down</button>
-      </div>
+        <button class="btn brand sm" id="phrase-done" type="button">I have written it down</button>
+      </footer>
     </div>
   </dialog>
 
   <dialog id="restore" aria-labelledby="restore-title">
     <form class="sheet" id="restore-form">
-      <p class="eyebrow" id="restore-title">Restore on this device</p>
+      <header class="sheet-head">
+        <p class="eyebrow" id="restore-title">Restore on this device</p>
+        <button class="icon-btn close" id="restore-cancel" type="button" aria-label="Cancel">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 5.5 9 9M14.5 5.5l-9 9"/></svg>
+        </button>
+      </header>
       <p class="fine">Type the twelve words, separated by spaces. They stay in this browser.</p>
       <textarea id="restore-words" rows="3" spellcheck="false" autocomplete="off"></textarea>
       <p class="error" id="restore-error" role="alert"></p>
-      <div class="sheet-foot">
-        <button class="link" id="restore-cancel" type="button">Cancel</button>
-        <button class="btn brand small" type="submit">Restore</button>
-      </div>
+      <footer class="sheet-foot end">
+        <button class="btn ghost sm" id="restore-close" type="button">Cancel</button>
+        <button class="btn brand sm" type="submit">Restore</button>
+      </footer>
     </form>
   </dialog>
+
   <p class="toast" id="toast" role="status" aria-live="polite" hidden></p>
 </body>
 </html>
