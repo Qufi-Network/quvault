@@ -144,6 +144,15 @@ const SCHEMA = [
   'ALTER TABLE wallets ADD COLUMN IF NOT EXISTS attestation_at BIGINT',
 
   /*
+   * v10: which attestation key is authoritative is decided by a signed chain of registrations,
+   * not by a column. Epoch 1 signs its own registration; every later epoch is signed by the key
+   * it replaces. A rewritten row cannot promote a key that no previous key vouched for.
+   */
+  'ALTER TABLE wallets ADD COLUMN IF NOT EXISTS attestation_chain TEXT',
+  // The root of that chain, sealed with the server seed, which lives outside the database.
+  'ALTER TABLE wallets ADD COLUMN IF NOT EXISTS attestation_root_seal TEXT',
+
+  /*
    * Which kinds of operation exist is decided by the code that is running, so the constraint
    * is simply restated on every migration: one statement, every old name dropped, today's
    * list added. Versioned names were a trap — a later version dropping an earlier one made

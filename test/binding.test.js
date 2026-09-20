@@ -18,7 +18,7 @@ import { transactionDigest } from '../src/veyns.js';
 import { deriveAttestationKeys, signAuthorization, verifyAuthorization } from '../src/authorization.js';
 import { planDigest, signPlan as signInBrowser, makeMnemonic, jitterFrom, accountFrom, attestationKeys } from '../client/wallet.js';
 import { planSpend, signPlan } from '../src/bitcoin.js';
-import { DEST, start, ok, signedIn, palmApprove, walletFor, signAndSend, attestFor } from './harness.js';
+import { DEST, start, ok, signedIn, palmApprove, walletFor, signAndSend, attestFor, registrationFor } from './harness.js';
 
 const coins = [{ txid: 'a'.repeat(64), vout: 0, value: 500_000 }];
 const phrase = () => makeMnemonic({ serverRandom: new Uint8Array(crypto.randomBytes(32)), jitter: jitterFrom(['x']) });
@@ -181,7 +181,9 @@ test('the server cannot forge a receipt: it has only the public key', async t =>
     for (const probe of probes) assert.ok(!dump.includes(probe), `${table} holds attestation key material`);
   }
   const row = (await db.query('SELECT * FROM wallets WHERE user_id = $1', [alex.id])).rows[0];
-  assert.equal(row.attestation_public_key, alex.attestation.publicKeyBase64, 'only the public half is stored');
+  const stored = JSON.parse(row.attestation_chain);
+  assert.equal(stored.length, 1, 'the lineage is one link long');
+  assert.equal(stored[0].record.publicKey, alex.attestation.publicKeyBase64, 'only the public half is stored');
   assert.equal(row.sealed_key, null, 'and no wallet key either');
 
   // The best the server can do is sign with a key of its own. It does not verify.
@@ -195,7 +197,8 @@ test('the server cannot forge a receipt: it has only the public key', async t =>
   // Nor can it re-point the vault's registered key to one it controls without an approval.
   const impostor = deriveAttestationKeys(new Uint8Array(crypto.randomBytes(64)), 1);
   assert.equal((await alex.post('/api/attestation/register', {
-    operationId: operation.id, attestationPublicKey: impostor.publicKeyBase64, attestationEpoch: 2,
+    operationId: operation.id,
+    attestationRegistration: registrationFor({ vaultId: alex.address, keys: impostor, epoch: 2, previousKeys: impostor }),
   })).status, 409, 'a withdrawal is not an approved key replacement');
   assert.equal(ok(await alex.get('/api/wallet')).wallet.attestation.publicKey, alex.attestation.publicKeyBase64);
 });
@@ -313,12 +316,12 @@ test('replacing the attestation key takes a palm, and retires the old one', asyn
 
   // Not before the palm.
   assert.equal((await alex.post('/api/attestation/register', {
-    operationId: operation.id, attestationPublicKey: next.publicKeyBase64, attestationEpoch: 2,
+    operationId: operation.id, attestationRegistration: registrationFor({ vaultId: alex.address, keys: next, epoch: 2, previousKeys: old }),
   })).status, 409);
 
   await palmApprove(env, alex, operation.id);
   const registered = ok(await alex.post('/api/attestation/register', {
-    operationId: operation.id, attestationPublicKey: next.publicKeyBase64, attestationEpoch: 2,
+    operationId: operation.id, attestationRegistration: registrationFor({ vaultId: alex.address, keys: next, epoch: 2, previousKeys: old }),
   }));
   assert.equal(registered.attestation.publicKey, next.publicKeyBase64);
   assert.equal(registered.attestation.epoch, 2);

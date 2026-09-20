@@ -12,7 +12,7 @@ import { actionDigest } from '../src/veyns.js';
 import { serverKeys, seal, open as openSealed } from '../src/vault.js';
 import { createKey, publicKeyOf, addressOf, planSpend, signPlan } from '../src/bitcoin.js';
 import { DEFAULT_POLICY } from '../src/policy.js';
-import { deriveAttestationKeys, signAuthorization } from '../src/authorization.js';
+import { deriveAttestationKeys, signAuthorization, signRegistration } from '../src/authorization.js';
 import { accountsFrom } from '../client/wallet.js';
 
 export const ISSUER = 'https://issuer.test';
@@ -192,7 +192,7 @@ export async function walletFor(env, c) {
   c.attestation = deriveAttestationKeys(new Uint8Array(crypto.randomBytes(64)), 1);
   ok(await c.post('/api/wallet/register', {
     operationId: operation.id, address: c.address, publicKey: c.publicKey.toString('hex'),
-    attestationPublicKey: c.attestation.publicKeyBase64, attestationEpoch: 1,
+    attestationRegistration: registrationFor({ vaultId: c.address, keys: c.attestation, at: env.now() }),
   }));
   return ok(await c.get('/api/wallet')).wallet;
 }
@@ -269,18 +269,29 @@ export async function legacyWallet(env, owner, time = 1_700_000_000) {
   return { address, publicKey };
 }
 
+/** The registration a browser signs: by the key itself at epoch 1, by the previous key after. */
+export function registrationFor({ vaultId, keys, epoch = 1, previousKeys = null, at = 1_800_000_000 }) {
+  return signRegistration({
+    vaultId,
+    publicKey: keys.publicKey,
+    epoch,
+    previousKeyId: previousKeys ? previousKeys.keyId : null,
+    registeredAt: at,
+  }, previousKeys ?? keys);
+}
+
 /** Stands in for a browser making its own key and reporting only the public parts. */
 export function browserKey() {
   const key = createKey();
   const publicKey = publicKeyOf(key);
   const attestation = deriveAttestationKeys(new Uint8Array(crypto.randomBytes(64)), 1);
+  const address = addressOf(publicKey);
   return {
     key,
     publicKey: publicKey.toString('hex'),
-    address: addressOf(publicKey),
+    address,
     attestation,
-    attestationPublicKey: attestation.publicKeyBase64,
-    attestationEpoch: 1,
+    attestationRegistration: registrationFor({ vaultId: address, keys: attestation }),
   };
 }
 

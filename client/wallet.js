@@ -19,7 +19,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { base64urlnopad } from '@scure/base';
 import { canonicalTransaction, canonicalBytes } from '../src/canonical.js';
-import { deriveAttestationKeys, signAuthorization, verifyAuthorization } from '../src/authorization.js';
+import { deriveAttestationKeys, signAuthorization, signRegistration, verifyAuthorization, verifyChain } from '../src/authorization.js';
 
 const NETWORK = btc.TEST_NETWORK;
 const PATH = "m/84'/1'/0'/0/0"; // BIP84 testnet: the phrase restores in any standard wallet
@@ -198,6 +198,31 @@ export function attestationKeys(mnemonic, epoch = 1) {
   seed.fill(0);
   return keys;
 }
+
+/**
+ * Registers an attestation key, signed by the key that is allowed to vouch for it: itself at
+ * epoch 1, the previous epoch afterwards. The server can verify this and store it; it cannot
+ * make one, so it cannot move a vault onto a key of its choosing.
+ */
+export function registerKey(mnemonic, { vaultId, epoch = 1, previous = null, registeredAt }) {
+  const keys = attestationKeys(mnemonic, epoch);
+  const signer = previous ? attestationKeys(mnemonic, previous) : keys;
+  try {
+    return signRegistration({
+      vaultId,
+      publicKey: keys.publicKey,
+      epoch,
+      previousKeyId: previous ? signer.keyId : null,
+      registeredAt: registeredAt ?? Math.floor(Date.now() / 1000),
+    }, signer);
+  } finally {
+    keys.secretKey.fill(0);
+    signer.secretKey.fill(0);
+  }
+}
+
+/** Walks a vault's key lineage in the browser, with the same code the server uses. */
+export const checkChain = verifyChain;
 
 /** Signs the authorisation record for a transaction this device is about to sign. */
 export function attest(mnemonic, parts, epoch = 1) {

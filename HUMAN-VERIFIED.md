@@ -24,12 +24,44 @@ precisely enough to argue with.
                          verifies, never signs
 ```
 
-The server stores the **public** half of the attestation key and the epoch it was registered
-under. There is no function anywhere in `src/` that derives an attestation signing key: the
-only one lives in `client/wallet.js` and takes the recovery phrase. A QuVault deployment
-therefore cannot manufacture an authorisation record, and a stolen `WALLET_SEED` no longer
-lets anyone forge one. `WALLET_SEED` still seals the unlock secret at rest, which is a
-different job.
+The server stores the **public** half of the attestation key and the lineage it came from.
+There is no function anywhere in `src/` that derives an attestation signing key: the only one
+lives in `client/wallet.js` and takes the recovery phrase. A QuVault deployment therefore
+cannot manufacture an authorisation record.
+
+## Which key is authoritative
+
+Not whichever key a column happens to hold. A vault's key is decided by a **chain of signed
+registrations**:
+
+```text
+epoch 1        signs its own registration          root
+   │
+   │ epoch 1's key signs epoch 2's registration
+   ▼
+epoch 2        names epoch 1 by key id
+   │
+   ▼
+epoch 3 …
+```
+
+Each link names the vault, the public key, the epoch and the key before it, and is signed
+under the context `QUVAULT-ATTESTATION-KEY-REGISTRATION-V1`. The server walks the chain on
+every use: a gap, a repeat, a wrong vault, or a link signed by anything other than its
+predecessor ends the walk and no key is authoritative at all.
+
+A chain is self-rooted, so walking it is not enough on its own — someone able to rewrite the
+row could store a chain rooted at their own key. The root is therefore **sealed with
+`WALLET_SEED`**, an HMAC over the vault id and the root key id, kept in a column but only
+producible from the environment. A database operator can rewrite the chain; they cannot
+produce a seal for the root they invented, so the vault's key becomes *no key* rather than
+*their key*, and nothing verifies. This is what closes the substitution gap, and it is the
+one place `WALLET_SEED` still matters to authorisation — it authenticates storage, it does
+not sign anything.
+
+On top of that, the owner's browser pins the **root key id** of its own vault when the vault
+is created, and checks the server's answer against it on every load. A lineage that does not
+match what the device started is shown as a warning and sending is disabled.
 
 The attestation key is derived from the same phrase as the wallet key rather than stored as a
 second independent secret. That is deliberate: the same twelve words restore both, the same
@@ -99,7 +131,9 @@ broadcast               only if plan, hash, record and bytes all agree
 | An old authorisation replayed on a new transaction | The record names the transaction hash, statement, approvers and decisions | — |
 | A transaction signed with no palm | No record can be produced; broadcast refuses | — |
 | **The server forging a receipt** | It holds only a public key | — (it can still refuse service, or lie about what it never signed) |
-| The server re-pointing the registered key | Replacement is a palm-approved operation of its own, and the epoch only moves forward | Whoever holds the database could write a key directly into it; that key's records would then verify, but the epoch and key id change visibly in the receipt and in Settings |
+| **A database operator substituting the key** | The registration chain must walk, and its root must carry a seal only `WALLET_SEED` can produce. A rewritten row leaves the vault with no valid key, not with the attacker's | Someone who has **both** the database and the environment can register a lineage of their own. The owner's device still refuses it, because the root is not the one it pinned — and they still cannot spend, because the wallet key is not there either |
+| A forged rotation | Each epoch is signed by the key it replaces; the epoch steps by exactly one | — |
+| Replaying a retired key | Records carry their epoch, and the current epoch is the end of the chain | — |
 | A compromised page showing A and sending B | The browser re-hashes the plan; the server re-checks before broadcast | A page that holds the keys can sign what it never displayed |
 | A compromised server swapping the plan | Digest checks at unlock, sign and broadcast | Denial of service |
 | Biometric spoofing | Whatever the provider's sensor does | Outside our code. We verify a decision, not a hand |
@@ -108,8 +142,10 @@ broadcast               only if plan, hash, record and bytes all agree
 ## Replacing the key
 
 Settings → *Replace the authorisation key*. It takes a palm approval like any other change to
-the vault, derives the next epoch from the same phrase, and registers the new public key. The
-old key stops being accepted immediately: records signed under a retired epoch are refused.
+the vault, derives the next epoch from the same phrase, and registers it in a link **signed by
+the key it replaces** — which is why the server can accept the change without being able to
+make it. The old key stops being accepted immediately: records signed under a retired epoch
+are refused.
 Receipts already issued still verify against the key that signed them, but the vault will not
 accept new ones from it.
 

@@ -1,6 +1,7 @@
 import {
-  accountFrom, accountsFrom, attest, attestationKeys, checkAuthorization, clearRecord, decryptMnemonic,
-  encryptMnemonic, fromBase64, jitterFrom, loadRecord, makeMnemonic, planDigest, saveRecord, signPlan,
+  accountFrom, accountsFrom, attest, attestationKeys, checkAuthorization, checkChain, clearRecord,
+  decryptMnemonic, encryptMnemonic, fromBase64, jitterFrom, loadRecord, makeMnemonic, planDigest,
+  registerKey, saveRecord, signPlan,
 } from '/vendor/wallet.js';
 
 const $ = id => document.getElementById(id);
@@ -331,7 +332,15 @@ const device = {
     });
     const account = accountFrom(mnemonic);
     const blob = await encryptMnemonic(mnemonic, unlocked.unlock, unlocked.salt);
-    await saveRecord({ blob, salt: unlocked.salt, address: account.address, publicKey: toHex(account.publicKey), createdAt: Date.now() });
+    await saveRecord({
+      blob,
+      salt: unlocked.salt,
+      address: account.address,
+      publicKey: toHex(account.publicKey),
+      // Pinned here so a server that rewrote its own record of the lineage is visible.
+      attestationRootKeyId: attestationKeys(mnemonic, 1).keyId,
+      createdAt: Date.now(),
+    });
     this.record = await loadRecord();
     // The phrase goes back to the caller so the attestation key can be derived here, once,
     // without asking the server to unlock anything a second time.
@@ -345,16 +354,9 @@ const device = {
       operationId: operation.id,
       address: account.address,
       publicKey: toHex(account.publicKey),
-      ...this.attestationPublicKey(mnemonic, 1),
+      attestationRegistration: registerKey(mnemonic, { vaultId: account.address, epoch: 1 }),
     });
     return account;
-  },
-
-  /** The public half of the vault's attestation key, for registering with the server. */
-  attestationPublicKey(mnemonic, epoch) {
-    const keys = attestationKeys(mnemonic, epoch);
-    keys.secretKey.fill(0);
-    return { attestationPublicKey: keys.publicKeyBase64, attestationEpoch: epoch };
   },
 
   /**
@@ -367,7 +369,7 @@ const device = {
       operationId: operation.id,
       address: account.address,
       publicKey: toHex(account.publicKey),
-      ...this.attestationPublicKey(mnemonic, 1),
+      attestationRegistration: registerKey(mnemonic, { vaultId: account.address, epoch: 1 }),
     });
     return { ...result, account };
   },
@@ -408,13 +410,20 @@ const device = {
     return decryptMnemonic(this.record.blob, unlocked.unlock, this.record.salt);
   },
 
-  /** Replaces the attestation key with the next epoch from the same phrase. */
+  /**
+   * Replaces the attestation key. The new epoch's registration is signed by the key it
+   * replaces, so the server can see the lineage continue without being able to continue it.
+   */
   async rotateAttestation(operation) {
     const mnemonic = await this.phraseFromRecord(operation.id);
-    const epoch = (state.data?.wallet?.attestation?.epoch ?? 1) + 1;
+    const current = state.data?.wallet?.attestation?.epoch ?? 1;
     return api('/api/attestation/register', {
       operationId: operation.id,
-      ...this.attestationPublicKey(mnemonic, epoch),
+      attestationRegistration: registerKey(mnemonic, {
+        vaultId: this.record.address,
+        epoch: current + 1,
+        previous: current,
+      }),
     });
   },
 
@@ -475,12 +484,17 @@ const toHex = bytes => [...bytes].map(b => b.toString(16).padStart(2, '0')).join
 async function readReceipt(operationId) {
   try {
     const receipt = await api(`/api/operations/${operationId}/receipt`);
-    // Checked against the vault's registered public key — the server has no key of its own here.
-    const checked = checkAuthorization(receipt.authorization, receipt.publicKey, {
-      transactionHash: receipt.authorization.record.transactionHash,
-      vaultId: state.data?.wallet?.address,
-    });
-    return { ...receipt, checked };
+    // The lineage is walked here, from the vault's own root, before the record is believed.
+    const vaultId = state.data?.wallet?.address;
+    const chain = checkChain(receipt.attestationChain, { vaultId });
+    const pinned = device.record?.attestationRootKeyId ?? null;
+    const checked = !chain.ok ? { ok: false, reason: chain.reason }
+      : pinned && chain.rootKeyId !== pinned ? { ok: false, reason: 'the key lineage is not the one this device started' }
+        : checkAuthorization(receipt.authorization, chain.publicKey, {
+          transactionHash: receipt.authorization.record.transactionHash,
+          vaultId,
+        });
+    return { ...receipt, checked, chain };
   } catch (error) {
     return { error: friendly(error) };
   }
@@ -529,6 +543,7 @@ function renderWallet(data) {
   renderSettings(data);
   renderAccountPanes(data);
   $('legacy-lane').hidden = wallet.custody === 'client';
+  checkLineage(data);
   renderRequests($('pending'), data.pending);
   renderRequests($('send-pending'), data.pending.filter(op => op.kind === 'withdraw'));
   $('pending-lane').hidden = data.pending.length === 0;
@@ -949,9 +964,9 @@ function renderSettings(data) {
   $('restore-device').hidden = legacy || holds;
   $('move-vault').hidden = !legacy;
   const attestation = wallet.attestation;
-  $('attestation-key').textContent = attestation
-    ? `${attestation.algorithm} · ${attestation.keyId} · epoch ${attestation.epoch}`
-    : 'none registered';
+  $('attestation-key').textContent = attestation?.keyId
+    ? `${attestation.algorithm} · ${attestation.keyId} · epoch ${attestation.epoch} · from ${attestation.rootKeyId}`
+    : attestation?.broken ? `lineage broken: ${attestation.broken}` : 'none registered';
   $('rotate-attestation').hidden = legacy || !attestation;
   $('reset-note').textContent = legacy
     ? `Erasing destroys the key this server holds for ${wallet.address}. Anything left at that address goes with it, so sweep it somewhere on the way out.`
@@ -1274,6 +1289,28 @@ async function cancelRequest(op) {
   refresh().catch(() => {});
 }
 
+/**
+ * Compares the vault's key lineage with the root this device pinned when the vault was made,
+ * and verifies the chain here rather than believing the server's summary of it. A mismatch is
+ * the shape a substituted key would take, so sending is blocked until it is explained.
+ */
+function checkLineage(data) {
+  const wallet = data.wallet;
+  const attestation = wallet?.attestation;
+  const pinned = device.record?.attestationRootKeyId ?? null;
+  const problem = !attestation ? (wallet?.custody === 'client' ? 'This vault has no attestation key registered.' : null)
+    : attestation.broken ? `This vault's key lineage does not verify: ${attestation.broken}.`
+    : pinned && attestation.rootKeyId !== pinned
+      ? 'The authorisation key this server reports did not come from this device. Do not send anything until you know why.'
+      : null;
+
+  state.lineage = { ok: !problem, problem, attestation, pinned };
+  $('lineage-warning').textContent = problem ?? '';
+  $('lineage-warning').hidden = !problem;
+  const form = $('send-form');
+  if (problem) form.hidden = true;
+}
+
 /* ------------------------------------------------------------ receipt */
 
 function showReceipt(receipt, txid) {
@@ -1284,6 +1321,9 @@ function showReceipt(receipt, txid) {
   $('receipt-ticks').replaceChildren(
     el('li', {}, 'A palm approval was verified for this exact transaction'),
     el('li', {}, `Signed by your vault's own key, ${receipt.algorithm} · ${receipt.keyId ?? 'unknown'}`),
+    el('li', { class: receipt.chain?.ok ? '' : 'unchecked' }, receipt.chain?.ok
+      ? `Key lineage checked here: epoch ${receipt.chain.epoch}, from ${receipt.chain.rootKeyId}`
+      : `Key lineage did not verify: ${receipt.chain?.reason ?? 'unknown'}`),
     el('li', { class: checked ? '' : 'unchecked' },
       checked ? 'Signature checked in this browser' : `Not checked here: ${receipt.checked?.reason ?? 'unknown'}`),
     el('li', {}, txid ? 'Broadcast to the network' : 'Ready to broadcast'),

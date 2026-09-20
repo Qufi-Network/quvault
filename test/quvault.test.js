@@ -8,7 +8,7 @@ import { serverKeys, seal, open as openSealed } from '../src/vault.js';
 import { createKey, publicKeyOf, addressOf, planSpend, signPlan } from '../src/bitcoin.js';
 import { PolicyError, requiredFor, requiredToChange, validatePolicy } from '../src/policy.js';
 import { deriveAttestationKeys } from '../src/authorization.js';
-import { DEST, SEED, start, ok, signedIn, palmApprove, walletFor, signAndSend, setRules, attestFor } from './harness.js';
+import { DEST, SEED, start, ok, signedIn, palmApprove, walletFor, signAndSend, setRules, attestFor, registrationFor } from './harness.js';
 
 test('the vault seals a key so only this server seed can open it', () => {
   const keys = serverKeys(SEED);
@@ -72,13 +72,18 @@ test('creating the wallet needs a palm scan, and binds the key to that account',
   // A vault with no attestation key of its own cannot be registered at all.
   const noKey = await c.post('/api/wallet/register', { operationId: operation.id, address, publicKey: publicKey.toString('hex') });
   assert.equal(noKey.status, 400);
-  assert.match(noKey.body.error, /attestation public key/);
+  assert.match(noKey.body.error, /must register an attestation key/);
   assert.equal((await c.post('/api/wallet/register', {
-    operationId: operation.id, address, publicKey: publicKey.toString('hex'), attestationPublicKey: 'not-a-key',
+    operationId: operation.id, address, publicKey: publicKey.toString('hex'), attestationRegistration: { record: { epoch: 1 } },
+  })).status, 400);
+  // A registration signed for another vault does not register here either.
+  assert.equal((await c.post('/api/wallet/register', {
+    operationId: operation.id, address, publicKey: publicKey.toString('hex'),
+    attestationRegistration: registrationFor({ vaultId: DEST, keys: attestation }),
   })).status, 400);
   ok(await c.post('/api/wallet/register', {
     operationId: operation.id, address, publicKey: publicKey.toString('hex'),
-    attestationPublicKey: attestation.publicKeyBase64, attestationEpoch: 1,
+    attestationRegistration: registrationFor({ vaultId: address, keys: attestation }),
   }));
 
   const view = ok(await c.get('/api/wallet'));
@@ -87,6 +92,7 @@ test('creating the wallet needs a palm scan, and binds the key to that account',
   assert.equal(view.wallet.attestation.publicKey, attestation.publicKeyBase64);
   assert.equal(view.wallet.attestation.keyId, attestation.keyId);
   assert.equal(view.wallet.attestation.epoch, 1);
+  assert.equal(view.wallet.attestation.rootKeyId, attestation.keyId, 'the lineage starts here');
   assert.equal(view.members.length, 1);
   assert.equal(view.members[0].label, 'Alex');
   assert.ok(view.members[0].owner);

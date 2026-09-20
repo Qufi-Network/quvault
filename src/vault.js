@@ -34,6 +34,32 @@ export function serverKeys(seedBase64) {
   };
 }
 
+/*
+ * A vault's key lineage is anchored to this server's seed, which lives in the environment and
+ * not in the database. Walking a registration chain proves internal consistency, but a chain
+ * is self-rooted: anyone able to rewrite the row could store a chain rooted at their own key.
+ * The root seal is what that rewrite cannot produce, because the seed is not there to be read.
+ *
+ * It is not a defence against someone who has the seed itself. That is stated plainly in
+ * HUMAN-VERIFIED.md rather than implied away.
+ */
+export const sealRoot = (seedBase64, { vaultId, rootKeyId }) =>
+  crypto.createHmac('sha256', Buffer.from(seedBase64 ?? '', 'base64'))
+    .update(`quvault attestation root v1|${vaultId}|${rootKeyId}`, 'utf8')
+    .digest('base64');
+
+/** Constant-time comparison, so a wrong seal reveals nothing about the right one. */
+export function rootSealMatches(seedBase64, parts, seal) {
+  const expected = Buffer.from(sealRoot(seedBase64, parts), 'base64');
+  let given;
+  try {
+    given = Buffer.from(String(seal ?? ''), 'base64');
+  } catch {
+    return false;
+  }
+  return expected.length === given.length && crypto.timingSafeEqual(expected, given);
+}
+
 const aesKey = (kemShared, x25519Shared) =>
   Buffer.from(crypto.hkdfSync('sha256', Buffer.concat([Buffer.from(kemShared), Buffer.from(x25519Shared)]),
     Buffer.alloc(0), INFO, 32));

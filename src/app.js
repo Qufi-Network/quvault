@@ -5,8 +5,8 @@ import crypto from 'node:crypto';
 import QRCode from 'qrcode';
 import { openDb, describeDbError } from './db.js';
 import { createVeyns, actionDigest, isFresh, randomId, HttpError, canonicalTransaction, transactionDigest } from './veyns.js';
-import { verifyAuthorization, keyIdOf } from './authorization.js';
-import { serverKeys, seal, open as openSealed } from './vault.js';
+import { verifyAuthorization, verifyChain, keyIdOf } from './authorization.js';
+import { serverKeys, seal, open as openSealed, sealRoot, rootSealMatches } from './vault.js';
 import { createChain, createPrices, ChainError } from './chain.js';
 import {
   createKey, publicKeyOf, addressOf, planSpend, signPlan, isValidAddress, toBtc, verifyAgainstPlan, WalletError,
@@ -45,10 +45,10 @@ const SQL = {
   walletOf: 'SELECT * FROM wallets WHERE user_id = $1',
   insertWallet: `INSERT INTO wallets (user_id, network, address, public_key, sealed_key, bound_sub, bound_decision, policy, created_at)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (user_id) DO NOTHING`,
-  insertClientWallet: `INSERT INTO wallets (user_id, network, address, public_key, custody, unlock_sealed, salt, bound_sub, bound_decision, policy, created_at, attestation_public_key, attestation_epoch, attestation_at)
+  insertClientWallet: `INSERT INTO wallets (user_id, network, address, public_key, custody, unlock_sealed, salt, bound_sub, bound_decision, policy, created_at, attestation_chain, attestation_root_seal, attestation_at)
                        VALUES ($1, $2, $3, $4, 'client', $5, $6, $7, $8, $9, $10, $11, $12, $10) ON CONFLICT (user_id) DO NOTHING`,
-  setAttestationKey: `UPDATE wallets SET attestation_public_key = $1, attestation_epoch = $2, attestation_at = $3
-                      WHERE user_id = $4 AND attestation_epoch < $2`,
+  setAttestationChain: 'UPDATE wallets SET attestation_chain = $1, attestation_at = $2 WHERE user_id = $3',
+  setAttestationRoot: 'UPDATE wallets SET attestation_chain = $1, attestation_root_seal = $2, attestation_at = $3 WHERE user_id = $4',
   setPolicy: 'UPDATE wallets SET policy = $1 WHERE user_id = $2',
   moveWalletToBrowser: `UPDATE wallets SET address = $1, public_key = $2, custody = 'client', unlock_sealed = $3,
                         salt = $4, sealed_key = NULL WHERE user_id = $5 AND custody = 'server'`,
@@ -261,26 +261,57 @@ export function createApp(options) {
 
   /* --------------------------------------------------------------- views */
 
+  /**
+   * The key this vault's records must be signed by, derived by verifying its registration
+   * chain. A chain that does not walk — rewritten, truncated, or rooted somewhere else —
+   * produces no key at all, and nothing verifies against it.
+   */
+  const attestationOf = wallet => {
+    if (!wallet?.attestation_chain) return { ok: false, reason: 'this vault has no attestation key' };
+    let chain;
+    try {
+      chain = JSON.parse(wallet.attestation_chain);
+    } catch {
+      return { ok: false, reason: 'the attestation chain is unreadable' };
+    }
+    const walked = verifyChain(chain, { vaultId: wallet.address });
+    if (!walked.ok) return walked;
+    // A chain that walks can still be a chain someone else rooted. The seal says whether this
+    // server ever saw that root registered, and a database alone cannot produce one.
+    if (!rootSealMatches(walletSeed, { vaultId: wallet.address, rootKeyId: walked.rootKeyId }, wallet.attestation_root_seal)) {
+      return { ok: false, reason: 'this is not the key lineage the vault registered' };
+    }
+    return walked;
+  };
+
   const walletView = w => ({
     address: w.address,
     network: w.network,
     createdAt: w.created_at,
     explorer: chain.explorerAddress(w.address),
     custody: w.custody,
-    // The public half of the owner's attestation key. The server has never had the other half.
-    attestation: w.attestation_public_key
-      ? {
-        algorithm: 'ML-DSA-65',
-        keyId: keyIdOf(Buffer.from(w.attestation_public_key, 'base64')),
-        publicKey: w.attestation_public_key,
-        epoch: w.attestation_epoch,
-        registeredAt: w.attestation_at,
-      }
-      : null,
+    // The public half of the owner's attestation key, and the lineage it descends from.
+    // The server has never had the other half, and cannot extend the lineage itself.
+    attestation: attestationView(w),
     protection: w.custody === 'client'
       ? 'Key in the owner’s browser; its unlock secret sealed with ML-KEM-768 + X25519'
       : 'ML-KEM-768 + X25519 + AES-256-GCM',
   });
+
+  /** What a page needs to check a vault's key lineage against what its own device pinned. */
+  function attestationView(wallet) {
+    const lineage = attestationOf(wallet);
+    if (!lineage.ok) return wallet?.attestation_chain ? { algorithm: 'ML-DSA-65', broken: lineage.reason } : null;
+    return {
+      algorithm: 'ML-DSA-65',
+      keyId: lineage.keyId,
+      publicKey: lineage.publicKey,
+      epoch: lineage.epoch,
+      rootKeyId: lineage.rootKeyId,
+      chainLength: lineage.length,
+      registeredAt: wallet.attestation_at,
+    };
+  }
 
   const memberView = m => ({
     id: m.member_id,
@@ -563,7 +594,7 @@ export function createApp(options) {
       approvals: `${approved.length} of ${op.required}`,
       approvedBy: approved.map(a => a.user_id),
       decisionIds: approved.map(a => a.decision_id).filter(Boolean),
-      keyEpoch: wallet.attestation_epoch || 1,
+      keyEpoch: attestationOf(wallet).epoch ?? 0,
       // The record cannot predate the approvals it claims, nor be dated in the future.
       notBefore: Math.min(...approved.map(a => a.closed_at ?? a.created_at)) - 60,
       notAfter: now() + 60,
@@ -788,9 +819,10 @@ export function createApp(options) {
 
     const payload = JSON.parse(op.payload);
     const time = now();
-    const attestationKey = readAttestationKey(body);
+    const registration = readRegistration(body, { vaultId: address });
     await query('insertClientWallet', user.id, network, address, publicKey, payload.unlockSealed, payload.salt,
-      user.sub, payload.decisionId, JSON.stringify(DEFAULT_POLICY), time, attestationKey.publicKey, attestationKey.epoch);
+      user.sub, payload.decisionId, JSON.stringify(DEFAULT_POLICY), time, JSON.stringify(registration.chain),
+      sealRoot(walletSeed, { vaultId: address, rootKeyId: registration.rootKeyId }));
     await query('insertMember', user.id, user.id, payload.label || 'Owner', true, time);
     // This vault exists because that palm approved it, so the owner's palm identity starts here.
     await query('bindPalm', palmId(user.sub), time, user.id, user.id);
@@ -821,7 +853,9 @@ export function createApp(options) {
     if (wallet.custody === 'client') {
       const expected = await expectedAuthorization(op, wallet);
       const authorization = body.authorization ?? authorizationOf(op);
-      const checkedAuthorization = verifyAuthorization(authorization, wallet.attestation_public_key, expected);
+      const lineage = attestationOf(wallet);
+      if (!lineage.ok) throw new HttpError(409, `This vault has no valid attestation key: ${lineage.reason}.`);
+      const checkedAuthorization = verifyAuthorization(authorization, lineage.publicKey, expected);
       if (!checkedAuthorization.ok) {
         throw new HttpError(409, `No valid human authorisation for this transaction: ${checkedAuthorization.reason}.`);
       }
@@ -975,11 +1009,15 @@ export function createApp(options) {
     const authorization = authorizationOf(op);
     if (!authorization) throw new HttpError(404, 'There is no authorisation record for this request.');
     const wallet = await one('walletOf', op.wallet_user_id);
-    const publicKey = wallet?.attestation_public_key ?? null;
+    const lineage = attestationOf(wallet);
+    const publicKey = lineage.ok ? lineage.publicKey : null;
     return {
       authorization,
       publicKey,
-      keyId: publicKey ? keyIdOf(Buffer.from(publicKey, 'base64')) : null,
+      keyId: lineage.ok ? lineage.keyId : null,
+      // The lineage, so a reader can check the key descends from the one the vault started with.
+      attestationChain: wallet?.attestation_chain ? JSON.parse(wallet.attestation_chain) : null,
+      rootKeyId: lineage.ok ? lineage.rootKeyId : null,
       signedBy: 'vault',
       algorithm: 'ML-DSA-65',
       statement: op.statement,
@@ -1072,21 +1110,20 @@ export function createApp(options) {
     return { ok: true, txid, sweptSats };
   }
 
-  /** An ML-DSA-65 public key, checked for shape only: the server never holds the other half. */
-  function readAttestationKey(body) {
-    const publicKey = String(body.attestationPublicKey ?? '').trim();
-    const epoch = Number(body.attestationEpoch ?? 1);
-    if (!publicKey) throw new HttpError(400, 'This vault must register an attestation public key.');
-    let bytes;
-    try {
-      bytes = Buffer.from(publicKey, 'base64');
-    } catch {
-      bytes = Buffer.alloc(0);
-    }
-    // ML-DSA-65 public keys are 1952 bytes. Anything else is not one.
-    if (bytes.length !== 1952) throw new HttpError(400, 'That is not an ML-DSA-65 public key.');
-    if (!Number.isInteger(epoch) || epoch < 1) throw new HttpError(400, 'The attestation epoch starts at 1.');
-    return { publicKey: bytes.toString('base64'), epoch };
+  /**
+   * A registration the owner's device signed, checked as the chain it would become.
+   *
+   * For a new vault that is a chain of one, signed by the key it registers. For a rotation it
+   * is the existing chain with one more link, which only the current key could have signed.
+   * The server decides nothing here: it walks what it is given and refuses what does not walk.
+   */
+  function readRegistration(body, { vaultId, existing = [] }) {
+    const link = body.attestationRegistration;
+    if (!link?.record) throw new HttpError(400, 'This vault must register an attestation key.');
+    const chain = [...existing, link];
+    const walked = verifyChain(chain, { vaultId });
+    if (!walked.ok) throw new HttpError(400, `That key registration does not hold up: ${walked.reason}.`);
+    return { chain, ...walked };
   }
 
   /** Replacing the attestation key: palm-approved, like every other change to a vault. */
@@ -1095,13 +1132,16 @@ export function createApp(options) {
     const wallet = await one('walletOf', user.id);
     if (!wallet) throw new HttpError(409, 'Create the wallet first.');
     if (wallet.custody !== 'client') throw new HttpError(409, 'This vault signs on the server and has no attestation key of its own.');
-    const next = (wallet.attestation_epoch || 1) + 1;
+    const current = attestationOf(wallet);
+    if (!current.ok) throw new HttpError(409, `This vault has no working key to replace: ${current.reason}.`);
+    const next = current.epoch + 1;
     const statement = 'Replace the authorisation key of my vault';
     const details = {
       action: 'replace authorisation key',
       network,
       vault: wallet.address,
-      from_epoch: String(wallet.attestation_epoch || 1),
+      from_key: current.keyId,
+      from_epoch: String(current.epoch),
       to_epoch: String(next),
       effect: 'records signed by the old key stop being accepted',
     };
@@ -1118,11 +1158,13 @@ export function createApp(options) {
     }
     const wallet = await one('walletOf', user.id);
     if (!wallet) throw new HttpError(409, 'This account has no wallet.');
-    const key = readAttestationKey(body);
-    if (key.epoch <= (wallet.attestation_epoch || 0)) throw new HttpError(409, 'That epoch has already been used.');
-    const moved = await query('setAttestationKey', key.publicKey, key.epoch, now(), user.id);
-    if (!moved.count) throw new HttpError(409, 'The key was not replaced.');
-    return { attestation: walletView(await one('walletOf', user.id)).attestation };
+    const current = attestationOf(wallet);
+    if (!current.ok) throw new HttpError(409, `This vault has no working key to sign a replacement: ${current.reason}.`);
+    const existing = JSON.parse(wallet.attestation_chain);
+    const registration = readRegistration(body, { vaultId: wallet.address, existing });
+    if (registration.epoch !== current.epoch + 1) throw new HttpError(409, 'A replacement key follows the one before it.');
+    await query('setAttestationChain', JSON.stringify(registration.chain), now(), user.id);
+    return { attestation: attestationView(await one('walletOf', user.id)) };
   }
 
   /** Asks for the palm approvals that move a server-held vault into the owner's browser. */
@@ -1164,7 +1206,8 @@ export function createApp(options) {
     if (!/^[0-9a-f]{66}$/i.test(publicKey)) throw new HttpError(400, 'That public key does not look right.');
     if (addressOf(Buffer.from(publicKey, 'hex')) !== address) throw new HttpError(400, 'The address does not match the public key.');
     if (address === wallet.address) throw new HttpError(400, 'The new address has to be a different one.');
-    const attestationKey = readAttestationKey(body);
+    // The moved vault is a new key lineage, rooted at the key the new phrase derives.
+    const registration = readRegistration(body, { vaultId: address });
 
     let txid = null;
     let sweptSats = 0;
@@ -1200,7 +1243,8 @@ export function createApp(options) {
       await q('setBitcoinAccount', address, publicKey, user.id);
       await q('insertAccountFull', user.id, 'bitcoin', address, publicKey,
         wallet.policy, JSON.stringify([user.id]), now());
-      await q('setAttestationKey', attestationKey.publicKey, attestationKey.epoch, now(), user.id);
+      await q('setAttestationRoot', JSON.stringify(registration.chain),
+        sealRoot(walletSeed, { vaultId: address, rootKeyId: registration.rootKeyId }), now(), user.id);
     });
     if (txid) await query('setOperationTxid', txid, op.id);
     return { wallet: walletView(await one('walletOf', user.id)), txid, sweptSats };
