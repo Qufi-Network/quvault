@@ -623,6 +623,34 @@ dialog::backdrop { background: rgba(29, 29, 31, .28); backdrop-filter: blur(4px)
 .network-choice:hover { border-color: var(--brand); background: var(--brand-tint); color: var(--text); }
 .network-choice .chip { margin-left: auto; }
 
+/* The authorisation receipt */
+.eyebrow.verified { display: flex; align-items: center; gap: 8px; color: var(--ok); }
+.eyebrow.verified::before {
+  content: '';
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 4px rgba(15, 138, 77, .14);
+}
+.ticks { display: grid; gap: 8px; margin: 0 0 18px; padding: 0; list-style: none; }
+.ticks li {
+  position: relative;
+  padding-left: 26px;
+  font-size: 14px;
+  color: var(--text-2);
+}
+.ticks li::before {
+  content: '✓';
+  position: absolute;
+  left: 4px;
+  color: var(--ok);
+  font-weight: 600;
+}
+.ticks li.unchecked { color: var(--danger); }
+.ticks li.unchecked::before { content: '!'; color: var(--danger); }
+.ledger .what .link { display: block; margin-top: 4px; font-size: 12px; }
+
 /* The four steps of adding an account */
 .wizard-steps {
   display: flex;

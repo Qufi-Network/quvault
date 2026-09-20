@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { canonicalJson, canonicalBytes, canonicalTransaction } from './canonical.js';
 
 const LEEWAY = 30;
 
@@ -9,23 +10,19 @@ export class HttpError extends Error {
   }
 }
 
+export { canonicalJson, canonicalTransaction };
+
+/** base64url SHA-256 over the canonical bytes of a transaction. */
+export const transactionDigest = transaction => sha256Base64Url(canonicalBytes(transaction));
+
 export const randomId = (bytes = 16) => crypto.randomBytes(bytes).toString('base64url');
 
-/** Veyns canonical JSON: object keys sorted recursively, arrays keep their order, no whitespace. */
-export function canonicalJson(value) {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-  if (value && typeof value === 'object') {
-    return `{${Object.keys(value).sort()
-      .map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
-  }
-  return JSON.stringify(value);
-}
+/** base64url SHA-256 of a string: the one hash this app puts its name to. */
+export const sha256Base64Url = text => crypto.createHash('sha256').update(text, 'utf8').digest('base64url');
 
 /** base64url SHA-256 over the canonical {statement, details}; absent details become null. */
 export const actionDigest = (statement, details) =>
-  crypto.createHash('sha256')
-    .update(canonicalJson({ statement, details: details ?? null }), 'utf8')
-    .digest('base64url');
+  sha256Base64Url(canonicalJson({ statement, details: details ?? null }));
 
 /** True when a ceremony happened after `notBefore` and not in the future. */
 export const isFresh = (authTime, notBefore, now) =>

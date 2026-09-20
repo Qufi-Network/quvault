@@ -17,6 +17,9 @@ import { hmac } from '@noble/hashes/hmac.js';
 import { base32, base58check } from '@scure/base';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
+import { base64urlnopad } from '@scure/base';
+import { canonicalTransaction, canonicalBytes } from '../src/canonical.js';
+import { verifyAuthorization } from '../src/authorization.js';
 
 const NETWORK = btc.TEST_NETWORK;
 const PATH = "m/84'/1'/0'/0/0"; // BIP84 testnet: the phrase restores in any standard wallet
@@ -169,14 +172,35 @@ export function accountsFrom(mnemonic) {
 }
 
 /**
- * Signs exactly the plan the palm approved: same coins, same outputs, same fee.
- * `expectedAddress` guards against signing with the wrong phrase, which would otherwise
- * produce a transaction the network silently rejects.
+ * The digest of the exact transaction, computed here from the plan the server handed back.
+ * It has to equal the digest that was inside the sentence the palm approved.
  */
-export function signPlan(mnemonic, plan, expectedAddress) {
+export function planDigest({ network, from, plan }) {
+  return base64urlnopad.encode(sha256(new TextEncoder().encode(
+    canonicalBytes(canonicalTransaction({ chain: 'bitcoin', network, from, plan })),
+  )));
+}
+
+/** Re-checks an authorisation receipt in the browser, with the same code that signed it. */
+export const checkAuthorization = verifyAuthorization;
+
+/**
+ * Signs exactly the plan the palm approved: same coins, same outputs, same fee.
+ *
+ * Three refusals, all before a signature exists: the phrase must belong to this wallet, the
+ * plan must hash to the digest the human approved, and the finished transaction's fee must
+ * match the plan. Any mismatch and this returns nothing to broadcast.
+ */
+export function signPlan(mnemonic, plan, expectedAddress, approved = {}) {
   const { privateKey, publicKey, address } = accountFrom(mnemonic);
   if (expectedAddress && address !== expectedAddress) {
     throw new Error('That phrase belongs to a different wallet.');
+  }
+  if (approved.transactionHash) {
+    const here = planDigest({ network: approved.network, from: address, plan });
+    if (here !== approved.transactionHash) {
+      throw new Error('This is not the transaction that was approved. Nothing has been signed.');
+    }
   }
   const script = btc.p2wpkh(publicKey, NETWORK).script;
   const tx = new btc.Transaction();

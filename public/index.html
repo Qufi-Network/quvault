@@ -348,6 +348,20 @@
     </form>
   </dialog>
 
+  <dialog id="receipt" aria-labelledby="receipt-title">
+    <div class="sheet">
+      <p class="eyebrow verified" id="receipt-title">Human verified</p>
+      <p class="statement" id="receipt-headline">Transaction authorised.</p>
+      <ul class="ticks" id="receipt-ticks"></ul>
+      <dl class="details" id="receipt-details"></dl>
+      <p class="fine">This record carries no biometric data. It says a palm approval covering this exact transaction was verified, and it is signed with ML-DSA-65 so anyone can check that for themselves.</p>
+      <div class="sheet-foot">
+        <button class="link" id="receipt-copy" type="button">Copy the record</button>
+        <button class="btn brand small" id="receipt-done" type="button">Done</button>
+      </div>
+    </div>
+  </dialog>
+
   <dialog id="phrase" aria-labelledby="phrase-title">
     <div class="sheet">
       <p class="eyebrow seal" id="phrase-title">Recovery phrase</p>

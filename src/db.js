@@ -132,6 +132,9 @@ const SCHEMA = [
      SELECT json_agg(m.member_id)::text FROM members m WHERE m.wallet_user_id = a.wallet_user_id
    ) WHERE a.signers IS NULL`,
 
+  // v8: the signed record of the human authorisation that released a transaction.
+  'ALTER TABLE operations ADD COLUMN IF NOT EXISTS human_authorization TEXT',
+
   /*
    * Which kinds of operation exist is decided by the code that is running, so the constraint
    * is simply restated on every migration: one statement, every old name dropped, today's

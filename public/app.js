@@ -1,6 +1,6 @@
 import {
-  accountFrom, accountsFrom, clearRecord, decryptMnemonic, encryptMnemonic, fromBase64, jitterFrom,
-  loadRecord, makeMnemonic, saveRecord, signPlan,
+  accountFrom, accountsFrom, checkAuthorization, clearRecord, decryptMnemonic, encryptMnemonic, fromBase64,
+  jitterFrom, loadRecord, makeMnemonic, planDigest, saveRecord, signPlan,
 } from '/vendor/wallet.js';
 
 const $ = id => document.getElementById(id);
@@ -361,13 +361,21 @@ const device = {
     return { ...result, account };
   },
 
-  /** Signs an approved withdrawal and hands the raw transaction back for broadcasting. */
+  /**
+   * Signs an approved withdrawal and hands the raw transaction back for broadcasting.
+   * The plan is re-hashed here and compared with the digest the palm approved, so a plan
+   * altered after the approval is refused by the device that holds the key.
+   */
   async send(operation) {
     if (!this.record) throw new Error('This browser does not hold the key for this wallet.');
     const unlocked = await this.unlockFor(operation.id);
     const mnemonic = await decryptMnemonic(this.record.blob, unlocked.unlock, this.record.salt);
-    const signed = signPlan(mnemonic, unlocked.plan, this.record.address);
-    return api(`/api/operations/${operation.id}/broadcast`, { hex: signed.hex });
+    const signed = signPlan(mnemonic, unlocked.plan, this.record.address, {
+      transactionHash: unlocked.transactionHash,
+      network: state.config.network,
+    });
+    const sent = await api(`/api/operations/${operation.id}/broadcast`, { hex: signed.hex });
+    return { ...sent, receipt: await readReceipt(operation.id) };
   },
 
   /** Derives the address for a newly approved network and reports only the public part. */
@@ -418,6 +426,24 @@ const device = {
 };
 
 const toHex = bytes => [...bytes].map(b => b.toString(16).padStart(2, '0')).join('');
+
+/**
+ * Fetches the authorisation receipt and checks its ML-DSA-65 signature here, in the page,
+ * against the key the server published. A receipt this page cannot verify is reported as
+ * unverified rather than shown as proof of anything.
+ */
+async function readReceipt(operationId) {
+  try {
+    const receipt = await api(`/api/operations/${operationId}/receipt`);
+    const key = state.config.attestation?.publicKey;
+    const checked = key
+      ? checkAuthorization(receipt.authorization, key, { transactionHash: receipt.authorization.record.transactionHash })
+      : { ok: false, reason: 'this page was not given a key to check it with' };
+    return { ...receipt, checked };
+  } catch (error) {
+    return { error: friendly(error) };
+  }
+}
 
 /* -------------------------------------------------------- the wallet */
 
@@ -813,7 +839,16 @@ const busyText = op => BUSY[op.kind] || 'Working…';
 
 function renderHistory(chain, operations) {
   const rows = operations.filter(op => op.kind !== 'create').map(op => el('li', {},
-    el('span', { class: 'what' }, op.statement, el('small', {}, op.error || (op.txid ? shortId(op.txid) : op.status))),
+    el('span', { class: 'what' },
+      op.statement,
+      el('small', {}, op.error || (op.txid ? shortId(op.txid) : op.status)),
+      op.humanVerified
+        ? button('Human verified · receipt', 'link small', async () => {
+          const receipt = await readReceipt(op.id);
+          if (receipt.error) return toast(receipt.error);
+          showReceipt(receipt, op.txid);
+        })
+        : null),
     el('time', {}, when(op.createdAt)),
     el('span', { class: `amt ${op.status === 'done' ? '' : 'failed'}` }, op.status === 'done' ? 'approved' : op.status)));
 
@@ -1180,12 +1215,45 @@ async function cancelRequest(op) {
   refresh().catch(() => {});
 }
 
+/* ------------------------------------------------------------ receipt */
+
+function showReceipt(receipt, txid) {
+  if (!receipt || receipt.error) return;
+  const record = receipt.authorization.record;
+  const checked = receipt.checked?.ok;
+  $('receipt-headline').textContent = 'Transaction authorised.';
+  $('receipt-ticks').replaceChildren(
+    el('li', {}, 'A palm approval was verified for this exact transaction'),
+    el('li', {}, `Authorisation signed with ${receipt.algorithm}`),
+    el('li', { class: checked ? '' : 'unchecked' },
+      checked ? 'Signature checked in this browser' : `Not checked here: ${receipt.checked?.reason ?? 'unknown'}`),
+    el('li', {}, txid ? 'Broadcast to the network' : 'Ready to broadcast'),
+  );
+  $('receipt-details').replaceChildren(...detailRows({
+    vault: record.vaultId,
+    transaction_hash: record.transactionHash,
+    approvals: record.approvals,
+    method: record.approvalMethod,
+    approved_at: when(record.approvedAt),
+    key: `${receipt.algorithm} · ${receipt.keyId}`,
+    ...(txid ? { txid } : {}),
+  }));
+  state.receipt = receipt;
+  $('receipt').showModal();
+}
+
+$('receipt-done').addEventListener('click', () => $('receipt').close());
+$('receipt-copy').addEventListener('click', () => {
+  if (state.receipt) copy(JSON.stringify(state.receipt.authorization, null, 2), 'Authorisation record copied.');
+});
+
 /* ----------------------------------------------------------- approval */
 
 const DETAIL_LABELS = {
   action: 'Action', network: 'Network', to: 'To', amount_sats: 'Amount', fee_sats: 'Fee', fee_rate: 'Fee rate',
   change_sats: 'Change back', spends: 'Coins spent', approvals_required: 'Approvals', rules: 'New settings',
   approvers: 'Signers', spending_rule: 'Rule', owner_label: 'Your name', derived_from: 'Address from',
+  transaction_hash: 'Transaction hash',
 };
 
 function detailRows(details) {
@@ -1193,7 +1261,9 @@ function detailRows(details) {
   const rest = Object.keys(details).filter(key => !(key in DETAIL_LABELS));
   return [...known, ...rest].map(key => {
     const raw = details[key];
-    const value = key.endsWith('_sats') ? `${fmtSats(raw)} sats (${btc(raw)} tBTC)` : String(raw);
+    const value = key.endsWith('_sats') ? `${fmtSats(raw)} sats (${btc(raw)} tBTC)`
+      : key === 'transaction_hash' ? `${String(raw).slice(0, 16)}…${String(raw).slice(-8)}`
+      : String(raw);
     return el('div', {}, el('dt', {}, DETAIL_LABELS[key] || key), el('dd', {}, value));
   });
 }
@@ -1299,9 +1369,10 @@ async function settled(current, operation) {
       toast(`Wallet ready: ${account.address.slice(0, 12)}…`);
     } else if (operation.kind === 'withdraw') {
       // The quorum is complete; this browser is the only place that can sign it.
-      toast('Signing on this device…');
-      const { txid } = await device.send(operation);
+      toast('Human verified. Signing on this device…');
+      const { txid, receipt } = await device.send(operation);
       toast(`Sent. Transaction ${shortId(txid)} is on the network.`);
+      showReceipt(receipt, txid);
       $('send-form').reset();
       $('send-amount').disabled = false;
     } else if (operation.kind === 'recovery') {
