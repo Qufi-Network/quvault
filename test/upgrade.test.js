@@ -111,3 +111,19 @@ test('a move needs its own palm approval, and an address that matches its key', 
   assert.equal(ok(await alex.get('/api/wallet')).wallet.custody, 'server');
   assert.equal(env.world.log.broadcast.length, 0);
 });
+
+test('a vault with nobody on its roster cannot approve anything', async t => {
+  const env = await start(t);
+  const alex = await signedIn(env, 'sub-rosterless');
+  await legacyWallet(env, alex);
+
+  // As the first version left them: a wallet, and nobody able to approve for it. The cure is
+  // the migration backfill, proved in migrate.test.js; this pins the symptom it cured.
+  const db = await env.app.db();
+  await db.query('DELETE FROM members WHERE wallet_user_id = $1', [alex.id]);
+
+  const { operation } = ok(await alex.post('/api/wallet/reset/approval', {}));
+  const refused = await alex.post(`/api/operations/${operation.id}/approval`, {});
+  assert.equal(refused.status, 403);
+  assert.match(refused.body.error, /not an approver/);
+});

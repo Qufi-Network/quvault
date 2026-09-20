@@ -136,6 +136,16 @@ const SCHEMA = [
   'ALTER TABLE operations ADD COLUMN IF NOT EXISTS human_authorization TEXT',
 
   /*
+   * Every vault needs its owner on its roster. Vaults made by the first version — and any
+   * made before the members table existed at all — never got that row, which left their
+   * owners unable to approve anything at all, including erasing the vault. This puts it back.
+   */
+  `INSERT INTO members (wallet_user_id, member_id, label, is_owner, added_at)
+   SELECT w.user_id, w.user_id, 'Owner', true, w.created_at FROM wallets w
+   WHERE NOT EXISTS (SELECT 1 FROM members m WHERE m.wallet_user_id = w.user_id AND m.member_id = w.user_id)
+   ON CONFLICT (wallet_user_id, member_id) DO NOTHING`,
+
+  /*
    * v9: the key that signs those records belongs to the owner's browser. The server keeps the
    * public half and the epoch it was registered under, and holds nothing it could sign with.
    */

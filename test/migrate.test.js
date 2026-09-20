@@ -91,6 +91,11 @@ for (const [commit, what] of RELEASES) {
       (await db.query(`SELECT count(*)::int AS n FROM accounts WHERE network = 'bitcoin'`)).rows[0].n, 1,
       'the Bitcoin account is filled in from the wallet',
     );
+    // Vaults from before the members table, and from the first version, get their owner back:
+    // without that row nobody can approve anything for them, including erasing them.
+    const owner = (await db.query(`SELECT * FROM members WHERE is_owner = true`)).rows;
+    assert.equal(owner.length, 1, `the owner is on the roster after migrating from ${commit}`);
+    assert.equal(owner[0].wallet_user_id, owner[0].member_id);
 
     // The newest operation kinds are allowed by whatever constraint now stands.
     for (const kind of ['upgrade', 'reset', 'account', 'recovery']) {
