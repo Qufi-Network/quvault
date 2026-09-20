@@ -813,7 +813,7 @@ function drawSignerStep() {
         drawWizard();
       }))) : null,
     el('div', { class: 'two' }, el('div', {}, el('label', {}, 'Add by approver code'), code), el('div', {}, el('label', {}, 'Their name'), label)),
-    button('Add signer', 'btn ghost small', () => {
+    button('Add signer', 'btn ghost sm', () => {
       const id = code.value.trim();
       const name = label.value.trim();
       if (!id || !name) {
@@ -1005,12 +1005,12 @@ function renderRequests(container, requests) {
     const mine = op.mine;
     const actions = el('div', { class: 'row' });
     if (op.status === 'collecting' && (!mine || mine.status !== 'approved')) {
-      actions.append(button('Approve with palm', 'btn brand small', () => openApproval(op, busyText(op))));
+      actions.append(button('Approve with palm', 'btn brand sm', () => openApproval(op, busyText(op))));
     } else if (mine?.status === 'approved') {
       actions.append(el('span', { class: 'quiet' }, 'You approved. Waiting for the others.'));
     }
     if (op.startedBy === me.id || op.walletOwner === me.id) {
-      actions.append(button('Cancel', 'btn ghost small', () => cancelRequest(op)));
+      actions.append(button('Cancel', 'btn ghost sm', () => cancelRequest(op)));
     }
     return el('article', { class: 'request' },
       el('p', { class: 'request-what' }, op.statement),
@@ -1279,7 +1279,9 @@ function showInviteCode(code, label) {
   state.lastInvite = code;
   $('invite-code').showModal();
 }
-$('invite-code-done').addEventListener('click', () => $('invite-code').close());
+const closeInviteCode = () => $('invite-code').close();
+$('invite-code-done').addEventListener('click', closeInviteCode);
+$('invite-code-ok').addEventListener('click', closeInviteCode);
 $('invite-code-copy').addEventListener('click', () => copy(state.lastInvite ?? '', 'Invitation code copied.'));
 
 /* The other side of it: redeeming a code with your own palm. */
@@ -1624,7 +1626,9 @@ function showReceipt(receipt, txid) {
   $('receipt').showModal();
 }
 
-$('receipt-done').addEventListener('click', () => $('receipt').close());
+const closeReceipt = () => $('receipt').close();
+$('receipt-done').addEventListener('click', closeReceipt);
+$('receipt-ok').addEventListener('click', closeReceipt);
 $('receipt-copy').addEventListener('click', () => {
   if (state.receipt) copy(JSON.stringify(state.receipt.authorization, null, 2), 'Authorisation record copied.');
 });
@@ -1635,7 +1639,8 @@ const DETAIL_LABELS = {
   action: 'Action', network: 'Network', to: 'To', amount_sats: 'Amount', fee_sats: 'Fee', fee_rate: 'Fee rate',
   change_sats: 'Change back', spends: 'Coins spent', approvals_required: 'Approvals', rules: 'New settings',
   approvers: 'Signers', spending_rule: 'Rule', owner_label: 'Your name', derived_from: 'Address from',
-  transaction_hash: 'Transaction hash',
+  transaction_hash: 'Transaction hash', vault: 'Vault', approvals: 'Approvals', method: 'Approved by',
+  approved_at: 'Approved at', key: 'Authorisation key', txid: 'Transaction ID',
 };
 
 function detailRows(details) {

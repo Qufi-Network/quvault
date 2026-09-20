@@ -51,8 +51,8 @@
     </section>
     <section class="card signin-card">
       <p class="eyebrow">Sign in</p>
-      <button class="btn brand wide" id="signin-browser" type="button" disabled>Continue with Veyns</button>
-      <button class="btn ghost wide" id="signin-palm" type="button" disabled>Sign in with palm</button>
+      <button class="btn brand wide lg" id="signin-browser" type="button" disabled>Continue with Veyns</button>
+      <button class="btn ghost wide lg" id="signin-palm" type="button" disabled>Sign in with palm</button>
       <p class="error" id="signin-error" role="alert"></p>
       <p class="fine">Veyns opens in a small window. QuVault only receives a private account key, never your palm.</p>
     </section>
@@ -76,7 +76,7 @@
     </ul>
     <label for="create-label">Your name on this vault</label>
     <input id="create-label" maxlength="40" placeholder="Alex" autocomplete="nickname">
-    <button class="btn brand wide" id="create-wallet" type="button">Create vault with a palm scan</button>
+    <button class="btn brand wide lg" id="create-wallet" type="button">Create vault with a palm scan</button>
     <p class="error" id="create-error" role="alert"></p>
     <p class="fine">Invited to sign for someone else? <button class="link" id="join-vault-empty" type="button">Enter their invitation code</button></p>
     <div id="create-pending"></div>
@@ -257,7 +257,7 @@
             <section class="card stack balance-card">
               <p class="eyebrow">Balance</p>
               <p class="amount"><span id="account-balance">0.00000000</span><span class="unit" id="account-unit">tBTC</span></p>
-              <p class="quiet small" id="account-fiat"></p>
+              <p class="quiet small fiat" id="account-fiat"></p>
               <div class="row">
                 <button class="btn brand sm" id="account-send" type="button">Send</button>
                 <button class="btn ghost sm" id="account-receive" type="button">Receive</button>
@@ -452,6 +452,7 @@
       <p class="fine">They enter it in QuVault and approve with their own palm. It works once, expires in seven days, and grants nothing until their palm has been scanned.</p>
       <footer class="sheet-foot end">
         <button class="btn ghost sm" id="invite-code-copy" type="button">Copy code</button>
+        <button class="btn brand sm" id="invite-code-ok" type="button">Done</button>
       </footer>
     </div>
   </dialog>
@@ -491,6 +492,7 @@
       <p class="fine">This record carries no biometric data. It says a palm approval covering this exact transaction was verified, and it is signed with ML-DSA-65 so anyone can check that for themselves.</p>
       <footer class="sheet-foot">
         <button class="link" id="receipt-copy" type="button">Copy the record</button>
+        <button class="btn brand sm" id="receipt-ok" type="button">Done</button>
       </footer>
     </div>
   </dialog>
