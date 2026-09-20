@@ -1810,7 +1810,7 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
 /* ----------------------------------------------------------------- footer */
 
 .site-foot {
-  padding: clamp(40px, 5vw, 66px) clamp(20px, 5vw, 68px) clamp(20px, 2.4vw, 30px);
+  padding: clamp(28px, 5vw, 66px) clamp(20px, 5vw, 68px) clamp(16px, 2.4vw, 30px);
   background: #030a15;
   color: #fff;
 }
@@ -1820,12 +1820,12 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
   gap: clamp(26px, 3.4vw, 54px);
 }
 .foot-brand .home-mark { margin-bottom: 16px; }
-.foot-brand .home-mark img { width: 46px; height: 46px; }
+.foot-brand .home-mark img { width: 40px; height: 40px; }
 .foot-brand .home-mark b { font-size: 23px; color: #fff; }
 .foot-brand .home-mark small { color: rgba(255, 255, 255, .5); }
 .foot-brand > p { max-width: 24em; font-size: 13px; line-height: 1.62; color: rgba(255, 255, 255, .62); }
 
-.socials { display: flex; gap: 9px; margin: 20px 0 0; padding: 0; list-style: none; }
+.socials { display: flex; gap: 8px; margin: 16px 0 0; padding: 0; list-style: none; }
 .socials a {
   display: grid;
   place-items: center;
@@ -1840,7 +1840,7 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
 .socials a:hover { background: var(--quvault-blue); color: #fff; }
 
 .foot-cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(18px, 2.4vw, 36px); }
-.foot-cols div { display: grid; align-content: start; gap: 11px; }
+.foot-cols div { display: grid; align-content: start; gap: 8px; }
 .foot-cols h3,
 .foot-signup h3 {
   margin-bottom: 4px;
@@ -1882,8 +1882,8 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
   justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
-  margin-top: clamp(30px, 3.4vw, 48px);
-  padding-top: clamp(16px, 2vw, 24px);
+  margin-top: clamp(18px, 3vw, 44px);
+  padding-top: clamp(12px, 1.6vw, 22px);
   border-top: 1px solid rgba(255, 255, 255, .1);
   font-size: 12.5px;
   color: rgba(255, 255, 255, .5);
@@ -2356,14 +2356,68 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
 .exact-foot .palm-link { margin: 0; color: rgba(255, 255, 255, .55); }
 .exact-foot .palm-link:hover { color: #4f9dff; }
 /* hotspot coordinates, generated from the package reference */
-.at-home { left: 35.1759%; top: 0.9114%; width: 6.9095%; height: 1.6203%; }
-.at-about { left: 42.0854%; top: 0.9114%; width: 6.9095%; height: 1.6203%; }
-.at-technology { left: 48.9950%; top: 0.9114%; width: 11.3065%; height: 1.6203%; }
-.at-usecases { left: 60.3015%; top: 0.9114%; width: 10.0503%; height: 1.6203%; }
-.at-security { left: 70.3518%; top: 0.9114%; width: 9.4221%; height: 1.6203%; }
-.at-resources { left: 79.7739%; top: 0.9114%; width: 10.0503%; height: 1.6203%; }
-.at-spot-signin { right: 14.4472%; top: 0.6582%; width: 9.4221%; height: 1.7215%; }
-.at-spot-create { right: 2.2613%; top: 0.6582%; width: 11.3065%; height: 1.7215%; }
-.at-spot-start { left: 5.6533%; top: 15.9494%; width: 16.9598%; height: 2.4304%; }
-.at-hero-video { left: 22.6131%; top: 15.9494%; width: 14.4472%; height: 2.4304%; }
-.at-spot-join { left: 69.7236%; top: 74.9367%; width: 23.8693%; height: 2.7848%; }
+.art-slice { aspect-ratio: 796 / 1690; }
+.at-spot-home { left: 35.1759%; top: 1.0651%; width: 6.9095%; height: 1.8935%; }
+.at-spot-about { left: 42.0854%; top: 1.0651%; width: 6.9095%; height: 1.8935%; }
+.at-spot-technology { left: 48.9950%; top: 1.0651%; width: 11.3065%; height: 1.8935%; }
+.at-spot-usecases { left: 60.3015%; top: 1.0651%; width: 10.0503%; height: 1.8935%; }
+.at-spot-security { left: 70.3518%; top: 1.0651%; width: 9.4221%; height: 1.8935%; }
+.at-spot-resources { left: 79.7739%; top: 1.0651%; width: 10.0503%; height: 1.8935%; }
+.at-spot-signin { right: 14.4472%; top: 0.7692%; width: 9.4221%; height: 2.0118%; }
+.at-spot-create { right: 2.2613%; top: 0.7692%; width: 11.3065%; height: 2.0118%; }
+.at-spot-start { left: 5.6533%; top: 18.6391%; width: 16.9598%; height: 2.8402%; }
+.at-spot-hero-video { left: 22.6131%; top: 18.6391%; width: 14.4472%; height: 2.8402%; }
+.at-spot-join { left: 69.7236%; top: 87.5740%; width: 23.8693%; height: 3.2544%; }
+
+/* The artwork, cut to the part that has not been rebuilt yet. */
+.art-slice { position: relative; width: 100%; overflow: hidden; }
+.art-slice .exact-art { position: absolute; top: 0; left: 0; width: 100%; height: auto; }
+
+/*
+ * While the page is half artwork and half markup the two have to share a measure, or the
+ * rebuilt parts resolve their spacing against the window and the artwork against 796. Inside
+ * this container the reference is the unit, so spacing is written in its pixels.
+ */
+.exact-page .site-foot {
+  padding: 30px 45px 14px;
+}
+.exact-page .site-foot .foot-top { gap: 26px; }
+.exact-page .site-foot .foot-bottom { margin-top: 16px; padding-top: 10px; font-size: 11px; }
+.exact-page .site-foot .foot-brand > p { font-size: 11.5px; }
+.exact-page .site-foot .foot-cols a { font-size: 11.5px; }
+.exact-page .site-foot .foot-cols h3, .exact-page .site-foot .foot-signup h3 { font-size: 13px; }
+.exact-page .site-foot .foot-signup > p { font-size: 11.5px; margin-bottom: 10px; }
+
+/* The palm route sits with the small print rather than in a strip of its own. */
+.foot-bottom .palm-link { font-size: 11px; color: rgba(255,255,255,.55); }
+.foot-bottom .palm-link:hover { color: #4f9dff; }
+.foot-bottom .error { min-height: 0; flex-basis: 100%; text-align: center; }
+
+/* --------------------------------------------- footer, against the reference */
+
+/* The tagline is one line under the name, never two. */
+.home-mark small { white-space: nowrap; }
+
+/*
+ * In the reference the field and its button are one control: a single rounded well with the
+ * arrow sitting inside it, not a box with a button parked next to it.
+ */
+.exact-page .signup-row {
+  gap: 0;
+  padding: 4px 4px 4px 0;
+  border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .06);
+}
+.exact-page .signup-row input {
+  height: 30px;
+  border: 0;
+  background: transparent;
+  font-size: 12px;
+}
+.exact-page .signup-row input:focus { outline: none; }
+.exact-page .signup-row:focus-within { border-color: var(--quvault-blue); }
+.exact-page .signup-row .round-btn { width: 30px; height: 30px; border-radius: 7px; }
+.exact-page .foot-signup .check { margin-top: 10px; font-size: 11px; }
+.exact-page .socials a { width: 30px; height: 30px; border-radius: 8px; }
+.exact-page .socials svg { width: 15px; height: 15px; }

@@ -79,31 +79,96 @@
 
   <main id="view-signin" class="view exact" hidden>
     <!--
-      Mode A from the package: the supplied artwork is the visual layer and every control on it
-      is a real, focusable element placed over the top. The coordinates come from the package's
-      own reference HTML, converted to percentages so they hold at any width rather than only
-      at the 796px the reference was drawn at.
+      Converting region by region. The supplied artwork is still the visual for everything
+      above the line; everything below it is real markup now. The slice shows the first 1690
+      rows of the picture, and the controls left on it are measured against that height.
     -->
     <div class="exact-page">
-      <img class="exact-art" src="/ref/MASTER_REFERENCE.png" width="796" height="1975"
-           alt="QuVault: your coins move only for your hand. Biometric verification and post-quantum cryptography.">
-      <a class="hotspot at-home" id="spot-home" href="#home" aria-label="Home"></a>
-      <a class="hotspot at-about" id="spot-about" href="#about" aria-label="About"></a>
-      <a class="hotspot at-technology" id="spot-technology" href="#technology" aria-label="Technology"></a>
-      <a class="hotspot at-usecases" id="spot-usecases" href="#uses" aria-label="Use Cases"></a>
-      <a class="hotspot at-security" id="spot-security" href="#security" aria-label="Security"></a>
-      <a class="hotspot at-resources" id="spot-resources" href="#contact" aria-label="Resources"></a>
-      <button class="hotspot at-spot-signin" id="spot-signin" type="button" aria-label="Sign In" disabled></button>
-      <button class="hotspot at-spot-create" id="spot-create" type="button" aria-label="Create Account" disabled></button>
-      <button class="hotspot at-spot-start" id="spot-start" type="button" aria-label="Get Started" disabled></button>
-      <a class="hotspot at-hero-video" id="spot-hero-video" href="#security" aria-label="Watch the Video"></a>
-      <button class="hotspot at-spot-join" id="spot-join" type="button" aria-label="Create Your Account" disabled></button>
-    </div>
+      <div class="art-slice">
+        <img class="exact-art" src="/ref/MASTER_REFERENCE.png" width="796" height="1975"
+             alt="QuVault: your coins move only for your hand. Biometric verification and post-quantum cryptography.">
+        <a class="hotspot at-spot-home" id="spot-home" href="#home" aria-label="Home"></a>
+        <a class="hotspot at-spot-about" id="spot-about" href="#about" aria-label="About"></a>
+        <a class="hotspot at-spot-technology" id="spot-technology" href="#technology" aria-label="Technology"></a>
+        <a class="hotspot at-spot-usecases" id="spot-usecases" href="#uses" aria-label="Use Cases"></a>
+        <a class="hotspot at-spot-security" id="spot-security" href="#security" aria-label="Security"></a>
+        <a class="hotspot at-spot-resources" id="spot-resources" href="#contact" aria-label="Resources"></a>
+        <button class="hotspot at-spot-signin" id="spot-signin" type="button" aria-label="Sign In" disabled></button>
+        <button class="hotspot at-spot-create" id="spot-create" type="button" aria-label="Create Account" disabled></button>
+        <button class="hotspot at-spot-start" id="spot-start" type="button" aria-label="Get Started" disabled></button>
+        <a class="hotspot at-spot-hero-video" id="spot-hero-video" href="#security" aria-label="Watch the Video"></a>
+        <button class="hotspot at-spot-join" id="spot-join" type="button" aria-label="Create Your Account" disabled></button>
+      </div>
 
-    <!-- Not in the artwork, and needed: the palm route in, and anywhere to report a failure. -->
-    <div class="exact-foot">
-      <button class="link palm-link" id="signin-palm" type="button" disabled>or sign in with your palm</button>
-      <p class="error" id="signin-error" role="alert"></p>
+    <footer class="site-foot" id="contact">
+      <div class="foot-top">
+        <div class="foot-brand">
+          <a class="home-mark" href="#home">
+            <img src="/qufi-mark.png" alt="" width="46" height="46">
+            <span>
+              <b>QuVault</b>
+              <small>Human secures value</small>
+            </span>
+          </a>
+          <p>A more secure, more open financial future. Powered by human verification and post
+            quantum technology.</p>
+          <ul class="socials">
+            <li><a href="#contact" aria-label="LinkedIn"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.2 9.4v9.2M6.2 5.6v.1M10.4 18.6V9.4m0 3.2c0-1.8 1.3-3.2 3.1-3.2s3.3 1.4 3.3 3.2v6"/></svg></a></li>
+            <li><a href="#contact" aria-label="X"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5.6 5.6 12.8 12.8M18.4 5.6 5.6 18.4"/></svg></a></li>
+            <li><a href="#contact" aria-label="YouTube"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.4" y="6.6" width="17.2" height="10.8" rx="3.2"/><path d="m10.4 9.8 4.6 2.6-4.6 2.6z"/></svg></a></li>
+            <li><a href="#contact" aria-label="GitHub"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.4 19.2c-3.4 1-3.4-1.8-4.8-2.2m9.6 3.8v-2.9c0-.9.1-1.3-.4-1.8 2.3-.3 4.5-1.2 4.5-5a3.9 3.9 0 0 0-1.1-2.7 3.6 3.6 0 0 0-.1-2.7s-.9-.3-2.9 1.1a10 10 0 0 0-5 0C7.2 5.4 6.3 5.7 6.3 5.7a3.6 3.6 0 0 0-.1 2.7A3.9 3.9 0 0 0 5.1 11c0 3.8 2.2 4.7 4.5 5-.3.3-.4.7-.4 1.2v2.7"/></svg></a></li>
+            <li><a href="#contact" aria-label="Discord"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.4 7.4a13 13 0 0 1 7.2 0M7.6 16.6a13 13 0 0 0 8.8 0M9 17.8c-1.6 0-3.2-2.2-3.6-5.2C5 9.6 6 7.6 8.4 7v0M15 17.8c1.6 0 3.2-2.2 3.6-5.2.4-3-.6-5-3-5.6v0"/><circle cx="9.6" cy="13" r="1.1"/><circle cx="14.4" cy="13" r="1.1"/></svg></a></li>
+          </ul>
+        </div>
+
+        <nav class="foot-cols" aria-label="Footer">
+          <div>
+            <h3>Product</h3>
+            <a href="#security">Features</a>
+            <a href="#technology">Technology</a>
+            <a href="#uses">Use Cases</a>
+            <a href="#security">Security</a>
+            <a href="#contact">Pricing</a>
+          </div>
+          <div>
+            <h3>Company</h3>
+            <a href="#about">About Us</a>
+            <a href="#contact">Careers</a>
+            <a href="#contact">News</a>
+            <a href="#contact">Blog</a>
+            <a href="#contact">Contact</a>
+          </div>
+          <div>
+            <h3>Resources</h3>
+            <a href="#contact">Help Centre</a>
+            <a href="#contact">Documentation</a>
+            <a href="#contact">Privacy Policy</a>
+            <a href="#contact">Terms of Service</a>
+            <a href="#contact">Compliance</a>
+          </div>
+        </nav>
+
+        <form class="foot-signup" id="foot-signup">
+          <h3>Stay Updated</h3>
+          <p>Get the latest from QuVault.</p>
+          <div class="signup-row">
+            <input id="signup-email" type="email" placeholder="Your email address" aria-label="Your email address" autocomplete="email">
+            <button class="round-btn on" id="signup-go" type="submit" aria-label="Sign up">
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11m-4.5-4.5L15 10l-4.5 4.5"/></svg>
+            </button>
+          </div>
+          <label class="check"><input id="signup-consent" type="checkbox"><span>I agree to receive updates from QuVault.</span></label>
+          <p class="fine" id="signup-note" role="status"></p>
+        </form>
+      </div>
+
+      <div class="foot-bottom">
+        <small>&copy; 2026 QuVault. All rights reserved.</small>
+        <button class="link palm-link" id="signin-palm" type="button" disabled>or sign in with your palm</button>
+        <p class="error" id="signin-error" role="alert"></p>
+        <small>Your Hand. A Safer Tomorrow.</small>
+      </div>
+    </footer>
     </div>
   </main>
 

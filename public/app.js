@@ -305,9 +305,23 @@ for (const [id, method] of SIGNIN_BUTTONS) $(id).addEventListener('click', () =>
 }
 
 /*
- * The home page is the supplied artwork with controls over it, so the newsletter, the hand
- * image loader and the pointer tilt that belonged to the component build are gone with it.
- * The About page keeps its hand, which needs no script.
+ * The newsletter sign-up. There is nowhere to send an address yet, so rather than pretend to
+ * take one it says plainly that it is not connected — a form that silently swallows what
+ * somebody typed is worse than one that admits it cannot help.
+ */
+$('foot-signup').addEventListener('submit', event => {
+  event.preventDefault();
+  const email = $('signup-email').value.trim();
+  if (!email) return;
+  $('signup-note').textContent = $('signup-consent').checked
+    ? 'Updates are not connected yet — nothing has been sent or stored.'
+    : 'Tick the box first, and note that updates are not connected yet.';
+});
+
+/*
+ * The regions still shown as artwork have no script behind them; the hand image loader and
+ * the pointer tilt belonged to the hero, which is one of them. The About page keeps its hand,
+ * which needs no script.
  */
 
 $('signout').addEventListener('click', async () => {
