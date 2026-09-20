@@ -200,6 +200,17 @@ const SCHEMA = [
   'ALTER TABLE members ADD COLUMN IF NOT EXISTS key_at BIGINT',
 
   /*
+   * v14: an account whose threshold the chain keeps rather than this server. The coins sit in
+   * a P2WSH output holding an m-of-n script; 'required' and 'quorum_keys' are that script
+   * written out, and public_key holds the script itself, so anyone can rebuild the address
+   * without us. The address the account used before is kept: coins sent to it by somebody
+   * working from an old note still arrive there, and the owner's key still opens them.
+   */
+  'ALTER TABLE accounts ADD COLUMN IF NOT EXISTS required INTEGER',
+  'ALTER TABLE accounts ADD COLUMN IF NOT EXISTS quorum_keys TEXT',
+  'ALTER TABLE accounts ADD COLUMN IF NOT EXISTS previous_address TEXT',
+
+  /*
    * Which kinds of operation exist is decided by the code that is running, so the constraint
    * is simply restated on every migration: one statement, every old name dropped, today's
    * list added. Versioned names were a trap — a later version dropping an earlier one made
@@ -213,7 +224,7 @@ const SCHEMA = [
      DROP CONSTRAINT IF EXISTS operations_kind_v7,
      DROP CONSTRAINT IF EXISTS operations_kind,
      ADD CONSTRAINT operations_kind
-       CHECK (kind IN ('create', 'withdraw', 'policy', 'recovery', 'account', 'upgrade', 'reset', 'attestation', 'invite', 'join', 'signing'))`,
+       CHECK (kind IN ('create', 'withdraw', 'policy', 'recovery', 'account', 'upgrade', 'reset', 'attestation', 'invite', 'join', 'signing', 'lock'))`,
 ];
 
 const INT8 = 20; // Timestamps are BIGINT; read them back as numbers.

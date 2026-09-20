@@ -10,6 +10,7 @@ import { serverKeys, seal, open as openSealed, sealRoot, rootSealMatches } from 
 import { createChain, createPrices, ChainError } from './chain.js';
 import {
   createKey, publicKeyOf, addressOf, planSpend, signPlan, isValidAddress, toBtc, verifyAgainstPlan, WalletError,
+  multisigAddressOf, multisigOf,
 } from './bitcoin.js';
 import { DEFAULT_POLICY, PolicyError, describePolicy, requiredFor, requiredToChange, validatePolicy } from './policy.js';
 import { NETWORKS, createBalances, format, networkList } from './networks.js';
@@ -62,6 +63,9 @@ const SQL = {
   insertAccountFull: `INSERT INTO accounts (wallet_user_id, network, address, public_key, policy, signers, created_at)
                       VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (wallet_user_id, network) DO NOTHING`,
   setAccountPolicy: 'UPDATE accounts SET policy = $1, signers = $2 WHERE wallet_user_id = $3 AND network = $4',
+  lockAccountToQuorum: `UPDATE accounts SET address = $1, public_key = $2, required = $3, quorum_keys = $4,
+                          previous_address = COALESCE(previous_address, address)
+                        WHERE wallet_user_id = $5 AND network = $6`,
 
   membersOf: 'SELECT * FROM members WHERE wallet_user_id = $1 ORDER BY is_owner DESC, added_at',
   memberIn: 'SELECT * FROM members WHERE wallet_user_id = $1 AND member_id = $2',
@@ -634,11 +638,18 @@ export function createApp(options) {
   async function runOperation(op, decisionId) {
     const time = now();
     try {
-      if (op.kind === 'withdraw') {
+      if (op.kind === 'withdraw' || op.kind === 'lock') {
         const wallet = await one('walletOf', op.wallet_user_id);
         // With the key in the owner's browser, the quorum is complete but the signing is not:
-        // the operation waits, and the owner's device signs and sends it.
-        if (wallet?.custody === 'client') return;
+        // the operation waits, and the owner's device signs and sends it. A lock with nothing
+        // to move has no transaction to wait for, so it simply happens.
+        const moving = Boolean(op.payload && JSON.parse(op.payload).inputs);
+        if (wallet?.custody === 'client' && moving) return;
+        if (op.kind === 'lock' && !moving) {
+          await lockAccount(op);
+          await query('finishOperation', 'done', null, null, time, op.id);
+          return;
+        }
       }
       const { txid } = op.kind === 'create' ? await createWallet(op, decisionId)
         : op.kind === 'policy' ? await applyPolicy(op)
@@ -789,7 +800,7 @@ export function createApp(options) {
   async function unlockFor({ user, params: [id] }) {
     const op = await ownOperation(id, user);
     if (op.wallet_user_id !== user.id) throw new HttpError(403, 'Only the account owner can unlock this wallet.');
-    if (!['create', 'withdraw', 'recovery', 'account', 'upgrade', 'attestation', 'signing'].includes(op.kind)) {
+    if (!['create', 'withdraw', 'recovery', 'account', 'upgrade', 'attestation', 'signing', 'lock'].includes(op.kind)) {
       throw new HttpError(409, 'Nothing to unlock for this request.');
     }
     if (!['running', 'done'].includes(op.status)) throw new HttpError(409, 'This request is still collecting palm approvals.');
@@ -818,7 +829,8 @@ export function createApp(options) {
     return {
       unlock: openSealed(wallet.unlock_sealed, vault()).toString('base64'),
       salt: wallet.salt,
-      ...(op.kind === 'withdraw' ? await withdrawalUnlock(op, wallet) : {}),
+      ...(['withdraw', 'lock'].includes(op.kind) && op.payload && JSON.parse(op.payload).inputs
+        ? await withdrawalUnlock(op, wallet) : {}),
     };
   }
 
@@ -868,7 +880,7 @@ export function createApp(options) {
   async function broadcastSigned({ user, params: [id], body }) {
     const op = await ownOperation(id, user);
     if (op.wallet_user_id !== user.id) throw new HttpError(403, 'Only the account owner can send this.');
-    if (op.kind !== 'withdraw') throw new HttpError(409, 'That request is not a withdrawal.');
+    if (op.kind !== 'withdraw' && op.kind !== 'lock') throw new HttpError(409, 'That request does not send a transaction.');
     if (op.status === 'done' && op.txid) return { txid: op.txid };
     if (op.status !== 'running') throw new HttpError(409, 'This withdrawal is not ready to send.');
 
@@ -904,6 +916,9 @@ export function createApp(options) {
     }
     try {
       const txid = await chain.broadcast(String(body.hex).trim());
+      // The account only becomes a quorum once its coins are actually on their way to one,
+      // so a lock that could not be sent leaves everything exactly as it was.
+      if (op.kind === 'lock') await lockAccount(op);
       await query('finishOperation', 'done', txid, null, now(), op.id);
       return { txid };
     } catch (error) {
@@ -953,6 +968,13 @@ export function createApp(options) {
         canSend: network.canSend,
         address: row.address,
         explorer: network.explorer(row.address),
+        // When the chain keeps this account's threshold, what it keeps.
+        quorum: row.required ? {
+          required: row.required,
+          keys: JSON.parse(row.quorum_keys),
+          script: row.public_key,
+          previousAddress: row.previous_address,
+        } : null,
         amount,
         formatted: amount === null ? null : format(amount, row.network),
         qr,
@@ -1059,6 +1081,104 @@ export function createApp(options) {
     if (member.public_key) throw new HttpError(409, 'You already have a signing key for that vault.');
     await query('setMemberKey', publicKey, index, now(), vaultOwnerId, user.id);
     return { signingKey: publicKey, index };
+  }
+
+  /*
+   * Locking an account to the people who sign for it.
+   *
+   * Until this happens a threshold is a rule this server remembers: the coins sit behind the
+   * owner's single key, and whoever holds that key can spend alone. Locking moves them into a
+   * script that names every signer's key and how many signatures it takes, so the rule is
+   * kept by Bitcoin and survives this server entirely.
+   *
+   * Two things follow from that and cannot be arranged away. The script cannot read the
+   * amount being sent, so an account the chain guards has one threshold rather than a ladder
+   * of them. And the threshold is part of the address, so changing it later means a new
+   * address and moving the coins again.
+   */
+  async function requestLock({ user, body }) {
+    requirePalmReady();
+    const wallet = await one('walletOf', user.id);
+    if (!wallet) throw new HttpError(409, 'Create the wallet first.');
+    if (wallet.custody !== 'client') throw new HttpError(409, 'Move this vault into your browser first.');
+
+    const members = await all('membersOf', user.id);
+    const account = await one('accountOn', user.id, 'bitcoin');
+    if (!account) throw new HttpError(409, 'This vault has no Bitcoin account.');
+    if (account.required) throw new HttpError(409, 'This account is already locked to a quorum on the chain.');
+
+    const signerIds = signersOf(account, members);
+    const signers = signerIds.map(id => members.find(m => m.member_id === id)).filter(Boolean);
+    const without = signers.filter(m => !m.public_key);
+    if (without.length) {
+      const names = without.map(m => m.label).join(', ');
+      throw new HttpError(409, `Everyone has to make a signing key first. Still waiting for: ${names}.`);
+    }
+    if (signers.length < 2) throw new HttpError(409, 'A quorum needs at least two signers.');
+
+    const required = Number(body.required);
+    if (!Number.isInteger(required) || required < 1 || required > signers.length) {
+      throw new HttpError(400, `Choose between one and ${signers.length} signatures.`);
+    }
+
+    const keys = signers.map(m => m.public_key);
+    let quorumAddress;
+    try {
+      quorumAddress = multisigAddressOf(keys, required);
+    } catch (error) {
+      throw new HttpError(400, error instanceof WalletError ? error.message : 'Those keys do not make a quorum.');
+    }
+
+    // The coins have to move, because the script they are locked to is the address itself.
+    let plan = null;
+    try {
+      const [utxos, suggested] = await Promise.all([chain.spendableUtxos(wallet.address), chain.feeRate()]);
+      const feeRate = Number(body.feeRate) > 0 ? Number(body.feeRate) : suggested;
+      if (utxos.length) {
+        plan = planSpend({
+          publicKey: Buffer.from(wallet.public_key, 'hex'),
+          utxos, toAddress: quorumAddress, amountSats: 'max', feeRate,
+        });
+      }
+    } catch (error) {
+      if (error instanceof WalletError || error instanceof ChainError) throw new HttpError(400, error.message);
+      throw error;
+    }
+
+    const policy = policyOfAccount(account, wallet);
+    const palms = Math.min(requiredToChange(policy, signers.length), signers.length);
+    const bound = plan ? bindPlan(wallet, plan) : null;
+    const statement = plan
+      ? `Lock my Bitcoin to ${required} of ${signers.length} on the chain and move ${toBtc(plan.sentSats)} tBTC to it`
+      : `Lock my Bitcoin to ${required} of ${signers.length} on the chain`;
+    const details = {
+      action: 'lock to a quorum on the chain',
+      network,
+      approvals_required: `${required} of ${signers.length} signature${signers.length === 1 ? '' : 's'}`,
+      signers: signers.map(m => m.label).join(', '),
+      to: quorumAddress,
+      effect: 'from now on this account is spent by signatures, not by one key',
+      ...(plan ? {
+        amount_sats: plan.sentSats,
+        fee_sats: plan.feeSats,
+        spends: plan.inputs.map(i => `${i.txid}:${i.index}`).join(' '),
+        transaction_hash: bound.digest,
+      } : { amount_sats: 0 }),
+    };
+    const op = await newOperation({
+      walletOwnerId: user.id, user, kind: 'lock', statement, details,
+      payload: { ...(plan ?? {}), transactionHash: bound?.digest ?? null, quorum: { keys, required, address: quorumAddress } },
+      required: palms, networkId: 'bitcoin',
+    });
+    return { operation: operationView(op, [], user), quorum: { address: quorumAddress, required, signers: signers.length }, plan };
+  }
+
+  /** Writes the quorum onto the account, once the coins are on their way to it. */
+  async function lockAccount(op) {
+    const { quorum } = JSON.parse(op.payload);
+    const script = multisigOf(quorum.keys, quorum.required).witnessScript;
+    await query('lockAccountToQuorum', quorum.address, Buffer.from(script).toString('hex'),
+      quorum.required, JSON.stringify(quorum.keys), op.wallet_user_id, 'bitcoin');
   }
 
   /** The browser reports the address it derived for the new network. */
@@ -1564,6 +1684,10 @@ export function createApp(options) {
     requirePalmReady();
     const wallet = await one('walletOf', user.id);
     if (!wallet) throw new HttpError(409, 'Create the wallet first.');
+    const account = await one('accountOn', user.id, 'bitcoin');
+    if (account?.required) {
+      throw new HttpError(409, 'Spending from a quorum on the chain is not wired up yet.');
+    }
 
     const to = String(body.to ?? '').trim();
     if (!isValidAddress(to)) throw new HttpError(400, `That is not a valid ${network} address.`);
@@ -1790,6 +1914,7 @@ export function createApp(options) {
     { method: 'GET', path: '/api/invites', handler: listInvites, auth: true },
     { method: 'POST', path: '/api/invites/cancel', handler: cancelInvite, auth: true },
     { method: 'POST', path: '/api/invites/join', handler: requestJoin, auth: true },
+    { method: 'POST', path: '/api/accounts/lock', handler: requestLock, auth: true },
     { method: 'POST', path: '/api/signing-key/approval', handler: requestSigningKey, auth: true },
     { method: 'POST', path: '/api/signing-key/register', handler: registerSigningKey, auth: true },
     { method: 'POST', path: '/api/attestation/approval', handler: requestAttestationRotation, auth: true },
