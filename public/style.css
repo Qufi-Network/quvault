@@ -967,43 +967,38 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
 .hero-scene { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
 .hero-scene span { position: absolute; display: block; }
 
-/* the window wall, and the night beyond it */
+/*
+ * One continuous night. Everything here fades rather than meets: a hard edge anywhere across
+ * the middle of a hero reads as two pictures badly joined, which is exactly what the first
+ * attempt did.
+ */
 .scene-window {
-  inset: 0 0 26% 38%;
+  inset: 0;
   background:
-    linear-gradient(180deg, rgba(10, 26, 52, .9) 0%, rgba(14, 38, 72, .72) 46%, rgba(6, 16, 32, .9) 100%),
-    linear-gradient(90deg, #060d1c 0%, #0c2544 26%, #123763 62%, #0a1e3a 100%);
+    radial-gradient(90% 82% at 76% 34%, rgba(20, 62, 116, .95) 0%, rgba(11, 34, 66, .6) 44%, transparent 76%),
+    radial-gradient(60% 50% at 96% 8%, rgba(40, 96, 166, .5), transparent 70%),
+    linear-gradient(105deg, #04070e 0%, #050c18 34%, #081a33 62%, #0a2242 100%);
 }
-.scene-window::before,
-.scene-window::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  background: rgba(150, 195, 255, .16);
-}
-.scene-window::before { left: 34%; }
-.scene-window::after { left: 72%; }
 
-/* a city, far off and low down */
+/* a city, far off and low, with no edge where it starts */
 .scene-city {
-  inset: auto 0 26% 38%;
-  height: 26%;
+  inset: auto 0 22% 0;
+  height: 22%;
   background:
-    radial-gradient(60% 150% at 22% 100%, rgba(255, 196, 120, .30), transparent 62%),
-    radial-gradient(70% 160% at 74% 100%, rgba(120, 190, 255, .26), transparent 64%),
-    repeating-linear-gradient(90deg, rgba(255, 220, 170, .10) 0 2px, transparent 2px 9px);
-  filter: blur(.4px);
+    radial-gradient(48% 150% at 78% 100%, rgba(255, 198, 124, .26), transparent 64%),
+    radial-gradient(56% 160% at 96% 100%, rgba(120, 190, 255, .22), transparent 66%),
+    repeating-linear-gradient(90deg, rgba(255, 222, 172, .09) 0 2px, transparent 2px 11px);
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 42%, #000 100%);
+  mask-image: linear-gradient(90deg, transparent 0%, #000 42%, #000 100%);
+  filter: blur(.5px);
 }
 
-/* the surface it all stands on */
+/* the surface it all stands on, meeting the night in a gradient rather than a line */
 .scene-surface {
-  inset: 74% 0 0 0;
+  inset: 78% 0 0 0;
   background:
-    radial-gradient(52% 120% at 58% 0%, rgba(60, 150, 255, .22), transparent 66%),
-    linear-gradient(180deg, #0a1425 0%, #060c17 58%, #03060d 100%);
-  border-top: 1px solid rgba(130, 180, 255, .13);
+    radial-gradient(46% 130% at 62% 0%, rgba(60, 150, 255, .20), transparent 68%),
+    linear-gradient(180deg, rgba(10, 20, 37, 0) 0%, #081120 22%, #050b16 62%, #03060d 100%);
 }
 
 .hero-inner {
@@ -1087,7 +1082,8 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
   color: rgba(255, 255, 255, .62);
 }
 .stage-note.at-left { top: 6%; left: 0; }
-.stage-note.at-right { top: 42%; right: 0; text-align: right; }
+/* Clear of the card rather than behind it, which is where the drawing puts it too. */
+.stage-note.at-right { top: 62%; right: 0; text-align: right; }
 .stage-note.at-foot { bottom: 12%; right: 4%; text-align: right; }
 
 /* The hand comes in from above, tipped just enough to be offering itself to the reader. */
@@ -1098,10 +1094,11 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
 .hand-frame.reaching {
   position: absolute;
   z-index: 2;
-  bottom: 46%;
-  left: 20%;
-  width: min(46%, 280px);
-  rotate: 6deg;
+  bottom: 34%;
+  left: 50%;
+  width: min(52%, 310px);
+  translate: -54% 0;
+  rotate: 4deg;
 }
 .hand-frame.reaching img:first-of-type { filter: drop-shadow(0 0 70px rgba(50, 140, 255, .42)); }
 .hand-frame.reaching::before { display: none; }
@@ -1111,10 +1108,11 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
 .reader {
   position: absolute;
   z-index: 1;
-  left: 30%;
-  bottom: 10%;
-  width: min(48%, 310px);
-  aspect-ratio: 1 / .62;
+  left: 50%;
+  bottom: 6%;
+  translate: -50% 0;
+  width: min(54%, 330px);
+  aspect-ratio: 1 / .46;
 }
 .reader span { position: absolute; display: block; }
 
@@ -1152,12 +1150,14 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
 
 /* light leaving the ring and arriving at the palm above it */
 .beams {
-  inset: -62% 16% 40% 16%;
+  inset: -78% 24% 52% 24%;
   background:
-    repeating-linear-gradient(90deg, rgba(150, 210, 255, .5) 0 2px, transparent 2px 13px);
-  -webkit-mask-image: linear-gradient(180deg, transparent 2%, #000 62%, #000 88%, transparent 100%);
-  mask-image: linear-gradient(180deg, transparent 2%, #000 62%, #000 88%, transparent 100%);
-  opacity: .5;
+    linear-gradient(180deg, rgba(150, 210, 255, .5), rgba(90, 175, 255, .16)),
+    repeating-linear-gradient(90deg, rgba(180, 225, 255, .85) 0 1.5px, transparent 1.5px 11px);
+  background-blend-mode: multiply;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 46%, #000 84%, transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0%, #000 46%, #000 84%, transparent 100%);
+  opacity: .8;
 }
 
 /* ------------------------------------------------------- the assets card */
@@ -1271,11 +1271,7 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
 
 /* --------------------------------------------- the header, over the dark */
 
-.home-top {
-  position: relative;
-  z-index: 5;
-  background: transparent;
-}
+.home-top { position: relative; z-index: 5; }
 .home-top .home-mark b { color: #fff; }
 .home-top .home-mark small { color: rgba(255, 255, 255, .52); }
 .home-nav a { color: rgba(255, 255, 255, .82); }
@@ -1327,7 +1323,7 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
   align-items: center;
   gap: clamp(20px, 4vw, 48px);
   padding: clamp(36px, 5vw, 78px) clamp(20px, 5vw, 68px) clamp(48px, 7vw, 96px);
-  border-radius: 0 0 100% 100% / 0 0 64px 64px;
+  border-radius: 0;
   background:
     radial-gradient(70% 90% at 50% 118%, rgba(52, 140, 255, .42), transparent 64%),
     radial-gradient(40% 55% at 78% 28%, rgba(46, 130, 255, .26), transparent 70%),
@@ -1550,16 +1546,22 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
     var(--surface);
 }
 
+/*
+ * The header is part of the night, not a white strip above it. It carries the hero's own
+ * darkness so the two read as one surface, which is why the logo and the outlined button are
+ * light here and the page behind them never shows through.
+ */
 .home-top {
   display: flex;
   align-items: center;
   gap: 32px;
   padding: 22px clamp(20px, 5vw, 68px);
+  background: #04070e;
 }
 .home-mark { display: flex; align-items: center; gap: 13px; text-decoration: none; color: inherit; }
 .home-mark img { width: 52px; height: 52px; }
 .home-mark span { display: grid; gap: 3px; }
-.home-mark b { font-size: 27px; font-weight: 700; letter-spacing: -.028em; color: var(--navy); }
+.home-mark b { font-size: 27px; font-weight: 700; letter-spacing: -.028em; color: #fff; }
 .home-mark small {
   font: 600 9.5px/1 var(--sans);
   letter-spacing: .22em;
@@ -1569,7 +1571,8 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
 
 .home-nav { display: flex; gap: clamp(18px, 3vw, 42px); margin-inline: auto; }
 .home-nav a {
-  color: var(--text-2);
+  white-space: nowrap;
+  color: rgba(255, 255, 255, .82);
   font: 500 15px/1 var(--sans);
   letter-spacing: -.01em;
   text-decoration: none;
@@ -1839,7 +1842,7 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
   gap: 28px;
   flex-wrap: wrap;
   padding: clamp(64px, 9vw, 120px) clamp(20px, 5vw, 68px) clamp(40px, 5vw, 62px);
-  border-radius: 100% 100% 0 0 / 70px 70px 0 0;
+  border-radius: 0;
   background:
     radial-gradient(120% 90% at 50% 130%, rgba(46, 130, 255, .38), transparent 62%),
     linear-gradient(180deg, #071630, #04101f);
