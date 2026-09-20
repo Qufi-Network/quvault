@@ -106,27 +106,11 @@ const SCHEMA = [
     created_at     BIGINT NOT NULL,
     PRIMARY KEY (wallet_user_id, network)
   )`,
-  `DO $$ BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'operations_kind_v4') THEN
-      ALTER TABLE operations DROP CONSTRAINT IF EXISTS operations_kind_check;
-      ALTER TABLE operations DROP CONSTRAINT IF EXISTS operations_kind_v3;
-      ALTER TABLE operations ADD CONSTRAINT operations_kind_v4
-        CHECK (kind IN ('create', 'withdraw', 'policy', 'recovery', 'account'));
-    END IF;
-  END $$`,
-
   /*
    * v5: a wallet made before the key moved into the browser can be moved in, which is its
    * own kind of operation. Older wallets also predate the accounts table, so the Bitcoin
    * account every wallet has is filled in from the wallet itself.
    */
-  `DO $$ BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'operations_kind_v5') THEN
-      ALTER TABLE operations DROP CONSTRAINT IF EXISTS operations_kind_v4;
-      ALTER TABLE operations ADD CONSTRAINT operations_kind_v5
-        CHECK (kind IN ('create', 'withdraw', 'policy', 'recovery', 'account', 'upgrade'));
-    END IF;
-  END $$`,
   `INSERT INTO accounts (wallet_user_id, network, address, public_key, created_at)
    SELECT user_id, 'bitcoin', address, public_key, created_at FROM wallets
    ON CONFLICT (wallet_user_id, network) DO NOTHING`,
@@ -148,25 +132,50 @@ const SCHEMA = [
      SELECT json_agg(m.member_id)::text FROM members m WHERE m.wallet_user_id = a.wallet_user_id
    ) WHERE a.signers IS NULL`,
 
-  // v7: a vault can be erased and started over, which is itself a palm-approved operation.
-  `DO $$ BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'operations_kind_v7') THEN
-      ALTER TABLE operations DROP CONSTRAINT IF EXISTS operations_kind_v5;
-      ALTER TABLE operations ADD CONSTRAINT operations_kind_v7
-        CHECK (kind IN ('create', 'withdraw', 'policy', 'recovery', 'account', 'upgrade', 'reset'));
-    END IF;
-  END $$`,
+  /*
+   * Which kinds of operation exist is decided by the code that is running, so the constraint
+   * is simply restated on every migration: one statement, every old name dropped, today's
+   * list added. Versioned names were a trap — a later version dropping an earlier one made
+   * that earlier block think its work was undone, and it put the old, narrower list back.
+   */
+  `ALTER TABLE operations
+     DROP CONSTRAINT IF EXISTS operations_kind_check,
+     DROP CONSTRAINT IF EXISTS operations_kind_v3,
+     DROP CONSTRAINT IF EXISTS operations_kind_v4,
+     DROP CONSTRAINT IF EXISTS operations_kind_v5,
+     DROP CONSTRAINT IF EXISTS operations_kind_v7,
+     DROP CONSTRAINT IF EXISTS operations_kind,
+     ADD CONSTRAINT operations_kind
+       CHECK (kind IN ('create', 'withdraw', 'policy', 'recovery', 'account', 'upgrade', 'reset'))`,
 ];
 
 const INT8 = 20; // Timestamps are BIGINT; read them back as numbers.
 
 export const isUniqueViolation = error => error?.code === '23505';
 
+/**
+ * Says where a database failure happened and what Postgres called it, without repeating
+ * anything from the connection string: enough to act on, nothing worth hiding.
+ */
+export const describeDbError = error => {
+  const stage = error?.dbStage ?? 'connect';
+  const step = error?.dbStatement === undefined ? '' : ` at statement ${error.dbStatement}`;
+  return `${stage}${step}: ${error?.code || error?.name || 'unknown'}`;
+};
+
 async function migrate(db) {
   await db.transaction(async q => {
     // Several cold-starting instances may race to create the schema.
     await q('SELECT pg_advisory_xact_lock(4970)');
-    for (const statement of SCHEMA) await q(statement);
+    for (const [index, statement] of SCHEMA.entries()) {
+      try {
+        await q(statement);
+      } catch (error) {
+        error.dbStage = 'migrate';
+        error.dbStatement = index;
+        throw error;
+      }
+    }
   });
 }
 

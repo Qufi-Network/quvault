@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import QRCode from 'qrcode';
-import { openDb } from './db.js';
+import { openDb, describeDbError } from './db.js';
 import { createVeyns, actionDigest, isFresh, randomId, HttpError } from './veyns.js';
 import { serverKeys, seal, open as openSealed } from './vault.js';
 import { createChain, createPrices, ChainError } from './chain.js';
@@ -179,7 +179,8 @@ export function createApp(options) {
       .catch(error => {
         dbPromise = null;
         log.error(error);
-        throw new HttpError(503, 'The database is not reachable right now.');
+        // The reason, in Postgres's own terms, so this is diagnosable without the server log.
+        throw new HttpError(503, `The database is not reachable right now (${describeDbError(error)}).`);
       });
     return dbPromise;
   };
