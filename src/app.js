@@ -20,6 +20,7 @@ const SESSION_SECONDS = 7 * 24 * 3600;
 const LOGIN_SECONDS = 300;
 const PALM_REQUEST_SECONDS = 300;
 const OPERATION_SECONDS = 1800; // how long a quorum has to come together
+const UNLOCK_SECONDS = 300; // how long the key stays open once a request has opened it
 
 const STATIC_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -103,6 +104,7 @@ const SQL = {
   expireUnsigned: `UPDATE operations SET status = 'failed', error = 'Approved, but never signed on the owner''s device.', closed_at = $1
                    WHERE status = 'running' AND kind = 'withdraw' AND expires_at + 3600 <= $1 RETURNING id`,
   setPayload: 'UPDATE operations SET payload = $1 WHERE id = $2',
+  markUnlocked: 'UPDATE operations SET unlocked_at = $2 WHERE id = $1 AND unlocked_at IS NULL',
   setAuthorization: 'UPDATE operations SET human_authorization = $1 WHERE id = $2',
 
   approvalsOf: `SELECT a.*, u.id AS member_id FROM approvals a JOIN users u ON u.id = a.user_id WHERE a.operation_id = $1`,
@@ -772,6 +774,11 @@ export function createApp(options) {
   /**
    * Hands the browser the unlock secret for its encrypted key — only for an operation whose
    * palm approvals are complete, and only to the person whose device holds that key.
+   *
+   * One approval opens the key once. The window starts when the key is first opened and
+   * cannot be restarted, so trying again a moment later is the same opening — a retry after
+   * a broadcast that did not land — while the request never becomes a standing permission.
+   * A request that has sent its transaction is finished with the key for good.
    */
   async function unlockFor({ user, params: [id] }) {
     const op = await ownOperation(id, user);
@@ -780,6 +787,13 @@ export function createApp(options) {
       throw new HttpError(409, 'Nothing to unlock for this request.');
     }
     if (!['running', 'done'].includes(op.status)) throw new HttpError(409, 'This request is still collecting palm approvals.');
+
+    const time = now();
+    const spent = 'That approval has been used. Ask for a new palm scan.';
+    if (op.txid) throw new HttpError(409, spent);
+    if (time > op.expires_at + UNLOCK_SECONDS) throw new HttpError(409, spent);
+    if (op.unlocked_at && time > op.unlocked_at + UNLOCK_SECONDS) throw new HttpError(409, spent);
+    await query('markUnlocked', op.id, time);
 
     const wallet = await one('walletOf', user.id);
     if (op.kind === 'create') {

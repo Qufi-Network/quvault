@@ -182,6 +182,13 @@ const SCHEMA = [
   'CREATE INDEX IF NOT EXISTS invites_wallet ON invites (wallet_user_id, status)',
 
   /*
+   * v12: when the key was first opened for a request. One palm approval opens the key once,
+   * for a few minutes; before this, a finished request went on handing out the same unlock
+   * secret for as long as the browser's session lasted.
+   */
+  'ALTER TABLE operations ADD COLUMN IF NOT EXISTS unlocked_at BIGINT',
+
+  /*
    * Which kinds of operation exist is decided by the code that is running, so the constraint
    * is simply restated on every migration: one statement, every old name dropped, today's
    * list added. Versioned names were a trap — a later version dropping an earlier one made

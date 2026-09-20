@@ -96,6 +96,7 @@ broadcast               only if plan, hash, record and bytes all agree
 | The sentence a person reads | `actionDigest(statement, details)`, computed by **both** QuVault and Veyns | The palm decision does not verify |
 | The transaction | `transaction_hash` = SHA-256 of the canonical transaction, **inside** `details` | The palm decision covers a different sentence |
 | The stored plan | re-hashed at unlock, before signing, and before broadcast | `409 The stored transaction no longer matches the one that was approved` |
+| The opening of the key | one approval opens the key once, for five minutes from the first opening, and never after the transaction is sent | `409 That approval has been used. Ask for a new palm scan.` |
 | The device's signature | the browser re-hashes the plan it is handed | `This is not the transaction that was approved. Nothing has been signed.` |
 | The authorisation | ML-DSA-65 under context `QUVAULT-HUMAN-AUTHORIZATION-V1`, checked against the vault's registered key, the transaction hash, the statement digest, the approvers, the palm decision ids, the key epoch and the time window | `409 No valid human authorisation for this transaction: <reason>` |
 | The raw bytes | `verifyAgainstPlan` — same coins, same outputs, same fee, fully signed | `400` with the specific mismatch |
