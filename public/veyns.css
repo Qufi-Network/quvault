@@ -92,12 +92,18 @@ body:has(#view-signin:not([hidden])) .field { display: none; }
 /* ------------------------------------------------------------- arrival */
 
 /*
- * Content arrives as it is reached. The class is added by the page script; the timing lives
- * here. Nothing is ever left invisible: .reveal-off is the failsafe the script sets when it
- * cannot observe anything, and it snaps everything into place rather than transitioning it.
+ * Content arrives as it is reached — but only where something is actually able to bring it in.
+ *
+ * Everything below is gated on .vx-motion, which the page script puts on the document as its
+ * very first statement. Without that class nothing here applies and every word on the site is
+ * simply visible, which is the state it has to fall back to. The previous arrangement had it
+ * the other way round: the text started at zero opacity and waited for script to reveal it, so
+ * a script that failed to load, threw early, or came back stale from a cache took every word
+ * on the site with it. An effect must never be the thing standing between a reader and the
+ * content.
  */
-:is(.vx, .en) [data-reveal],
-:is(.vx, .en) [data-reveal-group] > * {
+.vx-motion :is(.vx, .en) [data-reveal],
+.vx-motion :is(.vx, .en) [data-reveal-group] > * {
   opacity: 0;
   transform: translate3d(0, 22px, 0);
   transition:
@@ -106,17 +112,17 @@ body:has(#view-signin:not([hidden])) .field { display: none; }
     filter var(--vx-slow) var(--vx-spring);
   filter: blur(6px);
 }
-:is(.vx, .en) [data-reveal].in,
-:is(.vx, .en) [data-reveal-group].in > * {
+.vx-motion :is(.vx, .en) [data-reveal].in,
+.vx-motion :is(.vx, .en) [data-reveal-group].in > * {
   opacity: 1;
   transform: none;
   filter: none;
 }
 /* A group arrives as a group, one just behind the next. */
-:is(.vx, .en) [data-reveal-group] > *:nth-child(2) { transition-delay: 80ms; }
-:is(.vx, .en) [data-reveal-group] > *:nth-child(3) { transition-delay: 160ms; }
-:is(.vx, .en) [data-reveal-group] > *:nth-child(4) { transition-delay: 240ms; }
-:is(.vx, .en) [data-reveal-group] > *:nth-child(5) { transition-delay: 320ms; }
+.vx-motion :is(.vx, .en) [data-reveal-group] > *:nth-child(2) { transition-delay: 80ms; }
+.vx-motion :is(.vx, .en) [data-reveal-group] > *:nth-child(3) { transition-delay: 160ms; }
+.vx-motion :is(.vx, .en) [data-reveal-group] > *:nth-child(4) { transition-delay: 240ms; }
+.vx-motion :is(.vx, .en) [data-reveal-group] > *:nth-child(5) { transition-delay: 320ms; }
 
 .reveal-off :is(.vx, .en) [data-reveal],
 .reveal-off :is(.vx, .en) [data-reveal-group] > * {
@@ -493,7 +499,7 @@ body:has(#view-signin:not([hidden])) .field { display: none; }
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-.vx-ico svg * {
+.vx-motion .vx-ico svg * {
   stroke-dasharray: var(--vx-len, 120);
   stroke-dashoffset: var(--vx-len, 120);
   transition: stroke-dashoffset 1.1s var(--vx-ease);

@@ -14,6 +14,17 @@
  * script is therefore allowed, and that is how scroll position reaches the stylesheet here.
  */
 
+/*
+ * First statement, before anything else can throw: tell the document that motion is running.
+ *
+ * Every rule that starts content at zero opacity is gated on this class, so until it is set
+ * the whole site is simply visible. That ordering is the point. If this file fails to load, is
+ * served stale from a cache, or throws on a line further down, the reader still gets the words
+ * — they just do not animate. It was the other way round, and a script that never arrived took
+ * every word on the site with it.
+ */
+document.documentElement.classList.add('vx-motion');
+
 const $ = id => document.getElementById(id);
 const clamp = (v, lo = 0, hi = 1) => (v < lo ? lo : v > hi ? hi : v);
 const still = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -95,8 +106,13 @@ function watchArrivals() {
     for (const el of targets) el.classList.add('in');
   };
 
+  /*
+   * Scoped to the targets this call was handed, not to the document. Asking the document
+   * whether anything anywhere had arrived meant that once the first page had shown itself,
+   * every page opened after it lost its safety net.
+   */
   const failsafe = setTimeout(() => {
-    if (!document.querySelector('[data-reveal].in, [data-reveal-group].in')) showAll();
+    if (!targets.some(el => el.classList.contains('in'))) showAll();
   }, 1400);
 
   const seen = new IntersectionObserver((entries, observer) => {
