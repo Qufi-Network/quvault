@@ -14,17 +14,6 @@
  * script is therefore allowed, and that is how scroll position reaches the stylesheet here.
  */
 
-/*
- * First statement, before anything else can throw: tell the document that motion is running.
- *
- * Every rule that starts content at zero opacity is gated on this class, so until it is set
- * the whole site is simply visible. That ordering is the point. If this file fails to load, is
- * served stale from a cache, or throws on a line further down, the reader still gets the words
- * — they just do not animate. It was the other way round, and a script that never arrived took
- * every word on the site with it.
- */
-document.documentElement.classList.add('vx-motion');
-
 const $ = id => document.getElementById(id);
 const clamp = (v, lo = 0, hi = 1) => (v < lo ? lo : v > hi ? hi : v);
 const still = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -58,7 +47,6 @@ const drive = (el, run, start, end) => { if (el) drivers.push({ el, run, start, 
 
 function frame() {
   queued = false;
-  arrive();
   for (const { el, run, start, end } of drivers) run(travel(el, start, end), el);
 }
 
@@ -69,7 +57,6 @@ function onScroll() {
    * words are visible cannot. It costs a bounding box per element still waiting, and that list
    * empties as the reader goes down the page.
    */
-  arrive();
   if (queued) return;
   queued = true;
   requestAnimationFrame(frame);
@@ -89,63 +76,6 @@ function measureIcons() {
   }
 }
 measureIcons();
-
-/* ----------------------------------------------------------- arrival */
-
-/*
- * Things arrive as they are reached. This only ever adds a class — the distance, the timing
- * and the stagger live in the stylesheet.
- *
- * Arrival is measured in the same pass as every other scroll-linked effect on the page rather
- * than delegated to an IntersectionObserver. That is deliberate. An observer was the only
- * thing standing between a reader and the words, and when it did not report — a throttled
- * tab, a background window, a browser that simply does not schedule the callback — the copy
- * stayed at zero opacity with the photographs visible behind it. Reported twice, in Chrome.
- *
- * This runs off scroll, resize, load and the moment a page is shown: real events, all of them.
- * Anything within a screen and a half is shown, so content arrives before it is reached rather
- * than as it is reached, and nothing waits on a callback that may never come.
- */
-let waiting = [];
-
-function arrive() {
-  if (!waiting.length) return;
-  const reach = window.innerHeight * 1.4;
-  const later = [];
-  for (const el of waiting) {
-    const box = el.getBoundingClientRect();
-    if (box.top < reach && box.bottom > -reach) el.classList.add('in');
-    else later.push(el);
-  }
-  waiting = later;
-}
-
-function watchArrivals() {
-  waiting = [...document.querySelectorAll('[data-reveal]:not(.in), [data-reveal-group]:not(.in)')];
-  if (!waiting.length) return;
-
-  if (still.matches) {
-    for (const el of waiting) el.classList.add('in');
-    waiting = [];
-    return;
-  }
-
-  arrive();
-
-  /*
-   * And a last line behind that one. If nothing has arrived a couple of seconds after the page
-   * is up, something is wrong with the measuring rather than with the page, so the effect is
-   * abandoned and everything is shown — snapped into place, because without frames a
-   * transition never leaves where it started.
-   */
-  setTimeout(() => {
-    if (!document.querySelector('[data-reveal].in, [data-reveal-group].in')) {
-      document.documentElement.classList.add('reveal-off');
-      for (const el of waiting) el.classList.add('in');
-      waiting = [];
-    }
-  }, 2200);
-}
 
 /* ------------------------------------------------------------ the bar */
 
@@ -1227,7 +1157,6 @@ window.addEventListener('resize', onScroll, { passive: true });
  */
 function begin() {
   measureIcons();
-  watchArrivals();
   frame();
 }
 

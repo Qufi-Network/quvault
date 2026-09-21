@@ -34,46 +34,18 @@
   --vx-gutter: max(22px, 5vw, calc((100vw - var(--vx-measure)) / 2));
 }
 
-/* ------------------------------------------------------------- arrival */
+/* ----------------------------------------------------------- no arrival */
 
 /*
- * Content arrives as it is reached — but only where something can bring it in.
+ * There is no scroll reveal on this site any more, and that is deliberate.
  *
- * Every rule below is gated on .vx-motion, which the page script sets as its first statement.
- * Without that class none of this applies and the whole site is simply visible, which is the
- * state it has to fall back to. It was the other way round once: the text started at zero
- * opacity and waited for script to reveal it, so a script that failed to arrive took every
- * word on the site with it and left the photographs behind.
+ * It was reported three times that the content did not show in Chrome. Twice I made the
+ * effect safer — gated it behind a class the script sets first, then took the observer off
+ * the path and measured arrival on real events instead — and both times it came back. An
+ * effect whose failure mode is a page with no words on it does not get a third repair. The
+ * markup still carries data-reveal so that a future decision here has something to hook, but
+ * nothing reads it and nothing is hidden.
  */
-.vx-motion :is(.vx, .en) [data-reveal],
-.vx-motion :is(.vx, .en) [data-reveal-group] > * {
-  opacity: 0;
-  transform: translate3d(0, 20px, 0);
-  filter: blur(5px);
-  transition:
-    opacity var(--vx-slow) var(--vx-spring),
-    transform var(--vx-slow) var(--vx-spring),
-    filter var(--vx-slow) var(--vx-spring);
-}
-.vx-motion :is(.vx, .en) [data-reveal].in,
-.vx-motion :is(.vx, .en) [data-reveal-group].in > * { opacity: 1; transform: none; filter: none; }
-
-/* A group arrives as a group, one just behind the next. */
-.vx-motion :is(.vx, .en) [data-reveal-group] > *:nth-child(2) { transition-delay: 70ms; }
-.vx-motion :is(.vx, .en) [data-reveal-group] > *:nth-child(3) { transition-delay: 140ms; }
-.vx-motion :is(.vx, .en) [data-reveal-group] > *:nth-child(4) { transition-delay: 210ms; }
-.vx-motion :is(.vx, .en) [data-reveal-group] > *:nth-child(5) { transition-delay: 280ms; }
-.vx-motion :is(.vx, .en) [data-reveal-group] > *:nth-child(6) { transition-delay: 350ms; }
-
-/* the failsafe: snapping, not transitioning, because without frames a transition never moves */
-.reveal-off :is(.vx, .en) [data-reveal],
-.reveal-off :is(.vx, .en) [data-reveal-group] > * {
-  opacity: 1;
-  transform: none;
-  filter: none;
-  transition: none;
-  transition-delay: 0s;
-}
 
 /* ------------------------------------------------------------- buttons */
 
@@ -85,7 +57,7 @@
   height: 46px;
   padding: 0 24px;
   border: 1px solid transparent;
-  border-radius: 999px;
+  border-radius: 12px;
   font: 500 14.5px/1 var(--sans);
   letter-spacing: -.008em;
   white-space: nowrap;
@@ -180,8 +152,8 @@
 .vx-links { display: flex; align-items: center; gap: 2px; margin-inline: auto; min-width: 0; }
 .vx-links a {
   position: relative;
-  padding: 9px 15px;
-  border-radius: 999px;
+  padding: 9px 14px;
+  border-radius: 10px;
   font: 500 14.5px/1 var(--sans);
   letter-spacing: -.008em;
   white-space: nowrap;
@@ -273,8 +245,6 @@
     animation: none !important;
     transition-duration: 1ms !important;
   }
-  .vx-motion :is(.vx, .en) [data-reveal],
-  .vx-motion :is(.vx, .en) [data-reveal-group] > * { opacity: 1; transform: none; filter: none; }
   .vx-tilt { transform: none; }
 }
 
@@ -375,3 +345,42 @@
 @media (max-width: 1060px) and (prefers-reduced-motion: reduce) {
   .vx-links a { opacity: 1; transform: none; }
 }
+
+/* ------------------------------------------------ the bar, floating */
+
+/*
+ * Below the hero the bar stops being a full width band and becomes a pill floating on the
+ * page, inset from the top and from both edges. It is the single strongest thing the
+ * reference does: the bar reads as an object sitting on the page rather than as a lid
+ * clamped to the top of it.
+ */
+@media (min-width: 1061px) {
+  .vx-nav.stuck {
+    top: 14px;
+    background: transparent;
+    backdrop-filter: none;
+    border-bottom-color: transparent;
+  }
+  .vx-nav.stuck .vx-nav-in {
+    max-width: calc(var(--vx-measure) + 40px);
+    margin-inline: auto;
+    height: 58px;
+    padding-inline: 12px 12px;
+    border-radius: 18px;
+    background: rgba(255, 255, 255, .86);
+    backdrop-filter: blur(16px) saturate(160%);
+    box-shadow: 0 1px 2px rgba(20, 20, 25, .05), 0 14px 30px -18px rgba(20, 20, 25, .32);
+  }
+  /* the mark gets the same inset the links have, so nothing sits on the pill's edge */
+  .vx-nav.stuck .vx-brand { padding-left: 12px; }
+
+  /* over the hero it is still a plain transparent band across the top */
+  .vx-nav:not(.stuck) .vx-nav-in { background: none; box-shadow: none; }
+}
+
+/* A dark pill for the primary action, the way the reference sets it. */
+.vx-nav.light.stuck .vx-btn.solid {
+  background: var(--en-ink, #3d3d3d);
+  box-shadow: 0 1px 2px rgba(20, 20, 25, .12);
+}
+.vx-nav.light.stuck .vx-btn.solid:hover:not(:disabled) { background: #2b2b2b; }
