@@ -148,7 +148,8 @@ body:has(:is(#view-signin, #view-about, #view-technology):not([hidden])) .field 
 
 .en-hero-tags {
   margin-left: auto;
-  align-self: center;
+  align-self: flex-end;
+  padding-bottom: clamp(10px, 3vh, 40px);
   display: grid;
   gap: 9px;
   font: 500 10.5px/1.5 var(--sans);
@@ -1185,14 +1186,15 @@ body:has(:is(#view-signin, #view-about, #view-technology):not([hidden])) .field 
   display: flex;
   flex-wrap: wrap;
   gap: 10px 0;
+  max-width: 660px;
   margin-top: 30px;
   padding-top: 22px;
   border-top: 1px solid rgba(150, 185, 240, .16);
 }
 .home-hero-marks li {
-  padding: 0 clamp(12px, 1.4vw, 20px);
-  font: 500 10.5px/1.4 var(--sans);
-  letter-spacing: .18em;
+  padding: 0 clamp(10px, 1.1vw, 15px);
+  font: 500 9.5px/1.4 var(--sans);
+  letter-spacing: .13em;
   text-transform: uppercase;
   color: rgba(226, 236, 250, .74);
 }
@@ -1483,6 +1485,7 @@ body:has(:is(#view-signin, #view-about, #view-technology):not([hidden])) .field 
  */
 .tech-step, .home-chain-node {
   position: relative;
+  border-color: var(--en-line-2);
   border-color: color-mix(in srgb, var(--en-blue) calc(var(--near, 0) * 90%), var(--en-line-2));
   box-shadow:
     0 0 0 calc(var(--near, 0) * 7px) rgba(18, 114, 255, calc(var(--near, 0) * .12)),
@@ -1515,10 +1518,12 @@ body:has(:is(#view-signin, #view-about, #view-technology):not([hidden])) .field 
 
 /* the dark panel's layers answer the pointer the same way */
 .home-layers li {
+  border-color: rgba(150, 185, 240, .16);
   border-color: color-mix(in srgb, #4f9dff calc(var(--near, 0) * 75%), rgba(150, 185, 240, .16));
   box-shadow: 0 0 calc(var(--near, 0) * 34px) -8px rgba(79, 157, 255, calc(var(--near, 0) * .75));
 }
 .home-strip .en-ico {
+  color: var(--en-blue);
   color: color-mix(in srgb, var(--en-blue) calc(40% + var(--near, 0) * 60%), var(--en-ink-3));
   transform: translateY(calc(var(--near, 0) * -3px));
   transition: color 260ms, transform 320ms cubic-bezier(.16, 1, .3, 1);

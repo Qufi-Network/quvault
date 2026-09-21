@@ -75,7 +75,7 @@ function onScroll() {
  * to the stylesheet; the timing and the trigger stay in CSS.
  */
 function measureIcons() {
-  for (const shape of document.querySelectorAll('.vx-ico svg > *, .en-ico svg > *')) {
+  for (const shape of document.querySelectorAll('.en-ico svg > *')) {
     const length = typeof shape.getTotalLength === 'function' ? shape.getTotalLength() : 0;
     if (length) shape.style.setProperty('--vx-len', Math.ceil(length));
   }
