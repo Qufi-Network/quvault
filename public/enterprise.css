@@ -1678,3 +1678,221 @@ body:has(:is(#view-signin, #view-about, #view-technology):not([hidden])) { backg
 
 /* the sections that carry a contained dark panel sit on the grey, so the panel has a ground */
 #architecture, #keys, #contact, #tech-contact, #about-contact { background: var(--en-page) !important; }
+
+/* ================================================ pricing ============== */
+
+.price-hero {
+  min-height: 0;
+  display: block;
+  padding-bottom: clamp(120px, 14vw, 190px);
+  text-align: center;
+}
+.price-hero-in {
+  position: relative;
+  padding: clamp(96px, 12vh, 150px) var(--vx-gutter) 0;
+  max-width: 900px;
+  margin-inline: auto;
+}
+.price-hero h1 {
+  margin-top: 22px;
+  color: #fff;
+  font-size: clamp(36px, 4.6vw, 62px);
+  font-weight: 500;
+  line-height: 1.04;
+  letter-spacing: -.032em;
+}
+.price-hero h1 em { font-style: normal; color: #7fb4ff; }
+.price-hero-lede {
+  margin: 22px auto 0;
+  max-width: 54ch;
+  font-size: clamp(15px, 1.1vw, 17px);
+  line-height: 1.62;
+  color: rgba(226, 236, 250, .78);
+}
+
+/* monthly or annual, as a segmented pill */
+.price-toggle {
+  display: inline-flex;
+  gap: 4px;
+  margin-top: 34px;
+  padding: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .08);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .1);
+}
+.price-toggle button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  font: 500 14px/1 var(--sans);
+  color: rgba(226, 236, 250, .78);
+  cursor: pointer;
+  transition: background-color 240ms var(--vx-ease), color 240ms var(--vx-ease);
+}
+.price-toggle button.on { background: #fff; color: var(--en-ink); }
+.price-save {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(18, 114, 255, .16);
+  font-size: 11px;
+  color: #7fb4ff;
+}
+.price-toggle button.on .price-save { background: var(--en-blue-wash); color: var(--en-blue); }
+
+/* ------------------------------------------------------- the plans */
+
+/*
+ * The cards ride up into the dark header, which is what stops the page reading as two
+ * unrelated halves stacked on each other.
+ */
+.price-plans { margin-top: clamp(-170px, -12vw, -110px); padding-top: 0; background: transparent !important; }
+.price-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: clamp(14px, 1.4vw, 20px);
+  align-items: start;
+}
+.price-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: clamp(24px, 2.2vw, 32px);
+  border-radius: 20px;
+  background: var(--en-surface);
+  box-shadow: 0 1px 2px rgba(20, 20, 25, .05), 0 22px 46px -26px rgba(20, 20, 25, .35);
+}
+.price-card.lead { box-shadow: 0 1px 2px rgba(20, 20, 25, .06), 0 34px 60px -28px rgba(15, 98, 230, .44); }
+.price-card.dark { background: var(--en-dark); color: #fff; }
+.price-card.dark h2, .price-card.dark .price-amount { color: #fff; }
+.price-card.dark .price-for, .price-card.dark .price-per, .price-card.dark .price-hardware, .price-card.dark .price-note { color: rgba(214, 228, 246, .7); }
+.price-card.dark .price-list li { color: rgba(226, 236, 250, .84); }
+.price-card.dark .price-list li::before { background: rgba(127, 180, 255, .24); color: #9ec6ff; }
+
+.price-flag {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  padding: 6px 11px;
+  border-radius: 999px;
+  background: var(--en-blue-wash);
+  font: 500 11px/1 var(--sans);
+  color: var(--en-blue);
+}
+.price-card h2 { font-size: 22px; font-weight: 500; letter-spacing: -.024em; }
+.price-for { margin-top: 8px; font-size: 13px; line-height: 1.5; color: var(--en-ink-3); min-height: 3em; }
+.price-figure { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.price-amount { font-size: clamp(32px, 3vw, 42px); font-weight: 500; letter-spacing: -.035em; color: var(--en-ink); }
+.price-per { font-size: 13px; color: var(--en-ink-3); }
+.price-hardware { margin-top: 8px; font: 500 13px/1.4 var(--mono); color: var(--en-blue); }
+.price-cta { width: 100%; margin-top: 24px; }
+.price-note { margin-top: 16px; font-size: 12.5px; line-height: 1.5; color: var(--en-ink-3); }
+
+.price-list { display: grid; gap: 11px; margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--en-line); }
+.price-card.dark .price-list { border-top-color: rgba(150, 185, 240, .18); }
+.price-list li {
+  position: relative;
+  padding-left: 26px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--en-ink-2);
+}
+/* a tick drawn from a rotated corner, so there is no icon to load */
+.price-list li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 1px;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: var(--en-blue-wash);
+}
+.price-list li::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 5px;
+  width: 4px;
+  height: 8px;
+  border: solid var(--en-blue);
+  border-width: 0 1.6px 1.6px 0;
+  transform: rotate(45deg);
+}
+.price-card.dark .price-list li::after { border-color: #9ec6ff; }
+
+.price-small { margin-top: clamp(30px, 3.4vw, 46px); font-size: 12.5px; line-height: 1.6; color: var(--en-ink-3); max-width: 76ch; }
+
+/* --------------------------------------------------------- questions */
+
+.price-q-head { margin-top: 20px; text-align: center; }
+.price-faq { display: grid; gap: 10px; margin-top: clamp(34px, 4vw, 52px); }
+.price-faq li { border-radius: 16px; background: var(--en-surface); box-shadow: 0 1px 2px rgba(20, 20, 25, .05); overflow: hidden; }
+.price-faq button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  width: 100%;
+  padding: 20px clamp(18px, 2vw, 26px);
+  border: 0;
+  background: none;
+  font: 500 16px/1.4 var(--sans);
+  letter-spacing: -.018em;
+  color: var(--en-ink);
+  text-align: left;
+  cursor: pointer;
+}
+.price-faq i {
+  position: relative;
+  flex: none;
+  width: 20px;
+  height: 20px;
+}
+.price-faq i::before, .price-faq i::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  background: var(--en-ink-3);
+  transition: transform 320ms var(--vx-spring), opacity 220ms var(--vx-ease);
+}
+.price-faq i::before { width: 13px; height: 1.6px; transform: translate(-50%, -50%); }
+.price-faq i::after { width: 1.6px; height: 13px; transform: translate(-50%, -50%); }
+.price-faq button[aria-expanded="true"] i::after { transform: translate(-50%, -50%) rotate(90deg); opacity: 0; }
+
+/*
+ * The answer opens on a height cap rather than on grid rows. The 0fr to 1fr trick is neater
+ * and it would not resolve past a single line here whatever the child was told about its
+ * minimum, so this is the version that actually works. The cap is generous enough that no
+ * answer reaches it, and the easing hides the difference.
+ */
+.price-faq div {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 420ms var(--vx-spring);
+}
+
+.price-faq div > p {
+  margin: 0 clamp(18px, 2vw, 26px) 22px;
+  font-size: 14.5px;
+  line-height: 1.62;
+  color: var(--en-ink-2);
+}
+
+/* --------------------------------------------------------- responsive */
+
+@media (max-width: 1140px) {
+  .price-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .price-plans { margin-top: clamp(-130px, -9vw, -90px); }
+}
+@media (max-width: 680px) {
+  .price-grid { grid-template-columns: minmax(0, 1fr); }
+  .price-for { min-height: 0; }
+  .price-toggle { width: 100%; }
+  .price-toggle button { flex: 1; justify-content: center; padding: 0 12px; }
+}

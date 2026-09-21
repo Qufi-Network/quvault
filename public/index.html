@@ -69,13 +69,10 @@
         <span></span><span></span><span></span>
       </button>
       <nav class="vx-links" id="marketing-nav">
-        <a href="#home-architecture">Platform</a>
-        <a href="#uses">Solutions</a>
-        <a href="#keys">Security</a>
+        <a href="#home">Home</a>
         <a href="#technology">Technology</a>
-        <a href="#uses">Use Cases</a>
-        <a href="#quantum">Resources</a>
-        <a href="#about">Company</a>
+        <a href="#pricing">Pricing</a>
+        <a href="#about">About</a>
       </nav>
       <div class="vx-nav-cta">
         <button class="vx-btn ghost" id="signin-top" type="button" disabled>Sign In</button>
@@ -1845,6 +1842,333 @@
             <a href="#tech-contact">Responsible disclosure</a>
           </nav>
           <span class="en-status"><i></i>Operational</span>
+        </div>
+      </div>
+    </footer>
+  </main>
+
+  <main id="view-pricing" class="view en" hidden>
+
+    <!-- ================================================ header -->
+    <section class="en-hero price-hero" id="pricing-top">
+      <div class="en-hero-bed" aria-hidden="true">
+        <canvas class="home-dark-net" id="price-net"></canvas>
+        <div class="en-hero-veil"></div>
+      </div>
+      <div class="price-hero-in">
+        <p class="en-eyebrow light">Pricing</p>
+        <h1>Security you can size<br>to the <em>organisation</em>.</h1>
+        <p class="price-hero-lede">A device, and a subscription that decides what the device is
+          allowed to authorise. Every plan includes post quantum key protection and human
+          authorisation.</p>
+
+        <div class="price-toggle" role="group" aria-label="Billing period">
+          <button type="button" id="bill-monthly" class="on" aria-pressed="true">Monthly</button>
+          <button type="button" id="bill-annual" aria-pressed="false">Annual<span class="price-save">2 months free</span></button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================================================= the plans -->
+    <section class="en-sec price-plans" id="plans">
+      <div class="en-wrap">
+        <ul class="price-grid">
+
+          <li class="price-card">
+            <h2>Secure</h2>
+            <p class="price-for">One person, one device.</p>
+            <p class="price-figure">
+              <span class="price-amount" data-monthly="$29" data-annual="$24">$29</span>
+              <span class="price-per" data-monthly="per month" data-annual="per month, billed annually">per month</span>
+            </p>
+            <p class="price-hardware">+ $750 hardware, once</p>
+            <button class="vx-btn solid lg price-cta" id="price-secure" type="button">Request access
+              <svg class="vx-chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.6 4.8 5.6 5.2-5.6 5.2"/></svg>
+            </button>
+            <p class="price-note">About $1,098 in the first year.</p>
+            <ul class="price-list">
+              <li>Unlimited wallet accounts</li>
+              <li>Post quantum key protection</li>
+              <li>Secure transaction signing</li>
+              <li>Transaction verification</li>
+              <li>Address whitelisting</li>
+              <li>Spending controls</li>
+              <li>Secure recovery</li>
+              <li>Device management</li>
+              <li>Security alerts</li>
+              <li>Firmware and security updates</li>
+              <li>Encrypted cloud backup of wallet metadata, never of secrets</li>
+              <li>Priority support</li>
+            </ul>
+          </li>
+
+          <li class="price-card lead">
+            <span class="price-flag">Most chosen</span>
+            <h2>Pro</h2>
+            <p class="price-for">For people holding significant assets.</p>
+            <p class="price-figure">
+              <span class="price-amount" data-monthly="$79" data-annual="$66">$79</span>
+              <span class="price-per" data-monthly="per month" data-annual="per month, billed annually">per month</span>
+            </p>
+            <p class="price-hardware">+ $750 hardware, once</p>
+            <button class="vx-btn solid lg price-cta" id="price-pro" type="button">Request access
+              <svg class="vx-chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.6 4.8 5.6 5.2-5.6 5.2"/></svg>
+            </button>
+            <p class="price-note">Everything in Secure, and:</p>
+            <ul class="price-list">
+              <li>Multi device authorization</li>
+              <li>Multiple signing policies</li>
+              <li>Advanced transaction policies</li>
+              <li>Time delayed transactions</li>
+              <li>Multi factor approval</li>
+              <li>Emergency recovery</li>
+              <li>Multiple recovery guardians</li>
+              <li>Advanced security monitoring</li>
+              <li>Enhanced transaction simulation</li>
+              <li>Premium hardware replacement</li>
+            </ul>
+          </li>
+
+          <li class="price-card">
+            <h2>Business</h2>
+            <p class="price-for">Priced per organisation, not per device.</p>
+            <p class="price-figure">
+              <span class="price-amount" data-monthly="$299" data-annual="$249">$299</span>
+              <span class="price-per" data-monthly="per month" data-annual="per month, billed annually">per month</span>
+            </p>
+            <p class="price-hardware">+ $750 per device</p>
+            <button class="vx-btn solid lg price-cta" id="price-business" type="button">Talk to sales
+              <svg class="vx-chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.6 4.8 5.6 5.2-5.6 5.2"/></svg>
+            </button>
+            <p class="price-note">Five users included. Further devices $500 to $750 each.</p>
+            <ul class="price-list">
+              <li>Five users</li>
+              <li>Multiple wallets and devices</li>
+              <li>Role based permissions</li>
+              <li>Treasury controls</li>
+              <li>Transaction approval workflows</li>
+              <li>Spending limits</li>
+              <li>Address allowlists</li>
+              <li>Audit logs</li>
+              <li>API and webhooks</li>
+              <li>Organization policies</li>
+              <li>Admin dashboard</li>
+            </ul>
+          </li>
+
+          <li class="price-card dark">
+            <h2>Institutional</h2>
+            <p class="price-for">Sized to the deployment.</p>
+            <p class="price-figure">
+              <span class="price-amount">From $2,500</span>
+              <span class="price-per">per month</span>
+            </p>
+            <p class="price-hardware">+ $750 or more per device</p>
+            <button class="vx-btn ghost lg price-cta" id="price-institutional" type="button">Talk to us
+              <svg class="vx-chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.6 4.8 5.6 5.2-5.6 5.2"/></svg>
+            </button>
+            <p class="price-note">Priced against the deployment rather than a list.</p>
+            <ul class="price-list">
+              <li>Hardware security module integration</li>
+              <li>Trusted execution environment integration</li>
+              <li>Dedicated infrastructure</li>
+              <li>Institutional policy engine</li>
+              <li>Multi party authorization</li>
+              <li>API</li>
+              <li>Dedicated support and SLA</li>
+              <li>Custom deployment</li>
+              <li>Compliance reporting</li>
+              <li>Dedicated security environment</li>
+            </ul>
+          </li>
+
+        </ul>
+
+        <p class="price-small">Prices in US dollars, excluding tax. The device is bought once; the
+          subscription is what decides how it may be used. Annual billing is ten months' cost.</p>
+      </div>
+    </section>
+    <!-- ========================================= in every plan -->
+    <section class="en-sec tint" id="always">
+      <div class="en-wrap">
+        <div class="en-split">
+          <div>
+            <p class="en-eyebrow">In every plan</p>
+            <h2>The security does not<br>change with the <em>price</em>.</h2>
+          </div>
+          <div class="en-prose">
+            <p>What a larger plan buys is more control over who may authorise what, and more
+              places to put that control. It does not buy stronger cryptography, because the
+              cryptography is the same on every plan.</p>
+          </div>
+        </div>
+
+        <ul class="en-caps" data-reveal-group>
+          <li>
+            <h3>Post quantum key protection</h3>
+            <p>ML-KEM-768 alongside X25519 to establish the key that seals the vault, so the seal
+              holds if either one is broken.</p>
+            <span class="en-state" data-state="live">Implemented</span>
+          </li>
+          <li>
+            <h3>Human authorisation</h3>
+            <p>ML-DSA-65 signs every approval under a context that separates it from every other
+              signature the system makes.</p>
+            <span class="en-state" data-state="live">Implemented</span>
+          </li>
+          <li>
+            <h3>Transaction binding</h3>
+            <p>An approval carries the digest of the exact transaction it approves, so it cannot
+              be moved onto another one.</p>
+            <span class="en-state" data-state="live">Implemented</span>
+          </li>
+          <li>
+            <h3>Hardware backed keys</h3>
+            <p>Keeping key material inside protected hardware rather than in software. This is
+              what the architecture is built towards.</p>
+            <span class="en-state" data-state="planned">Designed for</span>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ================================================ questions -->
+    <section class="en-sec" id="questions">
+      <div class="en-wrap narrow">
+        <p class="en-eyebrow centred">Questions</p>
+        <h2 class="price-q-head">The ones worth<br>asking <em>first</em>.</h2>
+
+        <ul class="price-faq" id="faq">
+          <li>
+            <button type="button" aria-expanded="false">
+              <span>Why is the hardware bought once and the plan monthly?</span>
+              <i aria-hidden="true"></i>
+            </button>
+            <div><p>The device is yours. The subscription is the part that keeps deciding what the
+              device is allowed to authorise — policies, approvals, limits, destinations — and
+              that is a service that runs continuously rather than something you take home.</p></div>
+          </li>
+          <li>
+            <button type="button" aria-expanded="false">
+              <span>What happens to my assets if I stop paying?</span>
+              <i aria-hidden="true"></i>
+            </button>
+            <div><p>Your keys stay yours. The recovery phrase is generated on your device and never
+              leaves it, so a vault can be restored in any standard wallet without us. What you
+              lose is the policy layer, not the money.</p></div>
+          </li>
+          <li>
+            <button type="button" aria-expanded="false">
+              <span>Do you ever hold the keys?</span>
+              <i aria-hidden="true"></i>
+            </button>
+            <div><p>No. Key material is sealed and unsealed only to sign one plan, in one window
+              that closes behind it. The encrypted cloud backup on every plan covers wallet
+              metadata — names, addresses, policy settings — and never covers secrets.</p></div>
+          </li>
+          <li>
+            <button type="button" aria-expanded="false">
+              <span>Which networks are supported today?</span>
+              <i aria-hidden="true"></i>
+            </button>
+            <div><p>Bitcoin, on testnet, with on chain multisig. Further networks are planned
+              rather than shipped, and the technology page marks which is which throughout.</p></div>
+          </li>
+          <li>
+            <button type="button" aria-expanded="false">
+              <span>Can we start on one plan and move up?</span>
+              <i aria-hidden="true"></i>
+            </button>
+            <div><p>Yes. The device does not change between plans; the policies it will honour do.
+              Moving from Secure to Pro or Business is a change of subscription, not of hardware.</p></div>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ===================================================== cta -->
+    <section class="en-sec" id="price-contact">
+      <div class="en-wrap">
+        <div class="en-cta">
+          <canvas class="en-cta-net" id="price-cta-net" aria-hidden="true"></canvas>
+          <div class="en-cta-copy">
+            <p class="en-eyebrow light">Enterprise access</p>
+            <h2>Not sure which one<br><em>fits?</em></h2>
+            <p class="en-cta-lede">Tell us how many people need to authorise, how much moves, and
+              how often. The plan follows from that.</p>
+            <div class="en-cta-row">
+              <button class="vx-btn solid lg" id="price-access" type="button" disabled>Request enterprise access
+                <svg class="vx-chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.6 4.8 5.6 5.2-5.6 5.2"/></svg>
+              </button>
+              <a class="vx-btn ghost lg" href="#technology">Read the architecture</a>
+            </div>
+            <p class="en-cta-note" id="price-note-out" role="status"></p>
+          </div>
+          <ul class="en-cta-tags">
+            <li>Human</li><li>Policy</li><li>Cryptography</li><li>Evidence</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================================================== footer -->
+    <footer class="en-foot">
+      <div class="en-wrap">
+        <div class="en-foot-top">
+          <div class="en-foot-brand">
+            <img src="/veyns-lockup-black.png" width="480" height="99" alt="Veyns">
+            <p class="home-foot-sub">Quantum Vault</p>
+            <p>Security infrastructure for a more trusted financial future.</p>
+            <ul class="en-social">
+              <li><a href="#pricing-top" aria-label="LinkedIn"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3.2" y="3.2" width="13.6" height="13.6" rx="2.4"/><path d="M6.8 8.6v5M6.8 6.6v.1M10.2 13.6v-5M13.4 13.6v-2.8a2.2 2.2 0 0 0-3.2-1.9"/></svg></a></li>
+              <li><a href="#pricing-top" aria-label="X"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 4 12 12M16 4 4 16"/></svg></a></li>
+              <li><a href="#price-contact" aria-label="Contact"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.8" y="4.6" width="14.4" height="10.8" rx="2"/><path d="m3.4 6 6.6 4.8L16.6 6"/></svg></a></li>
+            </ul>
+          </div>
+
+          <div class="en-foot-cols">
+            <div>
+              <h3>Plans</h3>
+              <a href="#plans">Secure</a>
+              <a href="#plans">Pro</a>
+              <a href="#plans">Business</a>
+              <a href="#plans">Institutional</a>
+            </div>
+            <div>
+              <h3>Product</h3>
+              <a href="#home">Home</a>
+              <a href="#technology">Technology</a>
+              <a href="#always">Security</a>
+              <a href="#questions">Questions</a>
+            </div>
+            <div>
+              <h3>Company</h3>
+              <a href="#about">About</a>
+              <a href="#price-contact">Contact</a>
+            </div>
+            <div>
+              <h3>Legal</h3>
+              <a href="#price-contact">Privacy</a>
+              <a href="#price-contact">Terms</a>
+              <a href="#always">Security</a>
+            </div>
+          </div>
+
+          <p class="en-foot-tags">
+            Human<br>Policy<br>Cryptography<br>Evidence
+            <span class="en-foot-rule"></span>
+          </p>
+        </div>
+
+        <div class="en-foot-bottom">
+          <small>&copy; 2026 Veyns. All rights reserved.</small>
+          <nav class="en-foot-legal">
+            <a href="#price-contact">Privacy</a>
+            <a href="#price-contact">Terms</a>
+            <a href="#always">Security</a>
+            <a href="#price-contact">Responsible disclosure</a>
+          </nav>
+          <span class="en-status"><i></i>Systems operational</span>
         </div>
       </div>
     </footer>

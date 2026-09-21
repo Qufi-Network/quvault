@@ -6,7 +6,7 @@ import {
 
 const $ = id => document.getElementById(id);
 
-const VIEWS = ['loading', 'setup', 'signin', 'about', 'technology', 'create', 'wallet'];
+const VIEWS = ['loading', 'setup', 'signin', 'about', 'technology', 'pricing', 'create', 'wallet'];
 const VAULT_PANES = ['dashboard', 'security'];
 const ACCOUNT_TABS = [
   { key: 'overview', label: 'Overview' },
@@ -83,14 +83,14 @@ function toast(message) {
 }
 
 /** The pages somebody sees before they are signed in, and the header they share. */
-const MARKETING = ['signin', 'about', 'technology'];
+const MARKETING = ['signin', 'about', 'technology', 'pricing'];
 
 /*
  * Which marketing page an address asks for. Anything not named here is the home page, which
  * is also what every in-page anchor on the home page resolves to — that is the point: a jump
  * to a section must not be read as a request for a different page.
  */
-const MARKETING_ROUTES = { '#about': 'about', '#technology': 'technology' };
+const MARKETING_ROUTES = { '#about': 'about', '#technology': 'technology', '#pricing': 'pricing' };
 const routeOf = hash => MARKETING_ROUTES[hash] || 'signin';
 const PAGE_LINKS = new Set(['#home', ...Object.keys(MARKETING_ROUTES)]);
 
@@ -243,6 +243,7 @@ const SIGNIN_BUTTONS = [
   ['signin-browser', 'browser'],
   ['signin-palm', 'palm'],
   ['home-access', 'browser'],
+  ['price-access', 'browser'],
   ['about-join', 'browser'],
 ];
 

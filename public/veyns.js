@@ -24,7 +24,7 @@ const still = window.matchMedia('(prefers-reduced-motion: reduce)');
  * something is genuinely a system. All are hidden until the application decides which to put
  * up, so nothing here can be measured before that happens.
  */
-const PAGES = ['view-signin', 'view-about', 'view-technology'].map($).filter(Boolean);
+const PAGES = ['view-signin', 'view-about', 'view-technology', 'view-pricing'].map($).filter(Boolean);
 const showing = () => PAGES.find(page => !page.hidden) || null;
 
 /* ------------------------------------------------------- scroll driver */
@@ -1145,6 +1145,92 @@ for (const [group, mark] of [
 ]) {
   for (const el of document.querySelectorAll(group)) proximity(el, mark);
 }
+/* ======================================================== pricing */
+
+{
+  const monthly = $('bill-monthly');
+  const annual = $('bill-annual');
+  const amounts = [...document.querySelectorAll('#view-pricing [data-monthly]')];
+
+  if (monthly && annual && amounts.length) {
+    /*
+     * Every figure carries both numbers in the markup, so the page reads correctly with no
+     * script at all and the toggle only swaps which of the two is showing. Nothing is computed
+     * here — an arithmetic slip on a price is not a class of bug worth risking.
+     */
+    const show = period => {
+      for (const el of amounts) el.textContent = el.dataset[period];
+      monthly.classList.toggle('on', period === 'monthly');
+      annual.classList.toggle('on', period === 'annual');
+      monthly.setAttribute('aria-pressed', String(period === 'monthly'));
+      annual.setAttribute('aria-pressed', String(period === 'annual'));
+    };
+    monthly.addEventListener('click', () => show('monthly'));
+    annual.addEventListener('click', () => show('annual'));
+  }
+}
+
+{
+  const faq = $('faq');
+  if (faq) {
+    /*
+     * One open at a time, and the height is measured from the content and set here rather than
+     * guessed in the stylesheet. Two CSS-only versions of this did not resolve past a single
+     * line, and an answer that will not open is worse than one that opens without a flourish.
+     */
+    const panels = [...faq.querySelectorAll('button')].map(button => [button, button.nextElementSibling]);
+
+    const setOpen = (panel, open) => {
+      panel.style.maxHeight = open ? `${panel.scrollHeight}px` : '0px';
+    };
+
+    for (const [button, panel] of panels) {
+      setOpen(panel, false);
+      button.addEventListener('click', () => {
+        const wasOpen = button.getAttribute('aria-expanded') === 'true';
+        for (const [other, otherPanel] of panels) {
+          other.setAttribute('aria-expanded', 'false');
+          setOpen(otherPanel, false);
+        }
+        if (!wasOpen) {
+          button.setAttribute('aria-expanded', 'true');
+          setOpen(panel, true);
+        }
+      });
+    }
+
+    /* A window that changes width changes how the answers wrap, so the open one is remeasured. */
+    window.addEventListener('resize', () => {
+      for (const [button, panel] of panels) {
+        if (button.getAttribute('aria-expanded') === 'true') setOpen(panel, true);
+      }
+    }, { passive: true });
+  }
+}
+
+{
+  /* The three plan buttons that are not the vault entrance say where they lead. */
+  const note = $('price-note-out');
+  const say = message => {
+    if (!note) return;
+    note.textContent = message;
+    note.scrollIntoView({ block: 'nearest' });
+  };
+  for (const [id, said] of [
+    ['price-secure', 'Secure is the default plan. Tell us how many people need to authorise and we will set it up.'],
+    ['price-pro', 'Pro adds multi device authorisation and policy. Ask us about it.'],
+    ['price-business', 'Business is priced per organisation. Talk to us about users and devices.'],
+    ['price-institutional', 'Institutional is priced against the deployment. Talk to us.'],
+  ]) {
+    $(id)?.addEventListener('click', () => {
+      say(`${said} Nothing has been sent — this form is not connected yet.`);
+      $('price-contact')?.scrollIntoView({ behavior: still.matches ? 'auto' : 'smooth', block: 'start' });
+    });
+  }
+}
+
+slowField($('price-net'));
+slowField($('price-cta-net'));
 /* ----------------------------------------------------------------- go */
 
 window.addEventListener('scroll', onScroll, { passive: true });
