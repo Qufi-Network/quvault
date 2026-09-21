@@ -79,18 +79,20 @@
 
   <main id="view-signin" class="view home" hidden>
     <section class="hero">
-      <div class="hero-scene" aria-hidden="true">
-        <span class="scene-window"></span>
-        <span class="scene-city"></span>
-        <span class="scene-surface"></span>
-      </div>
+      <!--
+        The scene is the supplied photograph, cropped to the part of it that carries no text:
+        everything from x=600 of 1536 across, and down to y=870 where its own trust strip
+        begins. So the hand, the reader, the card and the room are the artwork exactly, and
+        every word on top of them is markup.
+      -->
+      <div class="hero-photo" aria-hidden="true"><span class="reader-pulse"></span></div>
 
       <div class="hero-inner">
         <div class="hero-copy">
           <p class="eyebrow spaced">Your hand. Your key.</p>
           <h1>The Next<br>Generation<br>of <em>Asset Security</em></h1>
           <p class="lede">QuVault protects your digital assets with biometric verification and
-            post-quantum cryptography. Your coins move only for your hand.</p>
+            post quantum cryptography. Your coins move only for your hand.</p>
 
           <div class="hero-cta">
             <button class="btn brand xl" id="signin-browser" type="button" disabled>
@@ -106,71 +108,16 @@
           <p class="error" id="signin-error" role="alert"></p>
 
           <ul class="hero-marks">
-            <li>
-              <span class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4a8 8 0 0 0-8 8v3"/><path d="M12 8a4 4 0 0 0-4 4v4"/><path d="M12 12v5"/><path d="M16 12a4 4 0 0 0-4-4"/><path d="M20 12a8 8 0 0 0-3-6.2"/></svg></span>
-              <span>Human<br>verified</span>
-            </li>
-            <li>
-              <span class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 19 6v6c0 4.2-2.8 7.3-7 8.5-4.2-1.2-7-4.3-7-8.5V6z"/><path d="m9 12 2.2 2.2L15.5 10"/></svg></span>
-              <span>Post quantum<br>secure</span>
-            </li>
-            <li>
-              <span class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3.6 8 4.2-8 4.2-8-4.2z"/><path d="m4 12 8 4.2 8-4.2"/><path d="m4 16.2 8 4.2 8-4.2"/></svg></span>
-              <span>Multi asset<br>support</span>
-            </li>
-            <li>
-              <span class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="9.5" rx="2.2"/><path d="M8.2 10.5V8a3.8 3.8 0 0 1 7.6 0v2.5"/><path d="M12 14.4v2"/></svg></span>
-              <span>You control<br>your assets</span>
-            </li>
+            <li><span class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4a8 8 0 0 0-8 8v3"/><path d="M12 8a4 4 0 0 0-4 4v4"/><path d="M12 12v5"/><path d="M16 12a4 4 0 0 0-4-4"/><path d="M20 12a8 8 0 0 0-3-6.2"/></svg></span><span>Human<br>Verified</span></li>
+            <li><span class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 19 6v6c0 4.2-2.8 7.3-7 8.5-4.2-1.2-7-4.3-7-8.5V6z"/><path d="m9 12 2.2 2.2L15.5 10"/></svg></span><span>Post Quantum<br>Secure</span></li>
+            <li><span class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3.6 8 4.2-8 4.2-8-4.2z"/><path d="m4 12 8 4.2 8-4.2"/><path d="m4 16.2 8 4.2 8-4.2"/></svg></span><span>Multi Asset<br>Support</span></li>
+            <li><span class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="9.5" rx="2.2"/><path d="M8.2 10.5V8a3.8 3.8 0 0 1 7.6 0v2.5"/><path d="M12 14.4v2"/></svg></span><span>You Control<br>Your Assets</span></li>
           </ul>
 
           <span class="rule"></span>
           <p class="eyebrow spaced">A safer today. Ready for tomorrow.</p>
         </div>
-
-        <div class="hero-stage">
-          <p class="stage-note at-left">Your hand<br>unlocks<br>a brighter<br>tomorrow</p>
-          <p class="stage-note at-right">Freedom<br>through<br>security</p>
-
-          <!-- The hand, reaching down to the reader, with the same life in it as everywhere else. -->
-          <div class="hand-frame reaching" id="hand-frame">
-            <img id="hero-hand-image" src="/quvault_palm_exact.png" alt="A hand held out to be read" width="1145" height="1374">
-            <img class="vein-glow" src="/quvault_palm_exact.png" alt="" aria-hidden="true" width="1145" height="1374">
-            <img class="vein-flow" src="/quvault_palm_exact.png" alt="" aria-hidden="true" width="1145" height="1374">
-            <div class="hand-fallback" id="hero-hand-fallback"></div>
-            <svg class="palm-q" viewBox="0 0 400 400" aria-hidden="true">
-              <circle class="glow" cx="200" cy="200" r="108" fill="url(#palm-glow)"/>
-            </svg>
-          </div>
-
-          <!-- The reader it is held out to: light leaving the ring and arriving at the palm. -->
-          <div class="reader" aria-hidden="true">
-            <span class="beams"></span>
-            <span class="reader-ring"></span>
-            <span class="reader-body">
-              <svg class="reader-mark" viewBox="0 0 40 40"><use href="#q-glyph"/></svg>
-            </span>
-            <span class="reader-shadow"></span>
-          </div>
-
-          <aside class="assets-card">
-            <header>
-              <p>Your Assets<br>Secured by You</p>
-              <svg class="assets-mark" viewBox="0 0 40 40" aria-hidden="true"><use href="#q-glyph"/></svg>
-            </header>
-            <ul>
-              <li><span class="coin btc">&#8383;</span><b>Bitcoin</b><span class="amount">1.2500 BTC</span></li>
-              <li><span class="coin eth">&#9830;</span><b>Ethereum</b><span class="amount">12.4300 ETH</span></li>
-              <li><span class="coin usdt">&#8366;</span><b>Tether</b><span class="amount">25,000.00 USDT</span></li>
-            </ul>
-            <a class="assets-more" href="#security">+ More Assets<svg class="chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.5 4.5 6 5.5-6 5.5"/></svg></a>
-            <footer><span class="live"></span>Protected by QuVault<svg class="chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.5 4.5 6 5.5-6 5.5"/></svg></footer>
-          </aside>
-
-          <p class="stage-note at-foot">Secure<br>authenticate<br>transact</p>
-        </div>
       </div>
-
       <div class="trust">
         <p class="eyebrow spaced">Trusted for a more secure tomorrow.</p>
         <ul>

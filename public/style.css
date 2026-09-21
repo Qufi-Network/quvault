@@ -964,43 +964,6 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
   color: #fff;
 }
 
-.hero-scene { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
-.hero-scene span { position: absolute; display: block; }
-
-/*
- * One continuous night. Everything here fades rather than meets: a hard edge anywhere across
- * the middle of a hero reads as two pictures badly joined, which is exactly what the first
- * attempt did.
- */
-.scene-window {
-  inset: 0;
-  background:
-    radial-gradient(90% 82% at 76% 34%, rgba(20, 62, 116, .95) 0%, rgba(11, 34, 66, .6) 44%, transparent 76%),
-    radial-gradient(60% 50% at 96% 8%, rgba(40, 96, 166, .5), transparent 70%),
-    linear-gradient(105deg, #04070e 0%, #050c18 34%, #081a33 62%, #0a2242 100%);
-}
-
-/* a city, far off and low, with no edge where it starts */
-.scene-city {
-  inset: auto 0 22% 0;
-  height: 22%;
-  background:
-    radial-gradient(48% 150% at 78% 100%, rgba(255, 198, 124, .26), transparent 64%),
-    radial-gradient(56% 160% at 96% 100%, rgba(120, 190, 255, .22), transparent 66%),
-    repeating-linear-gradient(90deg, rgba(255, 222, 172, .09) 0 2px, transparent 2px 11px);
-  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 42%, #000 100%);
-  mask-image: linear-gradient(90deg, transparent 0%, #000 42%, #000 100%);
-  filter: blur(.5px);
-}
-
-/* the surface it all stands on, meeting the night in a gradient rather than a line */
-.scene-surface {
-  inset: 78% 0 0 0;
-  background:
-    radial-gradient(46% 130% at 62% 0%, rgba(60, 150, 255, .20), transparent 68%),
-    linear-gradient(180deg, rgba(10, 20, 37, 0) 0%, #081120 22%, #050b16 62%, #03060d 100%);
-}
-
 .hero-inner {
   position: relative;
   z-index: 1;
@@ -1062,166 +1025,6 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
 }
 .home .hero .palm-link { color: rgba(255, 255, 255, .52); }
 .home .hero .palm-link:hover { color: #7cb6ff; }
-
-/* ----------------------------------------------------------- the stage */
-
-.hero-stage {
-  position: relative;
-  min-width: 0;
-  aspect-ratio: 1 / 1.02;
-  display: grid;
-  place-items: center;
-}
-
-.stage-note {
-  position: absolute;
-  z-index: 3;
-  font: 600 10px/2 var(--sans);
-  letter-spacing: .24em;
-  text-transform: uppercase;
-  color: rgba(255, 255, 255, .62);
-}
-.stage-note.at-left { top: 6%; left: 0; }
-/* Clear of the card rather than behind it, which is where the drawing puts it too. */
-.stage-note.at-right { top: 62%; right: 0; text-align: right; }
-.stage-note.at-foot { bottom: 12%; right: 4%; text-align: right; }
-
-/* The hand comes in from above, tipped just enough to be offering itself to the reader. */
-/*
- * The hand is placed by its lower edge rather than its top, because what matters is the gap
- * between the palm and the reader it is held over — that gap is where the light is.
- */
-.hand-frame.reaching {
-  position: absolute;
-  z-index: 2;
-  bottom: 34%;
-  left: 50%;
-  width: min(52%, 310px);
-  translate: -54% 0;
-  rotate: 4deg;
-}
-.hand-frame.reaching img:first-of-type { filter: drop-shadow(0 0 70px rgba(50, 140, 255, .42)); }
-.hand-frame.reaching::before { display: none; }
-
-/* ---------------------------------------------------------- the reader */
-
-.reader {
-  position: absolute;
-  z-index: 1;
-  left: 50%;
-  bottom: 6%;
-  translate: -50% 0;
-  width: min(54%, 330px);
-  aspect-ratio: 1 / .46;
-}
-.reader span { position: absolute; display: block; }
-
-.reader-body {
-  inset: 34% 0 0 0;
-  border-radius: 50% / 34%;
-  background:
-    linear-gradient(180deg, #2a3342 0%, #131a26 34%, #080c14 100%);
-  box-shadow: inset 0 3px 10px rgba(255, 255, 255, .10), 0 26px 40px -18px rgba(0, 0, 0, .9);
-}
-.reader-mark {
-  position: absolute;
-  left: 50%;
-  top: 52%;
-  width: 26%;
-  transform: translate(-50%, -50%);
-  fill: #4f9dff;
-  filter: drop-shadow(0 0 10px rgba(79, 157, 255, .9));
-}
-/* the lit ring around the top face */
-.reader-ring {
-  inset: 12% 4% auto 4%;
-  height: 46%;
-  border-radius: 50%;
-  background: radial-gradient(closest-side, rgba(150, 215, 255, .95), rgba(40, 120, 240, .55) 62%, rgba(10, 40, 90, .2) 84%, transparent);
-  box-shadow: 0 0 40px rgba(60, 150, 255, .6);
-}
-.reader-shadow {
-  inset: auto -14% -16% -14%;
-  height: 34%;
-  border-radius: 50%;
-  background: radial-gradient(closest-side, rgba(40, 120, 240, .34), transparent 74%);
-  filter: blur(8px);
-}
-
-/* light leaving the ring and arriving at the palm above it */
-.beams {
-  inset: -78% 24% 52% 24%;
-  background:
-    linear-gradient(180deg, rgba(150, 210, 255, .5), rgba(90, 175, 255, .16)),
-    repeating-linear-gradient(90deg, rgba(180, 225, 255, .85) 0 1.5px, transparent 1.5px 11px);
-  background-blend-mode: multiply;
-  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 46%, #000 84%, transparent 100%);
-  mask-image: linear-gradient(180deg, transparent 0%, #000 46%, #000 84%, transparent 100%);
-  opacity: .8;
-}
-
-/* ------------------------------------------------------- the assets card */
-
-.assets-card {
-  position: absolute;
-  z-index: 3;
-  right: 0;
-  top: 14%;
-  width: min(62%, 268px);
-  padding: 16px 17px 12px;
-  border: 1px solid rgba(150, 195, 255, .2);
-  border-radius: 14px;
-  background: rgba(14, 32, 60, .52);
-  backdrop-filter: blur(16px) saturate(140%);
-  -webkit-backdrop-filter: blur(16px) saturate(140%);
-  box-shadow: 0 24px 50px -22px rgba(0, 0, 0, .8);
-  color: #fff;
-}
-.assets-card header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
-.assets-card header p { font-size: 15px; font-weight: 600; letter-spacing: -.02em; line-height: 1.25; }
-.assets-mark { width: 17px; height: 17px; fill: rgba(140, 190, 255, .8); flex: none; }
-.assets-card ul { margin: 14px 0 0; padding: 0; list-style: none; display: grid; gap: 2px; }
-.assets-card li {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 0;
-  border-top: 1px solid rgba(150, 195, 255, .12);
-  font-size: 13px;
-}
-.assets-card li:first-child { border-top: 0; }
-.assets-card li b { font-weight: 500; letter-spacing: -.01em; }
-.assets-card .amount { margin-left: auto; font-size: 10.5px; color: rgba(255, 255, 255, .58); font-variant-numeric: tabular-nums; }
-.coin {
-  display: grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  flex: none;
-  border-radius: 50%;
-  font-size: 13px;
-  font-weight: 600;
-  color: #fff;
-}
-.coin.btc { background: linear-gradient(160deg, #f7a531, #e8890f); }
-.coin.eth { background: linear-gradient(160deg, #7b8cf5, #4a5bd8); }
-.coin.usdt { background: linear-gradient(160deg, #35b7a4, #1d8f80); }
-
-.assets-more,
-.assets-card footer {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 8px;
-  padding-top: 10px;
-  border-top: 1px solid rgba(150, 195, 255, .12);
-  font-size: 12.5px;
-  color: rgba(255, 255, 255, .82);
-  text-decoration: none;
-}
-.assets-more .chev, .assets-card footer .chev { margin-left: auto; width: 14px; height: 14px; color: rgba(255, 255, 255, .5); }
-.assets-more:hover { color: #7cb6ff; }
-.live { width: 7px; height: 7px; border-radius: 50%; background: #3ddc84; box-shadow: 0 0 8px rgba(61, 220, 132, .8); }
 
 /* ------------------------------------------------------------ the strip */
 
@@ -2380,3 +2183,80 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
 /* The testimonial keeps its picture bleeding off the right edge. */
 .voices { padding-left: var(--gutter); padding-right: 0; }
 @media (max-width: 1040px) { .voices { padding-right: var(--gutter); } }
+
+/* ======================================================== the hero photograph */
+
+/*
+ * The scene is the supplied photograph, shown as the exact rectangle of it that carries no
+ * text: x from 600 to 1536, y from 100 to 870 — clear of the header drawn along its top and
+ * of the trust strip along its foot. Sized and positioned in percentages, that rectangle
+ * lands precisely at any width, and the image file is never cut.
+ */
+.home .hero {
+  position: relative;
+  display: block;
+  padding: 0;
+  overflow: hidden;
+  background: linear-gradient(180deg, #04080f 0%, #061020 52%, #040b14 100%);
+  color: #fff;
+}
+
+.hero-photo {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(66%, 1060px);
+  background-image: url("/hero-scene.webp");
+  background-repeat: no-repeat;
+  /* x=600 of 1536 across; y=100 of 1024 down, which clears the header drawn into the picture. */
+  background-position: 100% 39.3701%;
+  background-size: 164.1026% 132.9870%;
+  /* The cut edge is already near-black, so a short fade is all it takes to lose it. */
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 9%);
+  mask-image: linear-gradient(90deg, transparent 0%, #000 9%);
+}
+
+/* The reader's ring, breathing under the palm, which is the one thing a still cannot do. */
+.reader-pulse {
+  position: absolute;
+  left: 21.5%;
+  top: 56%;
+  width: 26%;
+  aspect-ratio: 1 / .34;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(150, 215, 255, .55), rgba(60, 150, 255, .18) 58%, transparent 78%);
+  mix-blend-mode: screen;
+  opacity: .35;
+  pointer-events: none;
+}
+
+.home .hero .hero-inner {
+  position: relative;
+  z-index: 1;
+  display: block;
+  padding-top: clamp(34px, 5vw, 76px);
+  padding-bottom: clamp(30px, 4vw, 58px);
+}
+.home .hero-copy { max-width: min(46%, 620px); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .reader-pulse { animation: reader-breathe 3.4s var(--ease) infinite; }
+  @keyframes reader-breathe {
+    0%, 100% { opacity: .26; transform: scale(.94); }
+    46% { opacity: .62; transform: scale(1.06); }
+  }
+}
+
+@media (max-width: 1040px) {
+  .hero-photo {
+    /* It is already a child of the full-width band, so it needs no help reaching the edge. */
+    position: relative;
+    width: 100%;
+    aspect-ratio: 936 / 770;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+  .home .hero-copy { max-width: none; }
+  .home .hero .hero-inner { padding-bottom: 18px; }
+}
