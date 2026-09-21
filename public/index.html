@@ -107,7 +107,7 @@
           <button class="link palm-link" id="signin-palm" type="button" disabled>or sign in with your palm</button>
           <p class="error" id="signin-error" role="alert"></p>
 
-          <ul class="hero-marks">
+          <ul class="hero-marks" data-reveal-group>
             <li><span class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4a8 8 0 0 0-8 8v3"/><path d="M12 8a4 4 0 0 0-4 4v4"/><path d="M12 12v5"/><path d="M16 12a4 4 0 0 0-4-4"/><path d="M20 12a8 8 0 0 0-3-6.2"/></svg></span><span>Human<br>Verified</span></li>
             <li><span class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 19 6v6c0 4.2-2.8 7.3-7 8.5-4.2-1.2-7-4.3-7-8.5V6z"/><path d="m9 12 2.2 2.2L15.5 10"/></svg></span><span>Post Quantum<br>Secure</span></li>
             <li><span class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3.6 8 4.2-8 4.2-8-4.2z"/><path d="m4 12 8 4.2 8-4.2"/><path d="m4 16.2 8 4.2 8-4.2"/></svg></span><span>Multi Asset<br>Support</span></li>
@@ -118,7 +118,7 @@
           <p class="eyebrow spaced">A safer today. Ready for tomorrow.</p>
         </div>
       </div>
-      <div class="trust">
+      <div class="trust" data-reveal>
         <p class="eyebrow spaced">Trusted for a more secure tomorrow.</p>
         <ul>
           <li><span class="glyph sm"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.4"/><path d="M9.6 8.4h4a2 2 0 0 1 0 4h-4m0 0h4.3a2 2 0 0 1 0 4H9.6m0-8V16m1.6-9.6V8m2.4-1.6V8m-2.4 8v1.6m2.4-1.6v1.6"/></svg></span>Bitcoin ready</li>
@@ -130,11 +130,11 @@
       </div>
     </section>
 
-    <section class="why" id="security">
+    <section class="why" id="security" data-reveal>
       <p class="eyebrow ruled centred">Why QuVault</p>
       <h2>Security That Puts <em>People First</em></h2>
       <p class="why-lede">Advanced cryptography. Human verification. A more open financial future.</p>
-      <ul class="why-grid">
+      <ul class="why-grid" data-reveal-group>
         <li>
           <span class="glyph round"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4a8 8 0 0 0-8 8v3"/><path d="M12 8a4 4 0 0 0-4 4v4"/><path d="M12 12v5"/><path d="M16 12a4 4 0 0 0-4-4"/><path d="M20 12a8 8 0 0 0-3-6.2"/></svg></span>
           <h3>Human Verified</h3>
@@ -158,7 +158,7 @@
       </ul>
     </section>
 
-    <section class="how" id="technology">
+    <section class="how" id="technology" data-reveal>
       <header>
         <div>
           <p class="eyebrow spaced">Simple. Secure. Yours.</p>
@@ -174,7 +174,7 @@
           </button>
         </div>
       </header>
-      <ol class="how-steps">
+      <ol class="how-steps" data-reveal-group>
         <li>
           <span class="step-no">1</span>
           <div>
@@ -199,7 +199,7 @@
       </ol>
     </section>
 
-    <section class="built" id="uses">
+    <section class="built" id="uses" data-reveal>
       <div class="built-copy">
         <p class="eyebrow spaced">Trusted by a global generation</p>
         <h2>Built for Today.<br>Ready for Tomorrow.</h2>
@@ -210,7 +210,7 @@
           <svg class="chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.5 4.5 6 5.5-6 5.5"/></svg>
         </button>
       </div>
-      <dl class="built-stats">
+      <dl class="built-stats" data-reveal-group>
         <div><dt>100%</dt><dd>Human verified</dd></div>
         <div><dt>NIST</dt><dd>Approved algorithms</dd></div>
         <div><dt>Global</dt><dd>Asset support</dd></div>
@@ -218,23 +218,23 @@
       </dl>
     </section>
 
-    <section class="voices">
+    <section class="voices" data-reveal>
       <div class="voices-copy">
         <p class="eyebrow spaced">Real people. Real confidence.</p>
-        <blockquote>&ldquo;QuVault gives me complete peace of mind.<br>My assets are secure, and I&rsquo;m in control.&rdquo;</blockquote>
+        <blockquote id="voice-quote">&ldquo;QuVault gives me complete peace of mind.<br>My assets are secure, and I&rsquo;m in control.&rdquo;</blockquote>
         <figure class="voice-who">
-          <!-- ASSET MISSING: portrait of the person quoted. Nothing is invented in its place. -->
-          <span class="portrait" data-missing="portrait"></span>
+          <span class="portrait"></span>
           <figcaption>
-            <b>Daniel M.</b>
-            <small>Investor and Early User</small>
+            <b id="voice-name">Daniel M.</b>
+            <small id="voice-role">Investor and Early User</small>
           </figcaption>
         </figure>
-        <div class="dots" role="tablist" aria-label="Testimonials">
+        <div class="dots" id="voice-dots" role="tablist" aria-label="Testimonials">
           <button class="dot on" type="button" role="tab" aria-selected="true" aria-label="First"></button>
           <button class="dot" type="button" role="tab" aria-selected="false" aria-label="Second"></button>
           <button class="dot" type="button" role="tab" aria-selected="false" aria-label="Third"></button>
         </div>
+      </div>
       </div>
       <!-- ASSET MISSING: the mountain photograph that fills the right of this section. -->
       <div class="voices-art" data-missing="mountains">
@@ -243,7 +243,7 @@
     </section>
 
     <!-- ASSET MISSING: the Earth-from-space photograph behind this band. -->
-    <section class="join" data-missing="earth">
+    <section class="join" data-reveal>
       <div class="join-copy">
         <p class="eyebrow spaced">Join QuVault today</p>
         <h2>Take Control of<br>Your Financial Future</h2>
@@ -259,7 +259,7 @@
     </section>
 
     <footer class="site-foot" id="contact">
-      <div class="foot-top">
+      <div class="foot-top" data-reveal-group>
         <div class="foot-brand">
           <a class="home-mark" href="#home">
             <img src="/qufi-mark.png" alt="" width="46" height="46">

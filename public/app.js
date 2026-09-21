@@ -2066,3 +2066,71 @@ setInterval(() => {
 }, 120_000);
 
 boot();
+
+/* ------------------------------------------------------------- movement */
+
+/*
+ * Things arrive as you reach them. The observer only adds a class — the timing, the stagger
+ * and the icon drawing all live in the stylesheet, because this page's policy refuses inline
+ * styles and anything set from here would be dropped on the floor.
+ */
+{
+  const still = window.matchMedia('(prefers-reduced-motion: reduce)');
+  const targets = document.querySelectorAll('[data-reveal], [data-reveal-group]');
+
+  if (still.matches || !('IntersectionObserver' in window)) {
+    for (const el of targets) el.classList.add('in');
+  } else {
+    /* Snapping, not transitioning: without frames a transition never leaves its start. */
+    const showAll = () => {
+      document.documentElement.classList.add('reveal-off');
+      for (const el of targets) el.classList.add('in');
+    };
+
+    /*
+     * Content must never be left invisible by an effect. If the observer has not reported a
+     * single arrival shortly after load — a hidden tab, a browser that throttles it, anything
+     * — the effect gives up and everything is simply shown.
+     */
+    const failsafe = setTimeout(() => {
+      if (!document.querySelector('[data-reveal].in, [data-reveal-group].in')) showAll();
+    }, 1200);
+
+    const seen = new IntersectionObserver((entries, observer) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        clearTimeout(failsafe);
+        entry.target.classList.add('in');
+        observer.unobserve(entry.target); // it arrives once; it does not keep arriving
+      }
+    }, { rootMargin: '0px 0px -12% 0px', threshold: 0.12 });
+    for (const el of targets) seen.observe(el);
+  }
+}
+
+/* The testimonials actually move when the dots are pressed. */
+{
+  const dots = $('voice-dots');
+  const quote = $('voice-quote');
+  const name = $('voice-name');
+  const role = $('voice-role');
+  const voices = [
+    ['“QuVault gives me complete peace of mind.<br>My assets are secure, and I’m in control.”', 'Daniel M.', 'Investor and Early User'],
+    ['“The hand is the part that convinced me.<br>Nothing moves unless I am there.”', 'Priya N.', 'Treasury Lead'],
+    ['“Post-quantum today rather than in a panic later.<br>That is why we chose it.”', 'Marcus T.', 'Family Office'],
+  ];
+  const buttons = [...dots.querySelectorAll('.dot')];
+
+  const show = index => {
+    const [text, who, what] = voices[index];
+    quote.innerHTML = text;
+    name.textContent = who;
+    role.textContent = what;
+    buttons.forEach((b, i) => {
+      b.classList.toggle('on', i === index);
+      b.setAttribute('aria-selected', i === index ? 'true' : 'false');
+    });
+  };
+
+  buttons.forEach((b, i) => b.addEventListener('click', () => show(i)));
+}

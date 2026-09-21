@@ -50,6 +50,15 @@
   --lift-2: 0 1px 1px rgba(0, 0, 0, .04), 0 8px 24px -10px rgba(0, 0, 0, .18);
   --lift-3: 0 24px 70px -28px rgba(0, 0, 0, .38), 0 2px 8px rgba(0, 0, 0, .06);
 
+  /*
+   * One measure for the whole site. It lives here rather than on the page, because the header
+   * is a sibling of the pages and not inside them — when it was defined lower down, the
+   * header could not see it, its padding computed to nothing, and the buttons sat hard
+   * against the edge of the window.
+   */
+  --measure: 1240px;
+  --gutter: max(20px, 5vw, calc((100% - var(--measure)) / 2));
+
   --ease: cubic-bezier(.4, 0, .2, 1);
   --quick: .16s var(--ease);
   color-scheme: light;
@@ -1741,10 +1750,14 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
  * darkness so the two read as one surface, which is why the logo and the outlined button are
  * light here and the page behind them never shows through.
  */
+/*
+ * The nav has to fit between the mark and the buttons at every width, or it pushes them past
+ * the gutter and they end up against the edge of the window.
+ */
 .home-top {
   display: flex;
   align-items: center;
-  gap: 32px;
+  gap: clamp(16px, 2vw, 32px);
   padding: 22px clamp(20px, 5vw, 68px);
   background: #04070e;
 }
@@ -1759,7 +1772,7 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
   color: var(--muted);
 }
 
-.home-nav { display: flex; gap: clamp(18px, 3vw, 42px); margin-inline: auto; }
+.home-nav { display: flex; min-width: 0; gap: clamp(14px, 2vw, 38px); margin-inline: auto; }
 .home-nav a {
   white-space: nowrap;
   color: rgba(255, 255, 255, .82);
@@ -2054,7 +2067,7 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
   color: rgba(255, 255, 255, .5);
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1100px) {
   .home-nav { display: none; }
   .hero { grid-template-columns: minmax(0, 1fr); }
   .hero-hand { order: -1; }
@@ -2102,7 +2115,7 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
 .home-top.open .nav-toggle span:nth-child(2) { opacity: 0; }
 .home-top.open .nav-toggle span:nth-child(3) { transform: translateY(-6.6px) rotate(-45deg); }
 
-@media (max-width: 900px) {
+@media (max-width: 1100px) {
   .home-top { flex-wrap: wrap; gap: 14px 18px; }
   .nav-toggle { display: flex; order: 2; }
   .home-top-cta { order: 3; width: 100%; }
@@ -2155,11 +2168,7 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
  * held to a single measure and centred, so lines never run to an unreadable length and the
  * left edge of the text is the same from the nav to the copyright.
  */
-.home,
-.about {
-  --measure: 1240px;
-  --gutter: max(20px, calc((100% - var(--measure)) / 2));
-}
+
 
 .home-top,
 .hero-inner,
@@ -2259,4 +2268,139 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
   }
   .home .hero-copy { max-width: none; }
   .home .hero .hero-inner { padding-bottom: 18px; }
+}
+
+/* =============================================================== movement */
+
+/*
+ * Everything here is opt-in per element and none of it is decoration for its own sake: things
+ * arrive as you reach them, icons draw themselves once, cards answer the pointer. The stagger
+ * is written in CSS rather than set from script, because this page's policy forbids inline
+ * styles and a delay assigned from JavaScript would simply be dropped.
+ */
+[data-reveal] {
+  opacity: 0;
+  transform: translateY(18px);
+  transition: opacity .7s var(--ease), transform .7s var(--ease);
+}
+[data-reveal].in { opacity: 1; transform: none; }
+
+/* children of a revealed group come in one after another */
+[data-reveal-group] > * {
+  opacity: 0;
+  transform: translateY(16px);
+  transition: opacity .6s var(--ease), transform .6s var(--ease);
+}
+[data-reveal-group].in > * { opacity: 1; transform: none; }
+[data-reveal-group].in > :nth-child(1) { transition-delay: .00s; }
+[data-reveal-group].in > :nth-child(2) { transition-delay: .08s; }
+[data-reveal-group].in > :nth-child(3) { transition-delay: .16s; }
+[data-reveal-group].in > :nth-child(4) { transition-delay: .24s; }
+[data-reveal-group].in > :nth-child(5) { transition-delay: .32s; }
+
+/* --------------------------------------------------- icons that draw themselves */
+
+.glyph svg path,
+.glyph svg circle,
+.glyph svg rect,
+.glyph svg ellipse {
+  stroke-dasharray: 120;
+  stroke-dashoffset: 120;
+  transition: stroke-dashoffset 1.1s var(--ease);
+}
+.in .glyph svg path,
+.in .glyph svg circle,
+.in .glyph svg rect,
+.in .glyph svg ellipse { stroke-dashoffset: 0; }
+.in .glyph svg :nth-child(2) { transition-delay: .12s; }
+.in .glyph svg :nth-child(3) { transition-delay: .24s; }
+.in .glyph svg :nth-child(4) { transition-delay: .36s; }
+.in .glyph svg :nth-child(5) { transition-delay: .48s; }
+
+/* ------------------------------------------------------------- cards answer back */
+
+.why-grid li,
+.how-steps li,
+.built-stats div {
+  border-radius: var(--r-lg);
+  transition: transform .35s var(--ease), background-color .35s var(--ease), box-shadow .35s var(--ease);
+}
+.why-grid li { padding: 18px 12px; }
+.why-grid li:hover {
+  transform: translateY(-6px);
+  background: #fff;
+  box-shadow: 0 18px 40px -22px rgba(10, 42, 90, .35);
+}
+.why-grid li:hover .glyph { background: var(--quvault-blue); color: #fff; }
+.why-grid .glyph { transition: background-color .35s var(--ease), color .35s var(--ease), transform .35s var(--ease); }
+.why-grid li:hover .glyph { transform: scale(1.06); }
+
+.how-steps li { padding: 12px; }
+.how-steps li:hover { background: #fff; box-shadow: 0 14px 30px -20px rgba(10, 42, 90, .3); }
+.how-steps li:hover .step-no { background: var(--quvault-blue); color: #fff; }
+.step-no { transition: background-color .3s var(--ease), color .3s var(--ease); }
+
+.built-stats div:hover { background: var(--quvault-light); }
+
+.trust li { transition: color .3s var(--ease); }
+.trust li:hover { color: #fff; }
+.trust li:hover .glyph.sm { border-color: var(--quvault-blue-bright); color: #cfe7ff; }
+.glyph.sm { transition: border-color .3s var(--ease), color .3s var(--ease); }
+
+/* the footer links slide a hair towards you */
+.foot-cols a { transition: color var(--quick), transform var(--quick); display: inline-block; }
+.foot-cols a:hover { transform: translateX(3px); }
+
+@media (prefers-reduced-motion: reduce) {
+  [data-reveal], [data-reveal-group] > * { opacity: 1; transform: none; transition: none; }
+  .glyph svg path, .glyph svg circle, .glyph svg rect, .glyph svg ellipse {
+    stroke-dasharray: none;
+    stroke-dashoffset: 0;
+    transition: none;
+  }
+  .why-grid li:hover, .how-steps li:hover { transform: none; }
+}
+
+/*
+ * The escape hatch the script reaches for when the observer never reports. Everything is
+ * simply on, with no transition to wait for, because a page that renders blank is a worse
+ * failure than a page that does not animate.
+ */
+.reveal-off [data-reveal],
+.reveal-off [data-reveal-group] > * {
+  opacity: 1 !important;
+  transform: none !important;
+  transition: none !important;
+}
+.reveal-off .glyph svg path,
+.reveal-off .glyph svg circle,
+.reveal-off .glyph svg rect,
+.reveal-off .glyph svg ellipse {
+  stroke-dasharray: none !important;
+  stroke-dashoffset: 0 !important;
+  transition: none !important;
+}
+
+/*
+ * These three are both revealed and hoverable, and the hover rule was written later, so it was
+ * quietly taking the transition over and the reveal had nothing to fade with. One declaration
+ * carries both jobs.
+ */
+.why-grid[data-reveal-group] > li,
+.how-steps[data-reveal-group] > li,
+.built-stats[data-reveal-group] > div,
+.foot-top[data-reveal-group] > * {
+  transition:
+    opacity .6s var(--ease),
+    transform .6s var(--ease),
+    background-color .35s var(--ease),
+    box-shadow .35s var(--ease);
+}
+.why-grid[data-reveal-group].in > li:hover,
+.how-steps[data-reveal-group].in > li:hover {
+  transition:
+    opacity .2s var(--ease),
+    transform .35s var(--ease),
+    background-color .35s var(--ease),
+    box-shadow .35s var(--ease);
 }
