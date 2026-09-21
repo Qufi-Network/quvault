@@ -232,11 +232,8 @@ addEventListener('hashchange', () => route(location.hash, { remember: false }));
 const SIGNIN_BUTTONS = [
   ['signin-top', 'browser'],
   ['signin-browser', 'browser'],
-  ['signin-create', 'browser'],
   ['signin-palm', 'palm'],
   ['about-join', 'browser'],
-  ['built-cta', 'browser'],
-  ['join-cta', 'browser'],
 ];
 
 /** Home or About, whichever the address bar asks for. Both can sign you in. */
@@ -266,10 +263,16 @@ async function showSignin() {
  * hand by then, so switching page is only ever a matter of which one is on show.
  */
 window.addEventListener('hashchange', () => {
-  if (!MARKETING.includes(VIEWS.find(name => !$(`view-${name}`).hidden))) return;
+  const here = VIEWS.find(name => !$(`view-${name}`).hidden);
+  if (!MARKETING.includes(here)) return;
   const wanted = location.hash === '#about' ? 'about' : 'signin';
+  /*
+   * Only a move between the two pages is handled here. Every other hash is a section on the
+   * page already showing, and the browser has already taken the reader to it.
+   */
+  if (wanted === here) return;
   show(wanted);
-  if (wanted === 'signin') window.scrollTo({ top: 0 });
+  window.scrollTo({ top: 0 });
 });
 
 async function signIn(method) {
@@ -300,25 +303,6 @@ for (const [id, method] of SIGNIN_BUTTONS) $(id).addEventListener('click', () =>
   });
   $('marketing-nav').addEventListener('click', event => { if (event.target.closest('a')) shut(); });
 }
-
-/*
- * The newsletter sign-up. There is nowhere to send an address yet, so rather than pretend to
- * take one it says plainly that it is not connected — a form that silently swallows what
- * somebody typed is worse than one that admits it cannot help.
- */
-$('foot-signup').addEventListener('submit', event => {
-  event.preventDefault();
-  const email = $('signup-email').value.trim();
-  if (!email) return;
-  $('signup-note').textContent = $('signup-consent').checked
-    ? 'Updates are not connected yet — nothing has been sent or stored.'
-    : 'Tick the box first, and note that updates are not connected yet.';
-});
-
-/*
- * The hero is a photograph now, so the hand loader and the pointer tilt that belonged to the
- * drawn one have gone with it. The About page keeps its hand, which needs no script.
- */
 
 $('signout').addEventListener('click', async () => {
   await api('/api/logout', {}).catch(() => {});
@@ -2066,71 +2050,3 @@ setInterval(() => {
 }, 120_000);
 
 boot();
-
-/* ------------------------------------------------------------- movement */
-
-/*
- * Things arrive as you reach them. The observer only adds a class — the timing, the stagger
- * and the icon drawing all live in the stylesheet, because this page's policy refuses inline
- * styles and anything set from here would be dropped on the floor.
- */
-{
-  const still = window.matchMedia('(prefers-reduced-motion: reduce)');
-  const targets = document.querySelectorAll('[data-reveal], [data-reveal-group]');
-
-  if (still.matches || !('IntersectionObserver' in window)) {
-    for (const el of targets) el.classList.add('in');
-  } else {
-    /* Snapping, not transitioning: without frames a transition never leaves its start. */
-    const showAll = () => {
-      document.documentElement.classList.add('reveal-off');
-      for (const el of targets) el.classList.add('in');
-    };
-
-    /*
-     * Content must never be left invisible by an effect. If the observer has not reported a
-     * single arrival shortly after load — a hidden tab, a browser that throttles it, anything
-     * — the effect gives up and everything is simply shown.
-     */
-    const failsafe = setTimeout(() => {
-      if (!document.querySelector('[data-reveal].in, [data-reveal-group].in')) showAll();
-    }, 1200);
-
-    const seen = new IntersectionObserver((entries, observer) => {
-      for (const entry of entries) {
-        if (!entry.isIntersecting) continue;
-        clearTimeout(failsafe);
-        entry.target.classList.add('in');
-        observer.unobserve(entry.target); // it arrives once; it does not keep arriving
-      }
-    }, { rootMargin: '0px 0px -12% 0px', threshold: 0.12 });
-    for (const el of targets) seen.observe(el);
-  }
-}
-
-/* The testimonials actually move when the dots are pressed. */
-{
-  const dots = $('voice-dots');
-  const quote = $('voice-quote');
-  const name = $('voice-name');
-  const role = $('voice-role');
-  const voices = [
-    ['“QuVault gives me complete peace of mind.<br>My assets are secure, and I’m in control.”', 'Daniel M.', 'Investor and Early User'],
-    ['“The hand is the part that convinced me.<br>Nothing moves unless I am there.”', 'Priya N.', 'Treasury Lead'],
-    ['“Post-quantum today rather than in a panic later.<br>That is why we chose it.”', 'Marcus T.', 'Family Office'],
-  ];
-  const buttons = [...dots.querySelectorAll('.dot')];
-
-  const show = index => {
-    const [text, who, what] = voices[index];
-    quote.innerHTML = text;
-    name.textContent = who;
-    role.textContent = what;
-    buttons.forEach((b, i) => {
-      b.classList.toggle('on', i === index);
-      b.setAttribute('aria-selected', i === index ? 'true' : 'false');
-    });
-  };
-
-  buttons.forEach((b, i) => b.addEventListener('click', () => show(i)));
-}

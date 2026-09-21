@@ -1689,6 +1689,21 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
 .foot-signup .check input { margin: 1px 0 0; accent-color: var(--quvault-blue); }
 .foot-signup .fine { margin-top: 8px; color: var(--quvault-blue-bright); }
 
+.secured-by {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+  color: rgba(255, 255, 255, .5);
+}
+.secured-by img {
+  width: auto;
+  height: 17px;
+  opacity: .8;
+  transition: opacity var(--quick);
+}
+.secured-by:hover img { opacity: 1; }
+
 .foot-bottom {
   display: flex;
   justify-content: space-between;
@@ -2404,3 +2419,6 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
     background-color .35s var(--ease),
     box-shadow .35s var(--ease);
 }
+
+/* The supplied Veyns lockup, at its own proportions, in the application's own header. */
+.mark-veyns { width: auto; height: 24px; }

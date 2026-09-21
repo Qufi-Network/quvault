@@ -5,7 +5,10 @@
 import { readFileSync } from 'node:fs';
 
 const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-const script = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+/* Both scripts the page loads, so an id either of them reaches for is checked. */
+const script = ['../public/app.js', '../public/veyns.js']
+  .map(file => readFileSync(new URL(file, import.meta.url), 'utf8'))
+  .join('\n');
 
 const inPage = new Set([...html.matchAll(/\bid="([\w-]+)"/g)].map(match => match[1]));
 /*

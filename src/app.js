@@ -580,7 +580,7 @@ export function createApp(options) {
       const label = String(entry.label ?? '').replace(/\s+/g, ' ').trim().slice(0, 40);
       if (!label) throw new HttpError(400, 'Give each signer a name.');
       const person = await one('userById', code);
-      if (!person) throw new HttpError(400, `No one has the approver code "${code}". They must sign in to QuVault once first.`);
+      if (!person) throw new HttpError(400, `No one has the approver code "${code}". They must sign in to Veyns once first.`);
       chosen.set(person.id, { id: person.id, label, owner: person.id === user.id });
     }
     return chosen;
