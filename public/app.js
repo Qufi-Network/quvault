@@ -242,6 +242,7 @@ const SIGNIN_BUTTONS = [
   ['signin-top', 'browser'],
   ['signin-browser', 'browser'],
   ['signin-palm', 'palm'],
+  ['home-access', 'browser'],
   ['about-join', 'browser'],
 ];
 

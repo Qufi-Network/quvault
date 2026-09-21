@@ -63,16 +63,18 @@
     <div class="vx-nav-in">
       <a class="vx-brand" href="#home" aria-label="Veyns home">
         <img src="/veyns-lockup-white.png" width="480" height="99" alt="Veyns">
+        <span class="vx-brand-sub">Quantum Vault</span>
       </a>
       <button class="vx-burger" id="nav-toggle" type="button" aria-expanded="false" aria-controls="marketing-nav" aria-label="Menu">
         <span></span><span></span><span></span>
       </button>
       <nav class="vx-links" id="marketing-nav">
-        <a href="#technology">Product</a>
-        <a href="#solutions">Solutions</a>
-        <a href="#security">Security</a>
+        <a href="#home-architecture">Platform</a>
+        <a href="#uses">Solutions</a>
+        <a href="#keys">Security</a>
+        <a href="#technology">Technology</a>
         <a href="#uses">Use Cases</a>
-        <a href="#resources">Resources</a>
+        <a href="#quantum">Resources</a>
         <a href="#about">Company</a>
       </nav>
       <div class="vx-nav-cta">
@@ -82,591 +84,554 @@
     </div>
   </header>
 
-  <main id="view-signin" class="view vx" hidden>
+  <main id="view-signin" class="view en" hidden>
 
-    <!-- ===================================================== hero -->
-    <section class="vx-hero" id="home">
-      <div class="vx-hero-grain" aria-hidden="true"></div>
-      <div class="vx-hero-bed" aria-hidden="true">
-        <!--
-          The supplied scene, cut to the rectangle of it that carries none of its own words:
-          the headline stops at x=678, the side column starts at x=1428, the navigation sits
-          above y=92 and the capability strip below y=770. The hand, the vault and the room
-          are the artwork exactly as delivered.
-        -->
-        <div class="vx-hero-scene" id="hero-scene">
-          <div class="vx-hero-glow"></div>
-        </div>
-        <canvas class="vx-hero-dust" id="hero-dust" aria-hidden="true"></canvas>
+    <!-- ============================================ hero (the one dark section) -->
+    <section class="en-hero home-hero" id="home">
+      <div class="en-hero-bed" aria-hidden="true">
+        <div class="home-hero-scene" id="home-scene"></div>
+        <div class="home-hero-glow"></div>
+        <canvas class="home-hero-dust" id="home-dust"></canvas>
+        <div class="en-hero-veil"></div>
       </div>
 
-      <div class="vx-hero-in">
-        <div class="vx-hero-copy">
-          <p class="vx-eyebrow" data-reveal>Trust has a new standard</p>
-          <h1 data-reveal>Secure<br>Every Transaction.<br><em>With a Human.</em></h1>
-          <p class="vx-hero-sub" data-reveal>Veyns Quantum Vault</p>
-          <p class="vx-hero-lede" data-reveal>Human gated security and biometric verification for digital
-            assets. Always know who signed the transaction.</p>
-          <div class="vx-hero-cta" data-reveal>
-            <a class="vx-btn solid lg" href="#contact">Book a Demo<svg class="vx-chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.6 4.8 5.6 5.2-5.6 5.2"/></svg></a>
-            <a class="vx-play" href="#human-gate">
-              <span class="vx-play-ring"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.9 5.8v8.4l6.6-4.2z"/></svg></span>
-              See How It Works
+      <div class="en-hero-in">
+        <div class="en-hero-copy">
+          <p class="en-eyebrow light" data-reveal>Enterprise digital asset security</p>
+          <h1 data-reveal>Control<br>how <em>digital value</em><br>moves.</h1>
+          <p class="home-hero-sub" data-reveal>The programmable security layer for digital assets.</p>
+          <div class="en-hero-lede" data-reveal>
+            <p>Veyns Quantum Vault combines human authorization, programmable policy controls and
+              post quantum cryptography to give institutions precise control over how digital
+              value is protected and moved.</p>
+          </div>
+          <div class="en-hero-cta" data-reveal>
+            <button class="vx-btn solid lg" id="signin-browser" type="button" disabled>
+              Request enterprise access
+              <svg class="vx-chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.6 4.8 5.6 5.2-5.6 5.2"/></svg>
+            </button>
+            <a class="vx-btn ghost lg" href="#home-architecture">
+              Explore the security architecture
+              <svg class="vx-chev down" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.6 4.8 5.6 5.2-5.6 5.2"/></svg>
             </a>
           </div>
           <button class="vx-palm-link" id="signin-palm" type="button" disabled>or sign in with your palm</button>
           <p class="vx-error" id="signin-error" role="alert"></p>
+
+          <ul class="home-hero-marks" data-reveal>
+            <li>Human authorization</li>
+            <li>Policy control</li>
+            <li>Post quantum cryptography</li>
+            <li>Key protection</li>
+          </ul>
         </div>
 
-        <p class="vx-hero-aside" data-reveal>
-          Identity in every transaction.<br>
-          Confidence in every decision.
-          <span class="vx-aside-rule"></span>
-        </p>
-      </div>
-
-      <div class="vx-hero-foot">
-      <ul class="vx-caps" data-reveal-group>
-        <li>
-          <span class="vx-ico"><svg viewBox="0 0 28 28" aria-hidden="true"><path d="M14 4.4a9.6 9.6 0 0 0-9.6 9.6v3.4"/><path d="M14 8.6A5.4 5.4 0 0 0 8.6 14v5"/><path d="M14 12.8V19"/><path d="M19.4 14A5.4 5.4 0 0 0 14 8.6"/><path d="M23.6 14a9.6 9.6 0 0 0-3.7-7.6"/><path d="M19.4 17.4v2.2"/></svg></span>
-          <b>Human Verified</b>
-          <small>Real people. Real control.</small>
-        </li>
-        <li>
-          <span class="vx-ico"><svg viewBox="0 0 28 28" aria-hidden="true"><path d="M14 4 22 6.9v7c0 4.9-3.2 8.5-8 9.9-4.8-1.4-8-5-8-9.9v-7z"/><path d="M14 9.2 17.6 11v3.9L14 16.8l-3.6-1.9V11z"/><path d="M14 9.2v7.6M10.4 11l7.2 3.9M17.6 11l-7.2 3.9"/></svg></span>
-          <b>Quantum Secure</b>
-          <small>Built for what is next.</small>
-        </li>
-        <li>
-          <span class="vx-ico"><svg viewBox="0 0 28 28" aria-hidden="true"><path d="m14 4.2 9.3 4.9-9.3 4.9-9.3-4.9z"/><path d="m4.7 14 9.3 4.9 9.3-4.9"/><path d="m4.7 18.9 9.3 4.9 9.3-4.9"/></svg></span>
-          <b>Multi Asset Ready</b>
-          <small>One platform. Every asset.</small>
-        </li>
-        <li>
-          <span class="vx-ico"><svg viewBox="0 0 28 28" aria-hidden="true"><circle cx="10.4" cy="10.2" r="3.1"/><path d="M4.6 21.3c0-3.2 2.6-5.4 5.8-5.4s5.8 2.2 5.8 5.4"/><path d="M18.6 8.2a3 3 0 0 1 0 5.6"/><path d="M20.4 21.3c0-2.4-.9-4.2-2.4-5.2"/></svg></span>
-          <b>Enterprise Scale</b>
-          <small>Security without friction.</small>
-        </li>
-      </ul>
-
-        <p class="vx-promise" data-reveal>
-          <span class="vx-promise-rule"></span>
-          Protecting today's assets for a brighter tomorrow.
-        </p>
+        <p class="en-hero-tags" data-reveal>Built for<br>institutional<br>digital assets</p>
       </div>
     </section>
 
-    <!-- ============================================ 01 the problem -->
-    <section class="vx-sec vx-problem" id="problem">
-      <div class="vx-wrap">
-        <div class="vx-split">
-          <div class="vx-editorial">
-            <p class="vx-eyebrow" data-reveal>Digital value needs human control</p>
-            <h2 data-reveal>The transaction can be digital.<br>The authority should be <em>human</em>.</h2>
-            <div class="vx-prose" data-reveal>
-              <p>Digital assets can move across borders in seconds. But knowing exactly who
-                authorised a transaction remains one of the most important security challenges
-                facing institutions.</p>
-              <p>Veyns introduces a human verification layer at the point where value moves.</p>
-            </div>
-          </div>
+    <!-- ==================================================== trust strip -->
+    <section class="en-sec" id="principles-strip">
+      <div class="en-wrap">
+        <h2 class="home-strip-head" data-reveal>Built around the security<br>principles institutions <em>require.</em></h2>
 
-          <!-- A request being carried through verification, driven by the scroll position. -->
-          <figure class="vx-txn" id="txn-demo" data-reveal>
-            <figcaption class="vx-txn-head">
-              <span class="vx-tag">Transaction request</span>
-              <span class="vx-txn-id">REQ&thinsp;·&thinsp;8F42A</span>
-            </figcaption>
-            <div class="vx-txn-amount">
-              <strong>$2,450,000</strong>
-              <span class="vx-chip">BTC</span>
-            </div>
-            <dl class="vx-txn-rows">
-              <div><dt>Destination</dt><dd>Institutional Treasury</dd></div>
-              <div><dt>Network</dt><dd>Bitcoin</dd></div>
-              <div><dt>Requested by</dt><dd>Treasury Operations</dd></div>
-            </dl>
-            <ol class="vx-txn-steps" id="txn-steps">
-              <li><span class="vx-dot"></span>Identity verified</li>
-              <li><span class="vx-dot"></span>Biometric verified</li>
-              <li><span class="vx-dot"></span>Policy checked</li>
-              <li><span class="vx-dot"></span>Authorised</li>
-            </ol>
-            <p class="vx-txn-status" id="txn-status" data-state="waiting">
-              <span class="vx-pulse"></span><span id="txn-status-text">Awaiting human verification</span>
-            </p>
-          </figure>
+        <ul class="home-strip" data-reveal-group>
+          <li>
+            <span class="en-ico"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 5.4a10 10 0 0 0-10 10v3.4"/><path d="M16 10.2a5.2 5.2 0 0 0-5.2 5.2v5.2"/><path d="M16 14.4v6.6"/><path d="M21.2 15.4a5.2 5.2 0 0 0-5.2-5.2"/><path d="M26 15.4a10 10 0 0 0-3.9-7.9"/></svg></span>
+            <b>Human authorization</b>
+          </li>
+          <li>
+            <span class="en-ico"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M6 10.4h20M6 16h20M6 21.6h20"/><circle cx="12" cy="10.4" r="2.6"/><circle cx="20.5" cy="16" r="2.6"/><circle cx="14.5" cy="21.6" r="2.6"/></svg></span>
+            <b>Programmable policy</b>
+          </li>
+          <li>
+            <span class="en-ico"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="m16 5 9.5 5.5v11L16 27l-9.5-5.5v-11z"/><path d="M16 5v22M6.5 10.5l19 11M25.5 10.5l-19 11"/></svg></span>
+            <b>Post quantum cryptography</b>
+          </li>
+          <li>
+            <span class="en-ico"><svg viewBox="0 0 32 32" aria-hidden="true"><rect x="7" y="13" width="18" height="13" rx="2.4"/><path d="M11.4 13V9.4a4.6 4.6 0 0 1 9.2 0V13"/><path d="M16 18v3"/></svg></span>
+            <b>Key protection</b>
+          </li>
+          <li>
+            <span class="en-ico"><svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="11" cy="11.6" r="3.4"/><path d="M4.6 24c0-3.7 2.9-6.1 6.4-6.1s6.4 2.4 6.4 6.1"/><path d="m19.6 14.6 2.4 2.4 5-5.4"/></svg></span>
+            <b>Multi party control</b>
+          </li>
+          <li>
+            <span class="en-ico"><svg viewBox="0 0 32 32" aria-hidden="true"><rect x="7.5" y="5" width="17" height="22" rx="2.6"/><path d="M11.5 11h9M11.5 15.5h9M11.5 20h5"/></svg></span>
+            <b>Verifiable evidence</b>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- =============================================== product statement -->
+    <section class="en-sec tint" id="home-approach">
+      <div class="en-wrap">
+        <div class="en-split">
+          <div>
+            <p class="en-eyebrow" data-reveal>The Veyns approach</p>
+            <h2 data-reveal>Security is more<br>than protecting<br><em>the key.</em></h2>
+          </div>
+          <div class="en-prose" data-reveal>
+            <p>Institutional digital asset security requires more than private key storage.</p>
+            <p>Organizations need to control who can authorize transactions, what they can
+              authorize, under which conditions, and how those decisions can be verified
+              afterwards.</p>
+            <p>Veyns brings those controls together in one architecture.</p>
+          </div>
+        </div>
+
+        <!-- the five things that have to agree, lighting in order as the page moves -->
+        <ol class="home-chain" id="home-chain">
+          <li>
+            <span class="home-chain-node"><span class="en-ico sm"><svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="12" r="4.4"/><path d="M7.4 26c0-4.6 3.9-7.6 8.6-7.6s8.6 3 8.6 7.6"/></svg></span></span>
+            <b>Human</b><small>A verified person, present</small>
+          </li>
+          <li>
+            <span class="home-chain-node"><span class="en-ico sm"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M6 10.4h20M6 16h20M6 21.6h20"/><circle cx="12" cy="10.4" r="2.6"/><circle cx="20.5" cy="16" r="2.6"/></svg></span></span>
+            <b>Policy</b><small>What they may authorize</small>
+          </li>
+          <li>
+            <span class="home-chain-node"><span class="en-ico sm"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="m16 5 9.5 5.5v11L16 27l-9.5-5.5v-11z"/><path d="M16 5v22M6.5 10.5l19 11"/></svg></span></span>
+            <b>Cryptography</b><small>Bound to that transaction</small>
+          </li>
+          <li>
+            <span class="home-chain-node"><span class="en-ico sm"><svg viewBox="0 0 32 32" aria-hidden="true"><rect x="7" y="13" width="18" height="13" rx="2.4"/><path d="M11.4 13V9.4a4.6 4.6 0 0 1 9.2 0V13"/></svg></span></span>
+            <b>Key protection</b><small>Sealed until the moment</small>
+          </li>
+          <li>
+            <span class="home-chain-node"><span class="en-ico sm"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M5 16h22"/><path d="m20 9 7 7-7 7"/></svg></span></span>
+            <b>Execution</b><small>And a record of all of it</small>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- =================================== core architecture (dark panel) -->
+    <section class="en-sec" id="home-architecture">
+      <div class="en-wrap">
+        <div class="home-dark">
+          <canvas class="home-dark-net" id="arch-net" aria-hidden="true"></canvas>
+          <header class="home-dark-head">
+            <p class="en-eyebrow light" data-reveal>Architecture</p>
+            <h2 data-reveal>From human intent<br>to <em>secure execution.</em></h2>
+            <p class="home-dark-lede" data-reveal>Every critical transaction passes through each of
+              these before it reaches the signing boundary.</p>
+          </header>
+
+          <ol class="home-layers" id="home-layers">
+            <li><span class="home-layer-n">01</span><b>Identity</b><small>Who is asking</small></li>
+            <li><span class="home-layer-n">02</span><b>Authorization</b><small>A palm, present</small></li>
+            <li><span class="home-layer-n">03</span><b>Policy</b><small>Amount, quorum, destination</small></li>
+            <li><span class="home-layer-n">04</span><b>Cryptography</b><small>Canonical, digested, signed</small></li>
+            <li><span class="home-layer-n">05</span><b>Key protection</b><small>Unsealed for one plan</small></li>
+            <li><span class="home-layer-n">06</span><b>Execution</b><small>Broadcast and watched</small></li>
+            <li><span class="home-layer-n">07</span><b>Evidence</b><small>What was authorized, by whom</small></li>
+          </ol>
         </div>
       </div>
     </section>
 
-    <!-- ==================================== 02 human gated security -->
-    <section class="vx-sec vx-gate" id="human-gate">
-      <div class="vx-wrap">
-        <header class="vx-head" data-reveal>
-          <p class="vx-eyebrow">Human gated security</p>
-          <h2>Put a human at the centre of the transaction.</h2>
-          <p class="vx-lede">Veyns connects digital asset transactions to verified human presence.
-            Before value moves, the authorised user must pass the configured verification process.</p>
-        </header>
-
-        <div class="vx-authority" id="authority" data-reveal>
-          <div class="vx-authority-head">
-            <div>
-              <span class="vx-tag">Transaction authority</span>
-              <p class="vx-authority-state" id="authority-state">Verification required</p>
-            </div>
-            <span class="vx-seal" id="authority-seal" aria-hidden="true">
-              <svg viewBox="0 0 44 44"><circle class="vx-seal-track" cx="22" cy="22" r="19"/><circle class="vx-seal-arc" cx="22" cy="22" r="19"/><path class="vx-seal-tick" d="m15.4 22.4 4.6 4.6 8.6-9.4"/></svg>
-            </span>
+    <!-- ================================================ transaction story -->
+    <section class="en-sec tint" id="transaction">
+      <div class="en-wrap">
+        <div class="en-split">
+          <div>
+            <p class="en-eyebrow" data-reveal>Before it is signed</p>
+            <h2 data-reveal>See what happens<br>before a transaction<br><em>is signed.</em></h2>
           </div>
+          <div class="en-prose" data-reveal>
+            <p>A treasury transfer, moving through the architecture one control at a time. Scroll
+              and watch it clear each one.</p>
+          </div>
+        </div>
 
-          <ol class="vx-chain" id="chain">
-            <li>
-              <span class="vx-ico"><svg viewBox="0 0 28 28" aria-hidden="true"><circle cx="14" cy="10.4" r="3.6"/><path d="M6.8 22.4c0-3.8 3.2-6.2 7.2-6.2s7.2 2.4 7.2 6.2"/></svg></span>
-              <b>Identity</b><small>Verified transaction authority</small>
-            </li>
-            <li>
-              <span class="vx-ico"><svg viewBox="0 0 28 28" aria-hidden="true"><path d="M14 5.2a8.8 8.8 0 0 0-8.8 8.8v3"/><path d="M14 9.2a4.8 4.8 0 0 0-4.8 4.8v4.6"/><path d="M14 13v5.8"/><path d="M18.8 14a4.8 4.8 0 0 0-4.8-4.8"/><path d="M22.8 14a8.8 8.8 0 0 0-3.4-7"/></svg></span>
-              <b>Biometric</b><small>Palm presence at the moment of signing</small>
-            </li>
-            <li>
-              <span class="vx-ico"><svg viewBox="0 0 28 28" aria-hidden="true"><rect x="8.4" y="4.6" width="11.2" height="18.8" rx="2.4"/><path d="M12.4 20h3.2"/><path d="M11.2 8.2h5.6"/></svg></span>
-              <b>Device</b><small>Trusted execution environment</small>
-            </li>
-            <li>
-              <span class="vx-ico"><svg viewBox="0 0 28 28" aria-hidden="true"><path d="M4.8 14h18.4"/><path d="m17.6 8.4 5.6 5.6-5.6 5.6"/><path d="M4.8 8.4v11.2"/></svg></span>
-              <b>Transaction</b><small>Bound to the request it approves</small>
-            </li>
-            <li>
-              <span class="vx-ico"><svg viewBox="0 0 28 28" aria-hidden="true"><rect x="5.6" y="12.2" width="16.8" height="11.2" rx="2.6"/><path d="M9.4 12.2V9a4.6 4.6 0 0 1 9.2 0v3.2"/><path d="M14 16.8v2.4"/></svg></span>
-              <b>Authorisation</b><small>Signed, recorded, irreversible</small>
-            </li>
+        <div class="home-txn" id="home-txn" data-reveal>
+          <dl class="tech-request">
+            <div><dt>Transfer</dt><dd>Treasury</dd></div>
+            <div><dt>Asset</dt><dd>USDC</dd></div>
+            <div><dt>Amount</dt><dd>$10,000,000</dd></div>
+            <div><dt>Network</dt><dd>Ethereum</dd></div>
+            <div><dt>Destination</dt><dd>0x••••41F9</dd></div>
+            <div><dt>Policy</dt><dd>Treasury high value v3</dd></div>
+          </dl>
+
+          <ol class="tech-checks" id="home-steps">
+            <li><span class="tech-tick"></span>Identity verified</li>
+            <li><span class="tech-tick"></span>Policy checked</li>
+            <li><span class="tech-tick"></span>Approvals collected</li>
+            <li><span class="tech-tick"></span>Human authorized</li>
+            <li><span class="tech-tick"></span>Transaction locked to the approval</li>
+            <li><span class="tech-tick"></span>Signed</li>
+            <li><span class="tech-tick"></span>Execution verified</li>
+            <li><span class="tech-tick"></span>Evidence created</li>
           </ol>
 
-          <p class="vx-authority-done" id="authority-done">
-            <b>Verified</b><span>Transaction authorised.</span>
+          <p class="tech-verdict" id="home-verdict" data-state="waiting">
+            <span class="tech-verdict-mark"></span><span id="home-verdict-text">Awaiting authorization</span>
           </p>
         </div>
       </div>
     </section>
-
-    <!-- ===================================== 03 the security stack -->
-    <section class="vx-sec vx-stack" id="security">
-      <div class="vx-wrap">
-        <header class="vx-head" data-reveal>
-          <p class="vx-eyebrow">The Veyns security stack</p>
-          <h2>Security doesn't live in one layer.</h2>
-          <p class="vx-lede">Veyns combines multiple security controls into a single transaction
-            boundary.</p>
-        </header>
-
-        <div class="vx-stack-grid">
-          <ol class="vx-layers" id="layers">
-            <li data-layer="0">
-              <span class="vx-num">01</span>
-              <div class="vx-layer-body">
-                <b>Human</b>
-                <small>Biometric verification</small>
-              </div>
-              <span class="vx-layer-ico"><svg viewBox="0 0 28 28" aria-hidden="true"><path d="M14 5.2a8.8 8.8 0 0 0-8.8 8.8v3"/><path d="M14 9.2a4.8 4.8 0 0 0-4.8 4.8v4.6"/><path d="M14 13v5.8"/><path d="M18.8 14a4.8 4.8 0 0 0-4.8-4.8"/><path d="M22.8 14a8.8 8.8 0 0 0-3.4-7"/></svg></span>
-            </li>
-            <li data-layer="1">
-              <span class="vx-num">02</span>
-              <div class="vx-layer-body">
-                <b>Identity</b>
-                <small>Verified transaction authority</small>
-              </div>
-              <span class="vx-layer-ico"><svg viewBox="0 0 28 28" aria-hidden="true"><circle cx="14" cy="10.4" r="3.6"/><path d="M6.8 22.4c0-3.8 3.2-6.2 7.2-6.2s7.2 2.4 7.2 6.2"/><path d="m19.6 6.4 1.6 1.6 3-3.2"/></svg></span>
-            </li>
-            <li data-layer="2">
-              <span class="vx-num">03</span>
-              <div class="vx-layer-body">
-                <b>Device</b>
-                <small>Trusted execution environment</small>
-              </div>
-              <span class="vx-layer-ico"><svg viewBox="0 0 28 28" aria-hidden="true"><rect x="8.4" y="4.6" width="11.2" height="18.8" rx="2.4"/><path d="M12.4 20h3.2"/><path d="M11.4 11.2h5.2v4.4h-5.2z"/></svg></span>
-            </li>
-            <li data-layer="3">
-              <span class="vx-num">04</span>
-              <div class="vx-layer-body">
-                <b>Cryptography</b>
-                <small>Post quantum cryptographic protection</small>
-              </div>
-              <span class="vx-layer-ico"><svg viewBox="0 0 28 28" aria-hidden="true"><path d="m14 4.4 8.2 4.7v9.4L14 23.2 5.8 18.5V9.1z"/><path d="M14 4.4v18.8M5.8 9.1l16.4 9.4M22.2 9.1 5.8 18.5"/></svg></span>
-            </li>
-            <li data-layer="4">
-              <span class="vx-num">05</span>
-              <div class="vx-layer-body">
-                <b>Vault</b>
-                <small>Policy controlled asset custody</small>
-              </div>
-              <span class="vx-layer-ico"><svg viewBox="0 0 28 28" aria-hidden="true"><rect x="4.6" y="6.2" width="18.8" height="15.6" rx="2.6"/><circle cx="14" cy="14" r="3.8"/><path d="M14 8.4v1.8M14 17.8v1.8M8.4 14h1.8M17.8 14h1.8"/></svg></span>
-            </li>
-            <li data-layer="5">
-              <span class="vx-num">06</span>
-              <div class="vx-layer-body">
-                <b>Transaction</b>
-                <small>Verified transaction execution</small>
-              </div>
-              <span class="vx-layer-ico"><svg viewBox="0 0 28 28" aria-hidden="true"><path d="M4.8 10.4h14.4"/><path d="m15.4 6.2 4.2 4.2-4.2 4.2"/><path d="M23.2 17.6H8.8"/><path d="m12.6 13.4-4.2 4.2 4.2 4.2"/></svg></span>
-            </li>
-          </ol>
-
-          <aside class="vx-stack-aside" data-reveal>
-            <div class="vx-stack-readout">
-              <span class="vx-tag">Transaction boundary</span>
-              <p class="vx-stack-count"><b id="stack-count">0</b><span>of 6 controls engaged</span></p>
-              <div class="vx-stack-bar"><i id="stack-bar"></i></div>
-              <p class="vx-stack-note" id="stack-note">Scroll to assemble the boundary.</p>
+    <!-- ============================================= human authorization -->
+    <section class="en-sec" id="human">
+      <div class="en-wrap">
+        <div class="en-split story">
+          <div>
+            <p class="en-eyebrow" data-reveal>Human authorization</p>
+            <h2 data-reveal>A human<br><em>in the loop.</em></h2>
+            <div class="en-prose" data-reveal>
+              <p>Critical financial actions should be connected to the people authorized to
+                perform them.</p>
+              <p>Veyns uses verified human presence as one component of a broader security
+                architecture — not as the whole of it.</p>
             </div>
-            <p class="vx-fine">Every control is configurable. A control that is switched off is
-              recorded as switched off — the boundary always states what it actually enforced.</p>
-          </aside>
-        </div>
-      </div>
-    </section>
-
-    <!-- ================================================ 04 the vault -->
-    <section class="vx-sec vx-vault" id="product">
-      <div class="vx-wrap">
-        <div class="vx-split wide-right">
-          <div class="vx-editorial">
-            <p class="vx-eyebrow" data-reveal>The vault</p>
-            <h2 data-reveal>Your assets.<br>Behind a <em>security boundary</em>.</h2>
-            <div class="vx-prose" data-reveal>
-              <p>Veyns Quantum Vault is designed to protect digital assets behind a configurable
-                security boundary.</p>
-            </div>
-            <ul class="vx-status" data-reveal-group>
-              <li><span class="vx-led on"></span><b>Human Verification</b><small>Active</small></li>
-              <li><span class="vx-led on"></span><b>Policy Engine</b><small>Active</small></li>
-              <li><span class="vx-led on"></span><b>Quantum Protection</b><small>Active</small></li>
-              <li><span class="vx-led on"></span><b>Device Trust</b><small>Verified</small></li>
-            </ul>
           </div>
 
-          <figure class="vx-panel vx-vault-panel" data-reveal>
-            <figcaption class="vx-panel-head">
-              <span class="vx-tag">Total assets</span>
-              <span class="vx-state ok"><span class="vx-pulse"></span>Secured</span>
-            </figcaption>
-            <p class="vx-total" id="vault-total">$48,294,820.42</p>
-            <ul class="vx-holdings">
-              <li><span class="vx-sym btc">₿</span><b>Bitcoin</b><small>BTC</small><em>$31,402,118.90</em></li>
-              <li><span class="vx-sym eth">Ξ</span><b>Ethereum</b><small>ETH</small><em>$9,884,402.11</em></li>
-              <li><span class="vx-sym usdt">T</span><b>Tether</b><small>USDT</small><em>$4,510,000.00</em></li>
-              <li><span class="vx-sym usdc">C</span><b>USD Coin</b><small>USDC</small><em>$2,120,299.41</em></li>
-              <li><span class="vx-sym more">+</span><b>Additional assets</b><small>6 networks</small><em>$378,000.00</em></li>
-            </ul>
-            <p class="vx-panel-foot">
-              <span class="vx-tag">Vault status</span>
-              <span class="vx-state ok">Secured</span>
-            </p>
+          <!--
+            Not the hero photograph again: a drawn reading of a palm, the same idea in line.
+          -->
+          <figure class="home-palm" id="home-palm" data-reveal>
+            <svg viewBox="0 0 400 360" role="img" aria-labelledby="home-palm-title">
+              <title id="home-palm-title">A palm being read, with the points of verification lighting in turn</title>
+              <g class="home-palm-hand">
+                <path d="M126 330v-96c0-10-16-14-16-30V128c0-9 5-14 12-14s12 5 12 14v52"/>
+                <path d="M158 180V96c0-9 5-14 12-14s12 5 12 14v84"/>
+                <path d="M206 180V88c0-9 5-14 12-14s12 5 12 14v92"/>
+                <path d="M254 184v-74c0-9 5-14 12-14s12 5 12 14v104c0 62-24 106-60 106h-92"/>
+              </g>
+              <g class="home-palm-points">
+                <circle cx="152" cy="226" r="4"/><circle cx="196" cy="212" r="4"/>
+                <circle cx="240" cy="228" r="4"/><circle cx="174" cy="266" r="4"/>
+                <circle cx="222" cy="268" r="4"/><circle cx="198" cy="244" r="5"/>
+              </g>
+              <path class="home-palm-scan" d="M104 0h216"/>
+            </svg>
           </figure>
+        </div>
+
+        <ol class="home-steps" id="home-human" data-reveal-group>
+          <li><b>Human</b><small>Present</small></li>
+          <li><b>Verification</b><small>Palm read by Veyns</small></li>
+          <li><b>Authorization</b><small>Signed to this transaction</small></li>
+          <li><b>Policy</b><small>Checked against the rules</small></li>
+          <li><b>Execution</b><small>Only then</small></li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- ==================================================== post quantum -->
+    <section class="en-sec tint" id="quantum">
+      <div class="en-wrap">
+        <div class="en-split">
+          <div>
+            <p class="en-eyebrow" data-reveal>Post quantum cryptography</p>
+            <h2 data-reveal>Designed for the<br>cryptographic <em>lifecycle ahead.</em></h2>
+          </div>
+          <div class="en-prose" data-reveal>
+            <p>Digital assets and the records around them may need to stay secure for years or
+              decades.</p>
+            <p>Veyns is built on modern post quantum primitives, with the agility to move as those
+              primitives move.</p>
+          </div>
+        </div>
+
+        <ul class="en-caps" data-reveal-group>
+          <li>
+            <h3>ML-DSA-65</h3>
+            <p class="tech-spec">FIPS 204</p>
+            <p>Signs every human authorization, under a context that separates it from every other
+              signature this system makes.</p>
+            <span class="en-state" data-state="live">Implemented</span>
+          </li>
+          <li>
+            <h3>ML-KEM-768</h3>
+            <p class="tech-spec">FIPS 203</p>
+            <p>Establishes the key that seals the vault, paired with X25519 so the seal holds if
+              either is broken.</p>
+            <span class="en-state" data-state="live">Implemented</span>
+          </li>
+          <li>
+            <h3>SLH-DSA</h3>
+            <p class="tech-spec">FIPS 205</p>
+            <p>Hash based signatures, resting on the hash alone. Not part of this system today.</p>
+            <span class="en-state" data-state="none">Not implemented</span>
+          </li>
+          <li>
+            <h3>Cryptographic agility</h3>
+            <p class="tech-spec">Identity, policy and transactions stay put</p>
+            <p>Only the cryptographic layer moves, so an algorithm can be replaced without
+              rebuilding the architecture around it.</p>
+            <span class="en-state" data-state="planned">Designed for</span>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ================================== key protection (dark panel) -->
+    <section class="en-sec" id="keys">
+      <div class="en-wrap">
+        <div class="home-dark">
+          <canvas class="home-dark-net" id="keys-net" aria-hidden="true"></canvas>
+          <header class="home-dark-head">
+            <p class="en-eyebrow light" data-reveal>Key protection</p>
+            <h2 data-reveal>The key never becomes<br><em>an application object.</em></h2>
+            <p class="home-dark-lede" data-reveal>An application asks for a signature. It does not
+              receive the key that made it.</p>
+          </header>
+
+          <ol class="home-boundary" id="home-boundary">
+            <li><b>Application</b><small>Asks for an operation</small></li>
+            <li><b>Veyns control plane</b><small>Decides whether it may happen</small></li>
+            <li class="home-boundary-line"><span>Cryptographic trust boundary</span></li>
+            <li><b>Key material</b><small>Sealed with ML-KEM-768 and X25519</small></li>
+            <li><b>Signature</b><small>Returns. The key does not.</small></li>
+          </ol>
+
+          <p class="home-dark-note">Today the unsealing happens in the browser rather than in
+            dedicated hardware. Moving it behind hardware is what the architecture is designed
+            for, and it is not done yet.</p>
         </div>
       </div>
     </section>
-    <!-- =============================================== 05 the wallet -->
-    <section class="vx-sec vx-wallet">
-      <div class="vx-wrap">
-        <header class="vx-head" data-reveal>
-          <p class="vx-eyebrow">The wallet</p>
-          <h2>A wallet built for control.</h2>
-          <p class="vx-lede">Veyns brings institutional security controls into the transaction
-            experience.</p>
-        </header>
 
-        <div class="vx-wallet-grid">
-          <figure class="vx-panel vx-portfolio" data-reveal>
-            <figcaption class="vx-panel-head">
-              <span class="vx-tag">Portfolio</span>
-              <span class="vx-fine">Four asset classes</span>
-            </figcaption>
-            <ul class="vx-bars">
-              <li><b>Bitcoin</b><em>65.0%</em><i class="vx-bar" data-w="65"><span></span></i></li>
-              <li><b>Ethereum</b><em>20.5%</em><i class="vx-bar" data-w="20"><span></span></i></li>
-              <li><b>Stablecoins</b><em>13.7%</em><i class="vx-bar" data-w="13"><span></span></i></li>
-              <li><b>Other Assets</b><em>0.8%</em><i class="vx-bar" data-w="1"><span></span></i></li>
-            </ul>
-          </figure>
+    <!-- =============================================== enterprise control -->
+    <section class="en-sec tint" id="controls">
+      <div class="en-wrap">
+        <div class="en-split">
+          <div>
+            <p class="en-eyebrow" data-reveal>Enterprise control</p>
+            <h2 data-reveal>Security policies built<br>for how institutions <em>operate.</em></h2>
+          </div>
+          <div class="en-prose" data-reveal>
+            <p>Policies are configuration, not code. Each one below is a control that runs before
+              anything is signed.</p>
+          </div>
+        </div>
 
-          <!--
-            Hovering a control lights the matching line on the request, so the point of each
-            one is legible without reading a word of documentation.
-          -->
-          <figure class="vx-panel vx-request" data-reveal>
-            <figcaption class="vx-panel-head">
-              <span class="vx-tag">Outgoing transfer</span>
-              <span class="vx-state wait"><span class="vx-pulse"></span>Held for approval</span>
-            </figcaption>
-            <div class="vx-req-amount"><strong>$1,200,000</strong><span class="vx-chip">USDT</span></div>
-            <dl class="vx-req-rows" id="req-rows">
-              <div data-control="approval"><dt>Approvals</dt><dd>1 of 2 collected</dd></div>
-              <div data-control="biometric"><dt>Biometric</dt><dd>Palm required at signing</dd></div>
-              <div data-control="device"><dt>Device</dt><dd>Trusted terminal · VC-7</dd></div>
-              <div data-control="limit"><dt>Daily limit</dt><dd>$1.2M of $5.0M used</dd></div>
-              <div data-control="whitelist"><dt>Destination</dt><dd>Whitelisted · Treasury 04</dd></div>
-            </dl>
-          </figure>
+        <ul class="home-controls" data-reveal-group>
+          <li><span class="en-num">01</span><b>Multi party approval</b><p>Several named people, each with their own palm.</p><i class="en-underline"></i></li>
+          <li><span class="en-num">02</span><b>Transaction limits</b><p>Thresholds that change what a transfer requires.</p><i class="en-underline"></i></li>
+          <li><span class="en-num">03</span><b>Role based access</b><p>Treasury, finance and security kept apart.</p><i class="en-underline"></i></li>
+          <li><span class="en-num">04</span><b>Destination controls</b><p>Value moves only where it is permitted to go.</p><i class="en-underline"></i></li>
+          <li><span class="en-num">05</span><b>Time windows</b><p>When a policy may be exercised at all.</p><i class="en-underline"></i></li>
+          <li><span class="en-num">06</span><b>Segregation of duties</b><p>Nobody both requests and approves.</p><i class="en-underline"></i></li>
+        </ul>
+      </div>
+    </section>
 
-          <ul class="vx-controls" id="controls" data-reveal-group>
-            <li data-control="approval"><span class="vx-ico"><svg viewBox="0 0 28 28" aria-hidden="true"><circle cx="10.6" cy="10.4" r="3.2"/><path d="M4.8 21.6c0-3.3 2.6-5.4 5.8-5.4s5.8 2.1 5.8 5.4"/><path d="m18.6 13.4 2.2 2.2 4.4-4.8"/></svg></span>Two Person Approval</li>
-            <li data-control="biometric"><span class="vx-ico"><svg viewBox="0 0 28 28" aria-hidden="true"><path d="M14 5.2a8.8 8.8 0 0 0-8.8 8.8v3"/><path d="M14 9.2a4.8 4.8 0 0 0-4.8 4.8v4.6"/><path d="M14 13v5.8"/><path d="M18.8 14a4.8 4.8 0 0 0-4.8-4.8"/></svg></span>Biometric Required</li>
-            <li data-control="device"><span class="vx-ico"><svg viewBox="0 0 28 28" aria-hidden="true"><rect x="8.4" y="4.6" width="11.2" height="18.8" rx="2.4"/><path d="M12.4 20h3.2"/><path d="m11.8 12.4 1.8 1.8 3.4-3.6"/></svg></span>Trusted Device</li>
-            <li data-control="limit"><span class="vx-ico"><svg viewBox="0 0 28 28" aria-hidden="true"><path d="M5.2 19.4a9.6 9.6 0 1 1 17.6 0"/><path d="m14 14 5-3.4"/><circle cx="14" cy="14" r="1.3"/></svg></span>Daily Limit</li>
-            <li data-control="whitelist"><span class="vx-ico"><svg viewBox="0 0 28 28" aria-hidden="true"><path d="M14 4.4 21.6 8v6.4c0 4.4-3 7.8-7.6 9.2-4.6-1.4-7.6-4.8-7.6-9.2V8z"/><path d="m10.8 13.8 2.4 2.4 4.4-4.8"/></svg></span>Whitelisted Destination</li>
+    <!-- ===================================================== use cases -->
+    <section class="en-sec" id="uses">
+      <div class="en-wrap">
+        <div class="en-split">
+          <div>
+            <p class="en-eyebrow" data-reveal>Use cases</p>
+            <h2 data-reveal>Built for organizations<br>moving <em>serious value.</em></h2>
+          </div>
+        </div>
+      </div>
+
+      <div class="home-rail-view" id="rail-view">
+        <ul class="home-rail" id="rail">
+          <li data-art="1">
+            <span class="home-rail-art" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M6 26h20M16 6 27 12H5z M10 16v6M16 16v6M22 16v6"/></svg></span>
+            <span class="en-num">01</span>
+            <b>Financial institutions</b>
+            <small>Authorization and operations for digital assets held on behalf of others.</small>
+          </li>
+          <li data-art="2">
+            <span class="home-rail-art" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M6 11h20v14H6z M11 11V8a5 5 0 0 1 10 0v3 M16 17v3"/></svg></span>
+            <span class="en-num">02</span>
+            <b>Digital asset custody</b>
+            <small>Policy controlled custody, with a record of every decision.</small>
+          </li>
+          <li data-art="3">
+            <span class="home-rail-art" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M16 6c5 0 9 1.6 9 3.6v12.8c0 2-4 3.6-9 3.6s-9-1.6-9-3.6V9.6C7 7.6 11 6 16 6z M7 16c0 2 4 3.6 9 3.6s9-1.6 9-3.6"/></svg></span>
+            <span class="en-num">03</span>
+            <b>Corporate treasury</b>
+            <small>Programmable controls on payments and settlement.</small>
+          </li>
+          <li data-art="4">
+            <span class="home-rail-art" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M12 13a3.4 3.4 0 1 0 0-6.8 3.4 3.4 0 0 0 0 6.8z M5 26c0-4.2 3.2-6.8 7-6.8s7 2.6 7 6.8 M22 11.4a2.9 2.9 0 0 1 0 5.4 M27 26c0-2.6-1-4.6-2.8-5.6"/></svg></span>
+            <span class="en-num">04</span>
+            <b>Asset management</b>
+            <small>Multi party control over institutional portfolios.</small>
+          </li>
+          <li data-art="5">
+            <span class="home-rail-art" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="m16 5 9.5 5.5v11L16 27l-9.5-5.5v-11z M16 5v22M6.5 10.5l19 11M25.5 10.5l-19 11"/></svg></span>
+            <span class="en-num">05</span>
+            <b>Tokenized assets</b>
+            <small>Authority bound to the instrument rather than the key.</small>
+          </li>
+          <li data-art="6">
+            <span class="home-rail-art" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M5 20h9M9 15l-4 5 4 5 M27 12h-9M23 7l4 5-4 5"/></svg></span>
+            <span class="en-num">06</span>
+            <b>Fintech and exchanges</b>
+            <small>A security layer inside existing transaction infrastructure.</small>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- =================================================== integration -->
+    <section class="en-sec tint" id="home-integration">
+      <div class="en-wrap">
+        <div class="en-split">
+          <div>
+            <p class="en-eyebrow" data-reveal>Integration</p>
+            <h2 data-reveal>Designed to fit your<br>existing <em>security stack.</em></h2>
+          </div>
+          <div class="en-prose" data-reveal>
+            <p>Two of these connect today. The rest are interfaces the architecture defines, and
+              they are labelled as such rather than implied.</p>
+          </div>
+        </div>
+
+        <ul class="tech-integrations home-ints" data-reveal-group>
+          <li><b>Identity</b><small>OpenID Connect · Veyns</small><span class="en-state" data-state="live">Implemented</span></li>
+          <li><b>Bitcoin</b><small>testnet4 · PSBT multisig</small><span class="en-state" data-state="live">Implemented</span></li>
+          <li><b>Further networks</b><small>Ethereum, Stellar and others</small><span class="en-state" data-state="planned">Planned</span></li>
+          <li><b>Hardware security module</b><small>Signing inside protected hardware</small><span class="en-state" data-state="planned">Designed for</span></li>
+          <li><b>Treasury and custody</b><small>An interface for existing systems</small><span class="en-state" data-state="none">Architectural interface</span></li>
+          <li><b>SIEM and audit</b><small>Streaming the evidence record outward</small><span class="en-state" data-state="none">Architectural interface</span></li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ====================================================== evidence -->
+    <section class="en-sec" id="home-evidence">
+      <div class="en-wrap">
+        <div class="en-split">
+          <div>
+            <p class="en-eyebrow" data-reveal>Verifiable evidence</p>
+            <h2 data-reveal>Security should<br>be <em>verifiable.</em></h2>
+          </div>
+          <div class="en-prose" data-reveal>
+            <p>Enterprise security is not about making claims. It is about defining controls,
+              enforcing them, and being able to show afterwards that they were followed.</p>
+          </div>
+        </div>
+
+        <div class="tech-evidence" data-reveal>
+          <table class="tech-table">
+            <caption class="visually-hidden">An example authorization record</caption>
+            <tbody>
+              <tr><th scope="row">Who</th><td>Two approvers · pairwise subjects</td></tr>
+              <tr><th scope="row">What</th><td>Spend · 0.4200 BTC</td></tr>
+              <tr><th scope="row">When</th><td>09:41:12 · approval window 300s</td></tr>
+              <tr><th scope="row">Policy</th><td>Quorum 2 of 3 · amount rule applied</td></tr>
+              <tr><th scope="row">Transaction</th><td>Digest bound to the signed plan</td></tr>
+              <tr><th scope="row">Signature</th><td>ML-DSA-65 · domain separated context</td></tr>
+              <tr><th scope="row">Result</th><td>Broadcast · confirmed</td></tr>
+            </tbody>
+          </table>
+          <p class="tech-decision" data-state="allow"><span class="tech-verdict-mark"></span>Authorization verified</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================================================ technology cta -->
+    <section class="en-sec tint" id="learn">
+      <div class="en-wrap">
+        <div class="home-learn" data-reveal>
+          <div>
+            <h2>See how the<br><em>security model works.</em></h2>
+            <p class="en-prose">Explore the architecture behind Veyns Quantum Vault, layer by
+              layer, with every claim marked for what it actually is.</p>
+          </div>
+          <div class="home-learn-cta">
+            <a class="vx-btn solid lg" href="#technology">Explore the technology<svg class="vx-chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.6 4.8 5.6 5.2-5.6 5.2"/></svg></a>
+            <a class="vx-btn line lg" href="#about">About Veyns<svg class="vx-chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.6 4.8 5.6 5.2-5.6 5.2"/></svg></a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================== final cta -->
+    <section class="en-sec" id="contact">
+      <div class="en-wrap">
+        <div class="en-cta" data-reveal>
+          <canvas class="en-cta-net" id="home-net" aria-hidden="true"></canvas>
+          <div class="en-cta-copy">
+            <p class="en-eyebrow light">Enterprise access</p>
+            <h2>Build the next generation<br>of <em>digital asset security.</em></h2>
+            <p class="en-cta-lede">Talk with the Veyns team about institutional custody, treasury,
+              digital assets and post quantum security.</p>
+            <div class="en-cta-row">
+              <button class="vx-btn solid lg" id="home-access" type="button" disabled>Request enterprise access<svg class="vx-chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.6 4.8 5.6 5.2-5.6 5.2"/></svg></button>
+              <button class="vx-btn ghost lg" id="home-demo" type="button">Book a technical demo</button>
+            </div>
+            <p class="en-cta-note" id="home-note" role="status"></p>
+          </div>
+          <ul class="en-cta-tags">
+            <li>Human</li><li>Policy</li><li>Cryptography</li><li>Evidence</li>
           </ul>
         </div>
       </div>
     </section>
 
-    <!-- ================================== 06 always know who signed -->
-    <section class="vx-sec vx-signed" id="signed">
-      <div class="vx-wrap">
-        <h2 class="vx-mega" data-reveal>Always know<br>who signed<br><em>the transaction.</em></h2>
-        <p class="vx-lede centred" data-reveal>Every transaction carries an authorisation trail.</p>
-
-        <ol class="vx-trail" id="trail">
-          <li><span class="vx-trail-node"></span><b>Requested</b><small>09:41:02</small></li>
-          <li><span class="vx-trail-node"></span><b>Identity verified</b><small>09:41:06</small></li>
-          <li><span class="vx-trail-node"></span><b>Biometric verified</b><small>09:41:11</small></li>
-          <li><span class="vx-trail-node"></span><b>Policy checked</b><small>09:41:12</small></li>
-          <li><span class="vx-trail-node"></span><b>Authorised</b><small>09:41:12</small></li>
-          <li><span class="vx-trail-node"></span><b>Settled</b><small>09:48:30</small></li>
-        </ol>
-      </div>
-    </section>
-
-    <!-- ========================================= 07 enterprise control -->
-    <section class="vx-sec vx-enterprise" id="solutions">
-      <div class="vx-wrap">
-        <header class="vx-head" data-reveal>
-          <p class="vx-eyebrow">Built for institutions</p>
-          <h2>Security without slowing the organisation down.</h2>
-        </header>
-
-        <ul class="vx-cards" data-reveal-group>
-          <li class="vx-card">
-            <span class="vx-card-num">01</span>
-            <span class="vx-ico lg"><svg viewBox="0 0 32 32" aria-hidden="true"><rect x="5" y="12.4" width="22" height="14.2" rx="2.4"/><path d="M16 5.2 27 12.4H5z"/><path d="M10.4 17v5M16 17v5M21.6 17v5"/></svg></span>
-            <h3>Institutional Custody</h3>
-            <p>Secure digital assets with configurable authorisation policies.</p>
-            <p class="vx-card-more">Segregated vaults · per-asset policy · dual control</p>
-          </li>
-          <li class="vx-card">
-            <span class="vx-card-num">02</span>
-            <span class="vx-ico lg"><svg viewBox="0 0 32 32" aria-hidden="true"><ellipse cx="16" cy="8.6" rx="9.4" ry="3.6"/><path d="M6.6 8.6v14.8c0 2 4.2 3.6 9.4 3.6s9.4-1.6 9.4-3.6V8.6"/><path d="M6.6 16c0 2 4.2 3.6 9.4 3.6s9.4-1.6 9.4-3.6"/></svg></span>
-            <h3>Treasury</h3>
-            <p>Control who can move institutional funds and under which conditions.</p>
-            <p class="vx-card-more">Spending windows · limits · approval quorums</p>
-          </li>
-          <li class="vx-card">
-            <span class="vx-card-num">03</span>
-            <span class="vx-ico lg"><svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="12.2" cy="11.4" r="3.8"/><path d="M5 24.6c0-4 3.2-6.6 7.2-6.6s7.2 2.6 7.2 6.6"/><circle cx="23" cy="12.6" r="3"/><path d="M21 19c3.2.5 5.4 2.8 5.4 5.6"/></svg></span>
-            <h3>Funds &amp; Family Offices</h3>
-            <p>Protect high value assets with human gated transaction controls.</p>
-            <p class="vx-card-more">Named signatories · delegation · full audit trail</p>
-          </li>
-          <li class="vx-card">
-            <span class="vx-card-num">04</span>
-            <span class="vx-ico lg"><svg viewBox="0 0 32 32" aria-hidden="true"><rect x="4.6" y="5.4" width="10" height="10" rx="2"/><rect x="17.4" y="5.4" width="10" height="10" rx="2"/><rect x="4.6" y="18.2" width="10" height="10" rx="2"/><path d="M17.4 23.2h10M23.4 19.2l4 4-4 4"/></svg></span>
-            <h3>Digital Asset Infrastructure</h3>
-            <p>Add a security and verification layer around existing digital asset workflows.</p>
-            <p class="vx-card-more">API boundary · webhooks · policy as configuration</p>
-          </li>
-        </ul>
-      </div>
-    </section>
-
-    <!-- ================================================ 08 use cases -->
-    <section class="vx-sec vx-uses" id="uses">
-      <div class="vx-wrap">
-        <header class="vx-head" data-reveal>
-          <p class="vx-eyebrow">Use cases</p>
-          <h2>One security architecture.<br>Multiple financial environments.</h2>
-        </header>
-      </div>
-      <!-- The rail moves with the scroll on a wide screen and swipes on a narrow one. -->
-      <div class="vx-rail-view" id="rail-view">
-        <ul class="vx-rail" id="rail">
-          <li><span class="vx-rail-num">01</span><b>Institutional Custody</b><small>Configurable authorisation for held assets.</small></li>
-          <li><span class="vx-rail-num">02</span><b>Treasury Management</b><small>Who may move funds, and under which conditions.</small></li>
-          <li><span class="vx-rail-num">03</span><b>Digital Asset Funds</b><small>Verified signatories on every redemption.</small></li>
-          <li><span class="vx-rail-num">04</span><b>Family Offices</b><small>High value transfers behind a human gate.</small></li>
-          <li><span class="vx-rail-num">05</span><b>Exchanges</b><small>Operational controls on hot and cold movement.</small></li>
-          <li><span class="vx-rail-num">06</span><b>Tokenised Assets</b><small>Authority bound to the instrument, not the key.</small></li>
-          <li><span class="vx-rail-num">07</span><b>Corporate Treasury</b><small>Policy controlled settlement at scale.</small></li>
-          <li><span class="vx-rail-num">08</span><b>High Value Transfers</b><small>Two people, two palms, one recorded decision.</small></li>
-        </ul>
-      </div>
-    </section>
-
-    <!-- ============================================= 09 post quantum -->
-    <section class="vx-sec vx-quantum" id="resources">
-      <div class="vx-wrap">
-        <header class="vx-head" data-reveal>
-          <p class="vx-eyebrow">Post quantum</p>
-          <h2>Security for the world after classical cryptography.</h2>
-          <p class="vx-lede">The security landscape is changing. Veyns is designed with post quantum
-            cryptographic protection in mind, helping institutions prepare for a future where
-            today's cryptographic assumptions may no longer be sufficient.</p>
-        </header>
-
-        <div class="vx-migration" id="migration" data-reveal>
-          <svg class="vx-migration-web" viewBox="0 0 1200 220" preserveAspectRatio="none" aria-hidden="true">
-            <path class="vx-mig-line" d="M180 110H600" />
-            <path class="vx-mig-line" d="M600 110h420" />
-          </svg>
-          <ol class="vx-mig-steps">
-            <li data-step="0">
-              <span class="vx-mig-ring"><svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="16"/><path d="M24 12v24M12 24h24"/></svg></span>
-              <b>Classical</b><small>RSA and elliptic curve</small>
-            </li>
-            <li data-step="1">
-              <span class="vx-mig-ring"><svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="16"/><path d="M24 8v32"/><path d="M8 24h32"/><path d="m13 13 22 22M35 13 13 35"/></svg></span>
-              <b>Hybrid</b><small>Classical and lattice together</small>
-            </li>
-            <li data-step="2">
-              <span class="vx-mig-ring"><svg viewBox="0 0 48 48" aria-hidden="true"><path d="m24 8 14 8v16l-14 8-14-8V16z"/><path d="M24 8v32M10 16l28 16M38 16 10 32"/></svg></span>
-              <b>Post Quantum</b><small>Lattice based signatures and encapsulation</small>
-            </li>
-          </ol>
-        </div>
-        <p class="vx-fine centred" data-reveal>Veyns Quantum Vault uses ML-DSA-65 for authorisation
-          signatures and ML-KEM-768 alongside X25519 for key encapsulation.</p>
-      </div>
-    </section>
-
-    <!-- ============================================ 10 policy engine -->
-    <section class="vx-sec vx-policy" id="policy">
-      <div class="vx-wrap">
-        <div class="vx-split">
-          <div class="vx-editorial">
-            <p class="vx-eyebrow" data-reveal>Policy engine</p>
-            <h2 data-reveal>Don't just secure the key.<br>Control the <em>transaction</em>.</h2>
-            <div class="vx-prose" data-reveal>
-              <p>A key that can sign anything is a key that can lose everything. A policy decides
-                what a signature is permitted to authorise before it is ever asked for.</p>
-              <p>Change a control on the right and the outcome below re-evaluates against the
-                example transfer.</p>
-            </div>
-          </div>
-
-          <form class="vx-panel vx-builder" id="builder" data-reveal>
-            <p class="vx-panel-head"><span class="vx-tag">Transfer policy</span><span class="vx-fine">Example</span></p>
-            <dl class="vx-builder-rows">
-              <div><dt>Asset</dt><dd>USDT</dd></div>
-              <div><dt>Maximum</dt><dd>$5,000,000</dd></div>
-              <div><dt>Destination</dt><dd>Approved addresses</dd></div>
-              <div><dt>Time</dt><dd>09:00 &ndash; 18:00</dd></div>
-            </dl>
-            <ul class="vx-switches">
-              <li><label><input type="checkbox" id="pol-biometric" checked><span class="vx-switch"></span><b>Verification</b><small>Biometric</small></label></li>
-              <li><label><input type="checkbox" id="pol-approvals" checked><span class="vx-switch"></span><b>Approvals</b><small>2 required</small></label></li>
-              <li><label><input type="checkbox" id="pol-device" checked><span class="vx-switch"></span><b>Device</b><small>Trusted only</small></label></li>
-              <li><label><input type="checkbox" id="pol-window" checked><span class="vx-switch"></span><b>Time window</b><small>Business hours</small></label></li>
-            </ul>
-            <p class="vx-builder-state" id="builder-state" data-state="active">
-              <span class="vx-pulse"></span><span id="builder-state-text">Policy active</span>
-            </p>
-            <p class="vx-builder-note" id="builder-note">Four controls enforced. A $1.2M transfer to
-              Treasury 04 at 14:20 would be authorised after two palms.</p>
-          </form>
-        </div>
-      </div>
-    </section>
-
-    <!-- =========================================== 11 the human moment -->
-    <section class="vx-sec vx-moment" id="moment">
-      <div class="vx-moment-bed" aria-hidden="true"><div class="vx-moment-scene"></div></div>
-      <div class="vx-wrap">
-        <h2 data-reveal>Technology protects the system.<br><em>People authorise the value.</em></h2>
-        <ol class="vx-thread" id="thread" data-reveal>
-          <li><span class="vx-thread-dot"></span>Hand</li>
-          <li><span class="vx-thread-dot"></span>Identity</li>
-          <li><span class="vx-thread-dot"></span>Transaction</li>
-          <li><span class="vx-thread-dot"></span>Value</li>
-        </ol>
-      </div>
-    </section>
-
-    <!-- ============================================ 12 enterprise cta -->
-    <section class="vx-sec vx-cta" id="contact">
-      <div class="vx-wrap">
-        <h2 data-reveal>Make every transaction<br><em>accountable</em>.</h2>
-        <p class="vx-lede centred" data-reveal>Give your organisation a new standard of digital asset
-          security.</p>
-        <div class="vx-cta-row" data-reveal>
-          <button class="vx-btn solid lg" id="demo-cta" type="button">Book a Private Demo<svg class="vx-chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.6 4.8 5.6 5.2-5.6 5.2"/></svg></button>
-          <button class="vx-btn ghost lg" id="talk-cta" type="button">Talk to Security</button>
-        </div>
-        <p class="vx-cta-note" id="cta-note" role="status"></p>
-        <p class="vx-fine centred">Designed for institutions handling digital value at scale.</p>
-
-        <div class="vx-enter" data-reveal>
-          <span class="vx-enter-rule"></span>
-          <p>Already have a vault?</p>
-          <button class="vx-btn line" id="signin-browser" type="button" disabled>Enter the Vault</button>
-        </div>
-      </div>
-    </section>
-
-    <!-- =================================================== footer -->
-    <footer class="vx-foot">
-      <div class="vx-wrap">
-        <div class="vx-foot-top">
-          <div class="vx-foot-brand">
-            <img src="/veyns-lockup-white.png" width="480" height="99" alt="Veyns">
-            <p>Human gated security for digital value.</p>
-            <ul class="vx-social">
-              <li><a href="#home" aria-label="X"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 4 12 12M16 4 4 16"/></svg></a></li>
+    <!-- ======================================================= footer -->
+    <footer class="en-foot">
+      <div class="en-wrap">
+        <div class="en-foot-top">
+          <div class="en-foot-brand">
+            <img src="/veyns-lockup-black.png" width="480" height="99" alt="Veyns">
+            <p class="home-foot-sub">Quantum Vault</p>
+            <p>Security infrastructure for a more trusted financial future.</p>
+            <ul class="en-social">
               <li><a href="#home" aria-label="LinkedIn"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3.2" y="3.2" width="13.6" height="13.6" rx="2.4"/><path d="M6.8 8.6v5M6.8 6.6v.1M10.2 13.6v-5M13.4 13.6v-2.8a2.2 2.2 0 0 0-3.2-1.9"/></svg></a></li>
-              <li><a href="#home" aria-label="Contact"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.8" y="4.6" width="14.4" height="10.8" rx="2"/><path d="m3.4 6 6.6 4.8L16.6 6"/></svg></a></li>
+              <li><a href="#home" aria-label="X"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 4 12 12M16 4 4 16"/></svg></a></li>
+              <li><a href="#contact" aria-label="Contact"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.8" y="4.6" width="14.4" height="10.8" rx="2"/><path d="m3.4 6 6.6 4.8L16.6 6"/></svg></a></li>
             </ul>
           </div>
 
-          <div class="vx-foot-cols">
+          <div class="en-foot-cols">
             <div>
               <h3>Product</h3>
-              <a href="#product">Quantum Vault</a>
-              <a href="#product">Wallet</a>
-              <a href="#human-gate">Transaction Security</a>
-              <a href="#policy">Policy Engine</a>
+              <a href="#home-architecture">Quantum Vault</a>
+              <a href="#home-architecture">Security architecture</a>
+              <a href="#controls">Policy engine</a>
+              <a href="#technology">Technology</a>
+              <a href="#home-integration">Integrations</a>
             </div>
             <div>
               <h3>Solutions</h3>
-              <a href="#solutions">Custody</a>
-              <a href="#solutions">Treasury</a>
-              <a href="#uses">Funds</a>
-              <a href="#uses">Family Offices</a>
-              <a href="#solutions">Enterprise</a>
-            </div>
-            <div>
-              <h3>Security</h3>
-              <a href="#human-gate">Human Verification</a>
-              <a href="#resources">Post Quantum</a>
-              <a href="#security">Device Security</a>
-              <a href="#policy">Transaction Policies</a>
+              <a href="#uses">Financial institutions</a>
+              <a href="#uses">Custody</a>
+              <a href="#uses">Asset management</a>
+              <a href="#uses">Treasury</a>
+              <a href="#uses">Tokenized assets</a>
             </div>
             <div>
               <h3>Company</h3>
               <a href="#about">About</a>
-              <a href="#security">Technology</a>
-              <a href="#resources">Resources</a>
+              <a href="#about">Our story</a>
               <a href="#contact">Contact</a>
             </div>
+            <div>
+              <h3>Resources</h3>
+              <a href="#technology">Architecture</a>
+              <a href="#quantum">Cryptography</a>
+              <a href="#home-evidence">Evidence</a>
+              <a href="#keys">Key protection</a>
+            </div>
           </div>
+
+          <p class="en-foot-tags">
+            Human<br>Policy<br>Cryptography<br>Evidence
+            <span class="en-foot-rule"></span>
+          </p>
         </div>
 
-        <div class="vx-foot-bottom">
-          <small>&copy; 2026 Veyns</small>
-          <nav class="vx-foot-legal">
+        <div class="en-foot-bottom">
+          <small>&copy; 2026 Veyns. All rights reserved.</small>
+          <nav class="en-foot-legal">
             <a href="#contact">Privacy</a>
             <a href="#contact">Terms</a>
-            <a href="#security">Security</a>
-            <a href="#policy">Compliance</a>
+            <a href="#home-architecture">Security</a>
+            <a href="#contact">Responsible disclosure</a>
           </nav>
+          <span class="en-status"><i></i>Systems operational</span>
         </div>
       </div>
     </footer>
@@ -1413,37 +1378,44 @@
 
         <ol class="tech-flow" id="flow">
           <li>
-            <span class="tech-step">01</span>
+            <span class="tech-step"><svg viewBox="0 0 32 32" aria-hidden="true"><rect x="6.5" y="5" width="19" height="22" rx="2.6"/><path d="M11 12h10M11 16.5h10M11 21h6"/></svg></span>
+            <span class="tech-step-n">01</span>
             <b>Initiate</b>
             <p>Asset, amount and destination become a plan the server alone is allowed to make.</p>
           </li>
           <li>
-            <span class="tech-step">02</span>
+            <span class="tech-step"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 5.4a10 10 0 0 0-10 10v3.4"/><path d="M16 10.2a5.2 5.2 0 0 0-5.2 5.2v5.2"/><path d="M16 14.4v6.6"/><path d="M21.2 15.4a5.2 5.2 0 0 0-5.2-5.2"/><path d="M26 15.4a10 10 0 0 0-3.9-7.9"/></svg></span>
+            <span class="tech-step-n">02</span>
             <b>Authorize</b>
             <p>A palm read by Veyns, and as many more as the policy requires.</p>
           </li>
           <li>
-            <span class="tech-step">03</span>
+            <span class="tech-step"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M6 10.4h20M6 16h20M6 21.6h20"/><circle cx="12" cy="10.4" r="2.6"/><circle cx="20.5" cy="16" r="2.6"/><circle cx="14.5" cy="21.6" r="2.6"/></svg></span>
+            <span class="tech-step-n">03</span>
             <b>Policy</b>
             <p>Amount, quorum, destination and window, all evaluated before any key is reached for.</p>
           </li>
           <li>
-            <span class="tech-step">04</span>
+            <span class="tech-step"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="m16 5 9.5 5.5v11L16 27l-9.5-5.5v-11z"/><path d="M16 5v22M6.5 10.5l19 11M25.5 10.5l-19 11"/></svg></span>
+            <span class="tech-step-n">04</span>
             <b>Cryptography</b>
             <p>The plan is canonicalised, digested, and that digest is what the approval signs.</p>
           </li>
           <li>
-            <span class="tech-step">05</span>
+            <span class="tech-step"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M6 26h20"/><path d="m9.5 22.5 11-11a2.8 2.8 0 0 1 4 4l-11 11-5.5 1.5z"/><path d="m18 9 5 5"/></svg></span>
+            <span class="tech-step-n">05</span>
             <b>Signing</b>
             <p>The spending key is unsealed for one narrow window and signs that plan only.</p>
           </li>
           <li>
-            <span class="tech-step">06</span>
+            <span class="tech-step"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M5 16h18"/><path d="m17 10 6 6-6 6"/><circle cx="26" cy="16" r="2.4"/></svg></span>
+            <span class="tech-step-n">06</span>
             <b>Execute</b>
             <p>Broadcast, then watched until it confirms.</p>
           </li>
           <li>
-            <span class="tech-step">07</span>
+            <span class="tech-step"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 4.6 24.5 8v7.4c0 5.2-3.4 9-8.5 10.4-5.1-1.4-8.5-5.2-8.5-10.4V8z"/><path d="m12.2 15.4 2.6 2.6 5.2-5.6"/></svg></span>
+            <span class="tech-step-n">07</span>
             <b>Evidence</b>
             <p>What was authorized, by whom, under which policy, against which transaction.</p>
           </li>

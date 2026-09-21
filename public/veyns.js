@@ -30,9 +30,10 @@ const clamp = (v, lo = 0, hi = 1) => (v < lo ? lo : v > hi ? hi : v);
 const still = window.matchMedia('(prefers-reduced-motion: reduce)');
 
 /*
- * The marketing surface is three pages sharing one document and one bar: the dark home page
- * and the two light enterprise pages. All are hidden until the application decides which to
- * put up, so nothing here can be measured before that happens.
+ * The marketing surface is three pages sharing one document and one bar. All three are the
+ * same light enterprise page: one dark hero, a white body, contained dark panels where
+ * something is genuinely a system. All are hidden until the application decides which to put
+ * up, so nothing here can be measured before that happens.
  */
 const PAGES = ['view-signin', 'view-about', 'view-technology'].map($).filter(Boolean);
 const showing = () => PAGES.find(page => !page.hidden) || null;
@@ -218,14 +219,14 @@ document.addEventListener('click', event => {
   }, 700);
 });
 
-/* ----------------------------------------------------------- the hero */
+/* ====================================================== the homepage */
 
 {
-  const hero = document.querySelector('.vx-hero');
-  const scene = $('hero-scene');
+  const hero = document.querySelector('.home-hero');
+  const scene = $('home-scene');
 
   if (hero && scene && !still.matches) {
-    /* The scene answers the pointer, by a few pixels. Anything more reads as a gimmick. */
+    /* The scene answers the pointer by a few pixels. Anything more reads as a gimmick. */
     let pending = false;
     hero.addEventListener('pointermove', event => {
       if (pending) return;
@@ -233,277 +234,148 @@ document.addEventListener('click', event => {
       requestAnimationFrame(() => {
         pending = false;
         const box = hero.getBoundingClientRect();
-        scene.style.setProperty('--vx-px', ((event.clientX - box.left) / box.width - 0.5).toFixed(3));
-        scene.style.setProperty('--vx-py', ((event.clientY - box.top) / box.height - 0.5).toFixed(3));
+        scene.style.setProperty('--en-px', ((event.clientX - box.left) / box.width - 0.5).toFixed(3));
+        scene.style.setProperty('--en-py', ((event.clientY - box.top) / box.height - 0.5).toFixed(3));
       });
     });
     hero.addEventListener('pointerleave', () => {
-      scene.style.setProperty('--vx-px', 0);
-      scene.style.setProperty('--vx-py', 0);
+      scene.style.setProperty('--en-px', 0);
+      scene.style.setProperty('--en-py', 0);
     });
 
     /* Leaving the hero, the scene settles back rather than scrolling away flat. */
     drive(hero, progress => {
-      scene.style.setProperty('--vx-hero-scale', (1 - progress * 0.06).toFixed(4));
+      scene.style.setProperty('--home-scale', (1 - progress * 0.06).toFixed(4));
     }, 1, 0);
   }
 
-  /* An ambient drift of light, only while the hero is actually on screen. */
-  const canvas = $('hero-dust');
-  if (canvas && !still.matches) {
-    const paint = canvas.getContext('2d');
+  /* An ambient drift of light over the scene, and only while the hero is on screen. */
+  liveCanvas($('home-dust'), (paint, w, h) => {
     const motes = [];
-    let running = false;
-    let width = 0;
-    let height = 0;
-
-    const fit = () => {
-      const ratio = Math.min(window.devicePixelRatio || 1, 2);
-      width = canvas.clientWidth;
-      height = canvas.clientHeight;
-      canvas.width = Math.round(width * ratio);
-      canvas.height = Math.round(height * ratio);
-      paint.setTransform(ratio, 0, 0, ratio, 0, 0);
-    };
-
-    const seed = () => {
-      motes.length = 0;
-      /* Tied to area, so a phone is not asked to draw a desktop's worth of them. */
-      const count = Math.round(clamp((width * height) / 26000, 18, 54));
-      for (let i = 0; i < count; i++) {
-        motes.push({
-          x: Math.random() * width,
-          y: Math.random() * height,
-          r: 0.5 + Math.random() * 1.2,
-          drift: 0.06 + Math.random() * 0.22,
-          sway: Math.random() * Math.PI * 2,
-          alpha: 0.12 + Math.random() * 0.3,
-        });
-      }
-    };
-
-    const tick = () => {
-      if (!running) return;
-      paint.clearRect(0, 0, width, height);
+    const count = Math.round(clamp((w * h) / 26000, 18, 54));
+    for (let i = 0; i < count; i++) {
+      motes.push({
+        x: Math.random() * w, y: Math.random() * h,
+        r: 0.5 + Math.random() * 1.2,
+        drift: 0.06 + Math.random() * 0.22,
+        sway: Math.random() * Math.PI * 2,
+        alpha: 0.12 + Math.random() * 0.3,
+      });
+    }
+    return () => {
+      paint.clearRect(0, 0, w, h);
       for (const m of motes) {
         m.y -= m.drift;
         m.sway += 0.006;
-        if (m.y < -4) { m.y = height + 4; m.x = Math.random() * width; }
+        if (m.y < -4) { m.y = h + 4; m.x = Math.random() * w; }
         paint.beginPath();
         paint.arc(m.x + Math.sin(m.sway) * 6, m.y, m.r, 0, Math.PI * 2);
         paint.fillStyle = `rgba(120, 180, 255, ${m.alpha})`;
         paint.fill();
       }
-      requestAnimationFrame(tick);
     };
-
-    const start = () => { if (!running) { running = true; requestAnimationFrame(tick); } };
-    const stop = () => { running = false; };
-
-    fit();
-    seed();
-    window.addEventListener('resize', () => { fit(); seed(); }, { passive: true });
-    /* Off screen it stops, and a hidden tab stops it too. */
-    new IntersectionObserver(([entry]) => (entry.isIntersecting ? start() : stop())).observe(canvas);
-    document.addEventListener('visibilitychange', () => (document.hidden ? stop() : start()));
-  }
+  });
 }
 
-/* -------------------------------------------- the request being verified */
+/* --------------------------------------------- the five that must agree */
 
 {
-  const steps = [...document.querySelectorAll('#txn-steps li')];
-  const status = $('txn-status');
-  const text = $('txn-status-text');
-
-  if (steps.length && status && text) {
-    drive($('txn-demo'), progress => {
-      /* The last quarter is left for the verdict, so it does not land on the final step. */
-      const reached = Math.floor(clamp(progress / 0.75) * steps.length);
-      steps.forEach((step, i) => step.classList.toggle('on', i < reached));
-      const done = reached >= steps.length;
-      status.dataset.state = done ? 'done' : 'waiting';
-      text.textContent = done ? 'Authorised by verified human' : 'Awaiting human verification';
-    }, 0.9, 0.45);
-  }
-}
-
-/* ------------------------------------------------ transaction authority */
-
-{
-  const card = $('authority');
-  const links = [...document.querySelectorAll('#chain li')];
-  const state = $('authority-state');
-
-  if (card && links.length && state) {
-    drive(card, progress => {
-      const reached = Math.round(clamp(progress / 0.8) * links.length);
+  const chain = $('home-chain');
+  const links = chain ? [...chain.children] : [];
+  if (chain && links.length) {
+    drive(chain, progress => {
+      const run = clamp(progress / 0.82);
+      chain.style.setProperty('--home-chain', run.toFixed(3));
+      const reached = Math.round(run * links.length);
       links.forEach((link, i) => link.classList.toggle('on', i < reached));
-      const done = reached >= links.length;
-      card.classList.toggle('done', done);
-      state.textContent = done ? 'Verified' : 'Verification required';
     }, 0.86, 0.5);
   }
 }
 
-/* -------------------------------------------------- the security stack */
+/* ------------------------------------------------ the seven layers */
 
 {
-  const list = $('layers');
+  const list = $('home-layers');
   const layers = list ? [...list.children] : [];
-  const count = $('stack-count');
-  const note = $('stack-note');
-
-  const NOTES = [
-    'Scroll to assemble the boundary.',
-    'A person is present, and the palm proves it.',
-    'The person present is the person entitled to authorise.',
-    'The terminal doing the asking is one the vault trusts.',
-    'The signature will outlive classical cryptography.',
-    'The policy decides what that signature may authorise.',
-    'Complete. Nothing moves unless every control agrees.',
-  ];
-
   if (list && layers.length) {
     drive(list, progress => {
-      const reached = Math.round(clamp(progress / 0.86) * layers.length);
-      layers.forEach((layer, i) => {
-        layer.classList.toggle('seen', i < reached);
-        layer.classList.toggle('on', i === reached - 1);
-      });
-      list.style.setProperty('--vx-stack', (reached / layers.length).toFixed(3));
-      if (count) count.textContent = reached;
-      if (note) note.textContent = NOTES[reached] || NOTES[0];
-    }, 0.82, 0.55);
+      const reached = Math.round(clamp(progress / 0.84) * layers.length);
+      layers.forEach((layer, i) => layer.classList.toggle('on', i < reached));
+    }, 0.86, 0.5);
   }
 }
 
-/* ------------------------------------------------------- the portfolio */
-
-/* The bars know their own width; the stylesheet only animates it once the panel has arrived. */
-for (const bar of document.querySelectorAll('.vx-bar[data-w]')) {
-  bar.style.setProperty('--vx-w', bar.dataset.w);
-}
-
-/* --------------------------------------- the controls and what they do */
+/* -------------------------------------- the transaction, control by control */
 
 {
-  const rows = $('req-rows');
-  const controls = $('controls');
-
-  if (rows && controls) {
-    const light = (name, on) => {
-      const row = rows.querySelector(`[data-control="${name}"]`);
-      if (row) row.classList.toggle('lit', on);
-    };
-    for (const control of controls.children) {
-      const { control: name } = control.dataset;
-      if (!name) continue;
-      control.addEventListener('pointerenter', () => light(name, true));
-      control.addEventListener('pointerleave', () => light(name, false));
-      /* A keyboard reaches it too, so the control is focusable and behaves the same. */
-      control.tabIndex = 0;
-      control.addEventListener('focus', () => light(name, true));
-      control.addEventListener('blur', () => light(name, false));
-    }
+  const panel = $('home-txn');
+  const steps = $('home-steps');
+  const verdict = $('home-verdict');
+  const text = $('home-verdict-text');
+  if (panel && steps && verdict && text) {
+    const rows = [...steps.children];
+    drive(panel, progress => {
+      /* The last fifth is left for the verdict, so it does not land on the final check. */
+      const reached = Math.floor(clamp(progress / 0.8) * rows.length);
+      rows.forEach((row, i) => row.classList.toggle('on', i < reached));
+      const done = reached >= rows.length;
+      verdict.dataset.state = done ? 'allow' : 'waiting';
+      text.textContent = done ? 'Authorized · executed · recorded' : 'Awaiting authorization';
+    }, 0.88, 0.45);
   }
 }
 
-/* ------------------------------------------------ the authorisation trail */
-
-{
-  const trail = $('trail');
-  const stops = trail ? [...trail.children] : [];
-
-  if (trail && stops.length) {
-    drive(trail, progress => {
-      const run = clamp(progress / 0.8);
-      trail.style.setProperty('--vx-trail', run.toFixed(3));
-      const reached = Math.round(run * stops.length);
-      stops.forEach((stop, i) => stop.classList.toggle('on', i < reached));
-    }, 0.84, 0.5);
-  }
-}
-
-/* --------------------------------------------------- the migration path */
-
-{
-  const steps = [...document.querySelectorAll('#migration .vx-mig-steps li')];
-  if (steps.length) {
-    drive($('migration'), progress => {
-      const reached = Math.round(clamp(progress / 0.8) * steps.length);
-      steps.forEach((step, i) => step.classList.toggle('on', i < reached));
-    }, 0.86, 0.55);
-  }
-}
-
-/* --------------------------------------------------------- the moment */
-
-{
-  const moment = document.querySelector('.vx-moment');
-  const scene = document.querySelector('.vx-moment-scene');
-  if (moment && scene && !still.matches) {
-    drive(moment, progress => {
-      scene.style.setProperty('--vx-moment', (progress * 2 - 1).toFixed(3));
-    }, 1, 0);
-  }
-}
-
-/* ----------------------------------------------------- the policy engine */
-
-{
-  const form = $('builder');
-  const state = $('builder-state');
-  const label = $('builder-state-text');
-  const note = $('builder-note');
-
-  if (form && state && label && note) {
-    const switches = [
-      ['pol-biometric', 'a palm at signing'],
-      ['pol-approvals', 'two approvals'],
-      ['pol-device', 'a trusted device'],
-      ['pol-window', 'business hours'],
-    ];
-
-    const settle = () => {
-      const on = switches.filter(([id]) => $(id)?.checked);
-      const names = on.map(([, what]) => what);
-      /*
-       * Said plainly rather than scored: a policy with nothing left in it is an open policy,
-       * and calling that anything softer would be the wrong thing to teach on this page.
-       */
-      if (!on.length) {
-        state.dataset.state = 'open';
-        label.textContent = 'Policy open';
-        note.textContent = 'No controls enforced. A $1.2M transfer to Treasury 04 would settle on a '
-          + 'single signature, with nothing recorded about who authorised it.';
-        return;
-      }
-      state.dataset.state = on.length === switches.length ? 'active' : 'reduced';
-      label.textContent = on.length === switches.length ? 'Policy active' : 'Policy reduced';
-      const list = names.length === 1 ? names[0]
-        : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
-      note.textContent = `${on.length} of ${switches.length} controls enforced. A $1.2M transfer to `
-        + `Treasury 04 at 14:20 would need ${list}.`;
-    };
-
-    for (const [id] of switches) $(id)?.addEventListener('change', settle);
-    settle();
-  }
-}
-
-/* ------------------------------------------------------ the demo asks */
+/* ------------------------------------------- the light in the dark panels */
 
 /*
- * There is nowhere to send a demo request yet. Rather than take somebody's details into a
- * form that goes nowhere, the page says so — the same answer the vault gives everywhere else
- * it has not been connected to something real.
+ * The same slow field behind each contained dark panel. Abstract on purpose: a network drawn
+ * over a map would place nodes in named countries and imply operations nobody has claimed.
  */
+const slowField = canvas => liveCanvas(canvas, (paint, w, h) => {
+  const nodes = [];
+  const count = Math.round(clamp((w * h) / 24000, 10, 32));
+  for (let i = 0; i < count; i++) {
+    nodes.push({ x: Math.random() * w, y: Math.random() * h, dx: (Math.random() - 0.5) * 0.14, dy: (Math.random() - 0.5) * 0.14 });
+  }
+  return () => {
+    paint.clearRect(0, 0, w, h);
+    for (const n of nodes) {
+      n.x += n.dx; n.y += n.dy;
+      if (n.x < 0 || n.x > w) n.dx *= -1;
+      if (n.y < 0 || n.y > h) n.dy *= -1;
+    }
+    paint.lineWidth = 1;
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const d = Math.hypot(nodes[i].x - nodes[j].x, nodes[i].y - nodes[j].y);
+        if (d > 165) continue;
+        paint.strokeStyle = `rgba(110, 170, 245, ${(0.16 * (1 - d / 165)).toFixed(3)})`;
+        paint.beginPath();
+        paint.moveTo(nodes[i].x, nodes[i].y);
+        paint.lineTo(nodes[j].x, nodes[j].y);
+        paint.stroke();
+      }
+    }
+    paint.fillStyle = 'rgba(150, 200, 255, .5)';
+    for (const n of nodes) {
+      paint.beginPath();
+      paint.arc(n.x, n.y, 1.6, 0, Math.PI * 2);
+      paint.fill();
+    }
+  };
+});
+
+slowField($('arch-net'));
+slowField($('keys-net'));
+slowField($('home-net'));
+
+/* ----------------------------------------------------- the demo ask */
+
 {
-  const note = $('cta-note');
-  const say = message => { if (note) note.textContent = message; };
-  $('demo-cta')?.addEventListener('click', () => say('Demo booking is not connected yet — nothing has been sent. Reach the team through your existing Veyns contact.'));
-  $('talk-cta')?.addEventListener('click', () => say('Security contact is not connected yet — nothing has been sent.'));
+  const note = $('home-note');
+  $('home-demo')?.addEventListener('click', () => {
+    if (note) note.textContent = 'Technical demo booking is not connected yet — nothing has been sent.';
+  });
 }
 
 /* ===================================================== the About page */
@@ -1274,6 +1146,55 @@ function tiltGroup(group, selector) {
   for (const [groupSelector, cardSelector] of tilts) {
     for (const group of document.querySelectorAll(groupSelector)) tiltGroup(group, cardSelector);
   }
+}
+/* ------------------------------------------------------- proximity */
+
+/**
+ * Hands every marker in a group how close the pointer is to it, 0 to 1, as a custom property.
+ *
+ * The glow is built from that number in the stylesheet, so it falls away smoothly with
+ * distance instead of snapping on and off at a hover boundary — the whole row responds, the
+ * nearest one most. This is what carries the sequence now that the connecting rules are gone.
+ */
+function proximity(group, selector, radius = 260) {
+  if (!group || still.matches) return;
+  if (!window.matchMedia('(hover: hover) and (pointer: fine)').matches) return;
+
+  const marks = [...group.querySelectorAll(selector)];
+  if (!marks.length) return;
+
+  let pending = false;
+  group.addEventListener('pointermove', event => {
+    if (pending) return;
+    pending = true;
+    requestAnimationFrame(() => {
+      pending = false;
+      for (const mark of marks) {
+        const box = mark.getBoundingClientRect();
+        const gap = Math.hypot(
+          event.clientX - (box.left + box.width / 2),
+          event.clientY - (box.top + box.height / 2),
+        );
+        /* Squared falloff, so the nearest reads as clearly nearest rather than one of several. */
+        const near = clamp(1 - gap / radius) ** 2;
+        mark.style.setProperty('--near', near.toFixed(3));
+      }
+    });
+  });
+
+  group.addEventListener('pointerleave', () => {
+    for (const mark of marks) mark.style.setProperty('--near', 0);
+  });
+}
+
+for (const [group, mark] of [
+  ['#flow', '.tech-step'],
+  ['#home-chain', '.home-chain-node'],
+  ['.home-strip', '.en-ico'],
+  ['.home-layers', 'li'],
+  ['#timeline', 'li'],
+]) {
+  for (const el of document.querySelectorAll(group)) proximity(el, mark);
 }
 /* ----------------------------------------------------------------- go */
 

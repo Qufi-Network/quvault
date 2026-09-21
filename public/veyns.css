@@ -65,9 +65,7 @@
   overflow-x: clip;
 }
 
-/* The application's page is light. While the Veyns site is the one on show, the document is not. */
-body:has(#view-signin:not([hidden])) { background: var(--vx-void); }
-body:has(#view-signin:not([hidden])) .field { display: none; }
+/* The home page is a light enterprise page now; enterprise.css sets the ground for all three. */
 
 .vx ::selection { background: rgba(18, 114, 255, .32); color: #fff; }
 

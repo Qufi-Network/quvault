@@ -19,19 +19,20 @@
   /* ink, all measured against white */
   --en-ink: #0a1526;
   --en-ink-2: #46556b;
-  --en-ink-3: #66788f;
+  --en-ink-3: #5b6c81;
 
   /* hairlines */
   --en-line: #e4eaf3;
   --en-line-2: #ccd8e8;
 
   /* one accent, the same blue the dark site uses */
-  --en-blue: #1272ff;
+  --en-blue: #0f62e6;
   --en-blue-deep: #0a56cc;
+  --en-blue-lit: #2b7cff;
   --en-blue-wash: #eaf2ff;
 
-  --en-ok: #0f9d58;
-  --en-plan: #9a6a00;
+  --en-ok: #0a7d46;
+  --en-plan: #8a5e00;
 }
 
 .en {
@@ -44,8 +45,8 @@
 }
 
 /* While an enterprise page is the one on show, the document behind it is white. */
-body:has(:is(#view-about, #view-technology):not([hidden])) { background: var(--en-page); }
-body:has(:is(#view-about, #view-technology):not([hidden])) .field { display: none; }
+body:has(:is(#view-signin, #view-about, #view-technology):not([hidden])) { background: var(--en-page); }
+body:has(:is(#view-signin, #view-about, #view-technology):not([hidden])) .field { display: none; }
 
 /* Zero-specificity reset, so every .en- rule below outranks it. */
 .en :where(h1, h2, h3) { margin: 0; color: var(--en-ink); font-weight: 650; letter-spacing: -.03em; line-height: 1.08; }
@@ -1114,3 +1115,443 @@ body:has(:is(#view-about, #view-technology):not([hidden])) .field { display: non
 .tech-integrations li:hover {
   box-shadow: 0 2px 4px rgba(10, 21, 38, .05), 0 26px 46px -28px rgba(18, 114, 255, .38);
 }
+
+/* ============================================== the homepage ============ */
+
+/* the descriptor beside the mark */
+.vx-brand-sub {
+  align-self: center;
+  margin-left: 12px;
+  padding-left: 12px;
+  border-left: 1px solid rgba(255, 255, 255, .22);
+  font: 600 9.5px/1 var(--sans);
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, .58);
+  white-space: nowrap;
+}
+.vx-nav.light.stuck .vx-brand-sub { border-left-color: var(--en-line-2); color: var(--en-ink-3); }
+@media (max-width: 680px) { .vx-brand-sub { display: none; } }
+
+/* ---------------------------------------------------------- the hero */
+
+.home-hero { min-height: clamp(600px, 88vh, 940px); }
+.home-hero-scene {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(60%, 1020px);
+  background: url("/veyns-hero.webp") right center / cover no-repeat;
+  transform: translate3d(calc(var(--en-px, 0) * -10px), calc(var(--en-py, 0) * -8px), 0) scale(var(--home-scale, 1));
+  transform-origin: 70% 50%;
+  transition: transform 800ms cubic-bezier(.4, 0, .2, 1);
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 26%);
+  mask-image: linear-gradient(90deg, transparent 0%, #000 26%);
+}
+.home-hero-glow {
+  position: absolute;
+  left: 46%;
+  top: 52%;
+  width: 40%;
+  height: 34%;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(60, 150, 255, .45), transparent 72%);
+  filter: blur(40px);
+  animation: en-breathe 5.6s cubic-bezier(.4, 0, .2, 1) infinite;
+}
+.home-hero-dust { position: absolute; inset: 0; width: 100%; height: 100%; opacity: .5; }
+.home-hero .en-hero-veil {
+  background:
+    linear-gradient(180deg, rgba(3, 10, 20, .66) 0%, transparent 16%),
+    linear-gradient(90deg, var(--en-darker) 26%, rgba(3, 10, 20, .2) 60%, transparent 78%),
+    linear-gradient(0deg, rgba(3, 10, 20, .72) 0%, transparent 24%);
+}
+
+.home-hero h1 { font-size: clamp(38px, 5vw, 72px); letter-spacing: -.04em; line-height: 1; }
+.home-hero-sub {
+  margin-top: 24px;
+  font-size: clamp(15px, 1.25vw, 18px);
+  font-weight: 600;
+  letter-spacing: .01em;
+  color: #8fc2ff;
+}
+.home-hero .en-hero-lede { margin-top: 14px; }
+.vx-chev.down { transform: rotate(90deg); }
+.vx-btn:hover .vx-chev.down { transform: rotate(90deg) translateX(3px); }
+
+/* the four things the product is, under the buttons */
+.home-hero-marks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 0;
+  margin-top: 30px;
+  padding-top: 22px;
+  border-top: 1px solid rgba(150, 185, 240, .16);
+}
+.home-hero-marks li {
+  padding: 0 clamp(12px, 1.4vw, 20px);
+  font: 500 10.5px/1.4 var(--sans);
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: rgba(226, 236, 250, .74);
+}
+.home-hero-marks li:first-child { padding-left: 0; }
+.home-hero-marks li + li { border-left: 1px solid rgba(150, 185, 240, .2); }
+
+/* --------------------------------------------------------- trust strip */
+
+.home-strip-head { max-width: 22ch; font-size: clamp(28px, 3.4vw, 48px); }
+.home-strip {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: clamp(14px, 1.8vw, 26px);
+  margin-top: clamp(40px, 5vw, 66px);
+}
+.home-strip li { display: grid; align-content: start; gap: 18px; }
+.home-strip b { font: 600 13.5px/1.35 var(--sans); letter-spacing: -.012em; }
+
+/* ---------------------------------------------------------- the chain */
+
+/*
+ * Five things that have to agree. The rail runs behind the nodes and the nodes are opaque: a
+ * line that crosses a marker reads as a line struck through it, which is the opposite of
+ * connected.
+ */
+.home-chain {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: clamp(12px, 1.6vw, 22px);
+}
+.home-chain::before,
+.home-chain::after {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  left: 10%;
+  right: 10%;
+  top: 31px;
+  height: 2px;
+  border-radius: 2px;
+}
+.home-chain::before { background: var(--en-line-2); }
+.home-chain::after {
+  background: linear-gradient(90deg, var(--en-blue), #4f9dff);
+  transform: scaleX(var(--home-chain, 0));
+  transform-origin: left;
+  transition: transform 240ms linear;
+}
+.home-chain li { position: relative; z-index: 1; opacity: .55; transition: opacity 500ms cubic-bezier(.4, 0, .2, 1); }
+.home-chain li.on { opacity: 1; }
+.home-chain-node {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  margin-bottom: 20px;
+  border: 1.5px solid var(--en-line-2);
+  border-radius: 50%;
+  background: var(--en-tint);
+  color: var(--en-ink-3);
+  transition: border-color 500ms, color 500ms, box-shadow 500ms, background-color 500ms;
+}
+.home-chain li.on .home-chain-node {
+  border-color: var(--en-blue);
+  background: #fff;
+  color: var(--en-blue);
+  box-shadow: 0 0 0 6px rgba(18, 114, 255, .09), 0 10px 26px -14px rgba(18, 114, 255, .6);
+}
+.home-chain .en-ico { color: inherit; width: 26px; height: 26px; }
+.home-chain b { display: block; font-size: clamp(15px, 1.3vw, 18px); font-weight: 650; letter-spacing: -.022em; }
+.home-chain small { display: block; margin-top: 7px; font-size: 12.5px; line-height: 1.5; color: var(--en-ink-2); }
+
+/* ---------------------------------------------------- the dark panels */
+
+/*
+ * The page is white. Where something is genuinely a system rather than a story it gets a
+ * contained dark panel, and those panels are the only places the page goes dark.
+ */
+.home-dark {
+  position: relative;
+  isolation: isolate;
+  padding: clamp(32px, 4.5vw, 70px);
+  border-radius: 22px;
+  background: var(--en-dark);
+  color: #fff;
+  overflow: hidden;
+}
+.home-dark-net { position: absolute; inset: 0; z-index: -1; width: 100%; height: 100%; opacity: .55; }
+.home-dark-head { max-width: 60ch; margin-bottom: clamp(34px, 4vw, 54px); }
+.home-dark h2 { color: #fff; margin-top: 18px; }
+.home-dark h2 em { color: #4f9dff; }
+.home-dark-lede { margin-top: 18px; max-width: 52ch; font-size: 15px; line-height: 1.6; color: rgba(226, 236, 250, .74); }
+.home-dark-note { margin-top: clamp(26px, 3vw, 38px); padding-top: 22px; border-top: 1px solid rgba(150, 185, 240, .16); max-width: 70ch; font-size: 13px; line-height: 1.6; color: rgba(190, 210, 236, .62); }
+
+.home-layers { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: clamp(14px, 1.6vw, 22px); }
+.home-layers li {
+  padding: 22px 20px;
+  border: 1px solid rgba(150, 185, 240, .16);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, .03);
+  opacity: .48;
+  transform: translateY(8px);
+  transition: opacity 560ms cubic-bezier(.16, 1, .3, 1), transform 560ms cubic-bezier(.16, 1, .3, 1), border-color 400ms, background-color 400ms;
+}
+.home-layers li.on { opacity: 1; transform: none; border-color: rgba(79, 157, 255, .5); background: rgba(18, 114, 255, .1); }
+.home-layer-n { display: block; margin-bottom: 16px; font: 600 11px/1 var(--mono); letter-spacing: .16em; color: #4f9dff; }
+.home-layers b { display: block; font-size: 16px; font-weight: 650; letter-spacing: -.022em; }
+.home-layers small { display: block; margin-top: 8px; font-size: 12.5px; line-height: 1.5; color: rgba(214, 228, 246, .66); }
+
+.home-boundary { display: grid; gap: 12px; max-width: 780px; }
+.home-boundary li {
+  padding: 18px 22px;
+  border: 1px solid rgba(150, 185, 240, .18);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .035);
+}
+.home-boundary b { display: block; font-size: 15.5px; font-weight: 650; letter-spacing: -.02em; }
+.home-boundary small { display: block; margin-top: 6px; font-size: 12.5px; color: rgba(214, 228, 246, .66); }
+.home-boundary-line { padding: 0 !important; border: 0 !important; background: none !important; }
+.home-boundary-line span {
+  display: block;
+  padding: 12px 0;
+  border-top: 2px solid #4f9dff;
+  border-bottom: 2px solid #4f9dff;
+  background: linear-gradient(90deg, transparent, rgba(79, 157, 255, .16), transparent);
+  font: 600 10px/1 var(--sans);
+  letter-spacing: .26em;
+  text-transform: uppercase;
+  text-align: center;
+  color: #8fc2ff;
+}
+
+/* --------------------------------------------------- the transaction */
+
+.home-txn {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  gap: clamp(20px, 3vw, 44px);
+  align-items: start;
+  padding: clamp(24px, 3vw, 40px);
+  border: 1px solid var(--en-line);
+  border-radius: 16px;
+  background: #fff;
+}
+
+/* ------------------------------------------------ human authorization */
+
+.home-palm { border-radius: 18px; background: var(--en-tint); padding: clamp(20px, 3vw, 40px); overflow: hidden; }
+.home-palm svg { width: 100%; height: auto; }
+.home-palm-hand path { fill: none; stroke: var(--en-line-2); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.home-palm-points circle { fill: var(--en-blue); opacity: 1; }
+.vx-motion .home-palm-points circle { opacity: 0; animation: home-point 4.4s cubic-bezier(.4, 0, .2, 1) infinite; }
+.home-palm-points circle:nth-child(2) { animation-delay: .25s; }
+.home-palm-points circle:nth-child(3) { animation-delay: .5s; }
+.home-palm-points circle:nth-child(4) { animation-delay: .75s; }
+.home-palm-points circle:nth-child(5) { animation-delay: 1s; }
+.home-palm-points circle:nth-child(6) { animation-delay: 1.25s; }
+@keyframes home-point { 0%, 62%, 100% { opacity: 0; } 18%, 46% { opacity: 1; } }
+.home-palm-scan { fill: none; stroke: #4f9dff; stroke-width: 2; opacity: 0; }
+.vx-motion .home-palm-scan { animation: home-scan 4.4s cubic-bezier(.5, 0, .5, 1) infinite; }
+@keyframes home-scan {
+  0% { transform: translateY(40px); opacity: 0; }
+  12% { opacity: .85; }
+  52% { opacity: .85; }
+  64%, 100% { transform: translateY(330px); opacity: 0; }
+}
+
+.home-steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: clamp(12px, 1.6vw, 20px); margin-top: clamp(34px, 4vw, 52px); }
+.home-steps li { padding-top: 20px; border-top: 2px solid var(--en-line); transition: border-color 300ms; }
+.home-steps li:hover { border-top-color: var(--en-blue); }
+.home-steps b { display: block; font-size: 15.5px; font-weight: 650; letter-spacing: -.02em; }
+.home-steps small { display: block; margin-top: 7px; font-size: 12.5px; color: var(--en-ink-2); }
+
+/* ------------------------------------------------ enterprise control */
+
+.home-controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: clamp(14px, 1.6vw, 22px); }
+.home-controls li {
+  position: relative;
+  padding: clamp(22px, 2.2vw, 30px) clamp(20px, 2vw, 26px) clamp(28px, 2.6vw, 34px);
+  border: 1px solid var(--en-line);
+  border-radius: 14px;
+  background: #fff;
+  transition: transform 460ms cubic-bezier(.16, 1, .3, 1), border-color 200ms;
+}
+.home-controls li:hover { border-color: var(--en-line-2); }
+.home-controls li:hover .en-num { color: var(--en-blue); }
+.home-controls li:hover .en-underline { transform: scaleX(1); }
+.home-controls b { display: block; margin: 20px 0 10px; font-size: 16.5px; font-weight: 650; letter-spacing: -.022em; }
+.home-controls p { font-size: 13.5px; line-height: 1.55; color: var(--en-ink-2); }
+
+/* ---------------------------------------------------------- the rail */
+
+.home-rail-view { margin-top: clamp(34px, 4vw, 56px); overflow: hidden; }
+.home-rail {
+  display: flex;
+  gap: clamp(14px, 1.6vw, 22px);
+  padding: 6px var(--vx-gutter);
+  transform: translate3d(calc(var(--vx-rail, 0) * -1px), 0, 0);
+  will-change: transform;
+}
+.home-rail li {
+  flex: none;
+  width: clamp(250px, 24vw, 330px);
+  padding: clamp(24px, 2.4vw, 32px);
+  border: 1px solid var(--en-line);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(10, 21, 38, .04), 0 10px 26px -20px rgba(10, 21, 38, .34);
+  transition: border-color 200ms, box-shadow 460ms cubic-bezier(.16, 1, .3, 1);
+}
+.home-rail li:hover { border-color: var(--en-blue); box-shadow: 0 2px 4px rgba(10, 21, 38, .05), 0 26px 46px -28px rgba(18, 114, 255, .4); }
+.home-rail b { display: block; margin: 22px 0 12px; font-size: 19px; font-weight: 650; letter-spacing: -.024em; }
+.home-rail small { display: block; font-size: 13.5px; line-height: 1.58; color: var(--en-ink-2); }
+
+@media (max-width: 860px) {
+  .home-rail-view { overflow-x: auto; scroll-snap-type: x mandatory; }
+  .home-rail { transform: none; }
+  .home-rail li { scroll-snap-align: start; width: min(76vw, 330px); }
+}
+
+/* ------------------------------------------------------- the learn cta */
+
+.home-learn {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: clamp(24px, 4vw, 60px);
+  align-items: center;
+  padding: clamp(28px, 4vw, 56px);
+  border: 1px solid var(--en-line);
+  border-radius: 20px;
+  background: #fff;
+}
+.home-learn .en-prose { margin-top: 18px; }
+.home-learn-cta { display: grid; gap: 12px; }
+
+.home-foot-sub {
+  margin-top: 10px !important;
+  font: 600 10px/1 var(--sans);
+  letter-spacing: .24em;
+  text-transform: uppercase;
+  color: var(--en-blue) !important;
+}
+
+/* --------------------------------------------------------- responsive */
+
+@media (max-width: 1080px) {
+  .home-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 30px 18px; }
+  .home-txn { grid-template-columns: minmax(0, 1fr); }
+  .home-learn { grid-template-columns: minmax(0, 1fr); }
+  .home-chain { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 30px 16px; }
+  .home-chain::before, .home-chain::after { display: none; }
+}
+
+@media (max-width: 760px) {
+  .home-hero-scene { width: 100%; opacity: .44; -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 54%, transparent 96%); mask-image: linear-gradient(180deg, #000 0%, #000 54%, transparent 96%); }
+  .home-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .home-hero-cta .vx-btn, .home-learn-cta .vx-btn { width: 100%; }
+  .home-hero-marks li { padding-left: 0; border-left: 0 !important; flex: 1 1 46%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-hero-scene, .home-palm-scan { animation: none; transform: none; }
+  .vx-motion .home-palm-points circle { animation: none; opacity: 1; }
+}
+
+/* =========================================== nodes, not lines ========== */
+
+/*
+ * The connectors are gone.
+ *
+ * A rule drawn between markers has to pass behind every one of them to read as a connection,
+ * and the moment it passes in front instead it reads as a line struck through the thing it was
+ * meant to join — which is what it was doing. Rather than fight the paint order, the sequence
+ * is carried by the markers themselves: they light in order as the page moves, and they answer
+ * the pointer as it comes near them.
+ */
+:is(.tech-flow, .en-timeline, .home-chain)::before,
+:is(.tech-flow, .en-timeline, .home-chain)::after { content: none; }
+.en-timeline { padding-top: 0; }
+.en-stage-dot { display: none; }
+.tech-flow li { padding-top: 84px; }
+
+/*
+ * Proximity. The page script hands each node how close the pointer is, 0 to 1, and the glow
+ * is built from that — so the ring nearest the cursor is the brightest and it falls away
+ * smoothly rather than snapping on a hover boundary.
+ */
+.tech-step, .home-chain-node {
+  position: relative;
+  border-color: color-mix(in srgb, var(--en-blue) calc(var(--near, 0) * 90%), var(--en-line-2));
+  box-shadow:
+    0 0 0 calc(var(--near, 0) * 7px) rgba(18, 114, 255, calc(var(--near, 0) * .12)),
+    0 10px calc(14px + var(--near, 0) * 26px) -12px rgba(18, 114, 255, calc(var(--near, 0) * .9));
+  transition: border-color 260ms, box-shadow 260ms, background-color 400ms, color 400ms;
+}
+
+.tech-step {
+  top: 0;
+  width: 64px;
+  height: 64px;
+  border-width: 1.5px;
+  color: var(--en-ink-3);
+}
+.tech-step svg { width: 27px; height: 27px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.tech-flow li.on .tech-step { border-color: var(--en-blue); background: #fff; color: var(--en-blue); }
+.tech-step-n {
+  display: block;
+  margin-bottom: 10px;
+  font: 600 10.5px/1 var(--mono);
+  letter-spacing: .18em;
+  color: var(--en-ink-3);
+  transition: color 300ms;
+}
+.tech-flow li.on .tech-step-n { color: var(--en-blue); }
+
+/* the timeline keeps its sequence through weight and a rule of its own, not a spine */
+.en-timeline li { padding-top: 22px; border-top: 2px solid var(--en-line); transition: opacity 460ms, border-color 460ms; }
+.en-timeline li.on { border-top-color: var(--en-blue); }
+
+/* the dark panel's layers answer the pointer the same way */
+.home-layers li {
+  border-color: color-mix(in srgb, #4f9dff calc(var(--near, 0) * 75%), rgba(150, 185, 240, .16));
+  box-shadow: 0 0 calc(var(--near, 0) * 34px) -8px rgba(79, 157, 255, calc(var(--near, 0) * .75));
+}
+.home-strip .en-ico {
+  color: color-mix(in srgb, var(--en-blue) calc(40% + var(--near, 0) * 60%), var(--en-ink-3));
+  transform: translateY(calc(var(--near, 0) * -3px));
+  transition: color 260ms, transform 320ms cubic-bezier(.16, 1, .3, 1);
+}
+
+/* ----------------------------------------------- the vertical rail cards */
+
+/*
+ * Portrait rather than landscape. A row of wide cards reads as a table; a row of tall ones
+ * reads as something to move through, which is what the rail is for.
+ */
+.home-rail li { display: grid; align-content: start; width: clamp(240px, 21vw, 300px); padding: 0 0 clamp(24px, 2.2vw, 30px); overflow: hidden; }
+.home-rail-art {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 4 / 5;
+  margin-bottom: clamp(20px, 2vw, 26px);
+  background:
+    repeating-linear-gradient(var(--art-angle, 120deg), rgba(255, 255, 255, .5) 0 1px, transparent 1px 13px),
+    linear-gradient(var(--art-angle, 120deg), var(--art-a, #dce9fb), var(--art-b, #eff5fd));
+  color: var(--en-blue);
+}
+.home-rail-art svg { width: 38%; height: 38%; fill: none; stroke: currentColor; stroke-width: 1.15; stroke-linecap: round; stroke-linejoin: round; transition: transform 700ms cubic-bezier(.16, 1, .3, 1); }
+.home-rail li:hover .home-rail-art svg { transform: scale(1.08); }
+
+.home-rail li[data-art="1"] { --art-angle: 120deg; --art-a: #d8e7fb; --art-b: #f2f7fe; }
+.home-rail li[data-art="2"] { --art-angle: 60deg;  --art-a: #dbeaf7; --art-b: #eef6fd; }
+.home-rail li[data-art="3"] { --art-angle: 150deg; --art-a: #d6e4fa; --art-b: #f4f8fe; }
+.home-rail li[data-art="4"] { --art-angle: 30deg;  --art-a: #dde9f9; --art-b: #eff5fc; }
+.home-rail li[data-art="5"] { --art-angle: 100deg; --art-a: #d4e3fb; --art-b: #f1f6fe; }
+.home-rail li[data-art="6"] { --art-angle: 165deg; --art-a: #dae8fa; --art-b: #eef5fd; }
+
+.home-rail .en-num,
+.home-rail b,
+.home-rail small { padding-inline: clamp(20px, 2vw, 26px); }
+.home-rail b { margin: 14px 0 10px; font-size: 18px; }
