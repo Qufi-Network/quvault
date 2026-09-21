@@ -2320,104 +2320,63 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
   .home-nav a { padding: 11px 2px; font-size: 16px; }
 }
 
-/* ================================================= the supplied artwork, exactly */
-
-/*
- * Mode A. The artwork is the page and the controls sit over it, so what renders is the
- * supplied pixels rather than an interpretation of them. The header that belongs to the other
- * pages steps aside here, because this artwork draws its own.
- */
-.view.exact { max-width: none; margin: 0; padding: 0; background: #020b19; }
-.exact-page { position: relative; width: 100%; max-width: 796px; margin: 0 auto; }
-.exact-art { display: block; width: 100%; height: auto; user-select: none; }
-
-.hotspot {
-  position: absolute;
-  display: block;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-  z-index: 5;
-}
-.hotspot:disabled { cursor: default; }
-.hotspot:focus-visible { outline: 2px solid #1685ff; outline-offset: 3px; border-radius: 10px; }
-
-.exact-foot {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 16px;
-  flex-wrap: wrap;
-  padding: 14px 20px 22px;
-  background: #030a15;
-  text-align: center;
-}
-.exact-foot .palm-link { margin: 0; color: rgba(255, 255, 255, .55); }
-.exact-foot .palm-link:hover { color: #4f9dff; }
-/* hotspot coordinates, generated from the package reference */
-.art-slice { aspect-ratio: 796 / 1690; }
-.at-spot-home { left: 35.1759%; top: 1.0651%; width: 6.9095%; height: 1.8935%; }
-.at-spot-about { left: 42.0854%; top: 1.0651%; width: 6.9095%; height: 1.8935%; }
-.at-spot-technology { left: 48.9950%; top: 1.0651%; width: 11.3065%; height: 1.8935%; }
-.at-spot-usecases { left: 60.3015%; top: 1.0651%; width: 10.0503%; height: 1.8935%; }
-.at-spot-security { left: 70.3518%; top: 1.0651%; width: 9.4221%; height: 1.8935%; }
-.at-spot-resources { left: 79.7739%; top: 1.0651%; width: 10.0503%; height: 1.8935%; }
-.at-spot-signin { right: 14.4472%; top: 0.7692%; width: 9.4221%; height: 2.0118%; }
-.at-spot-create { right: 2.2613%; top: 0.7692%; width: 11.3065%; height: 2.0118%; }
-.at-spot-start { left: 5.6533%; top: 18.6391%; width: 16.9598%; height: 2.8402%; }
-.at-spot-hero-video { left: 22.6131%; top: 18.6391%; width: 14.4472%; height: 2.8402%; }
-.at-spot-join { left: 69.7236%; top: 87.5740%; width: 23.8693%; height: 3.2544%; }
-
-/* The artwork, cut to the part that has not been rebuilt yet. */
-.art-slice { position: relative; width: 100%; overflow: hidden; }
-.art-slice .exact-art { position: absolute; top: 0; left: 0; width: 100%; height: auto; }
-
-/*
- * While the page is half artwork and half markup the two have to share a measure, or the
- * rebuilt parts resolve their spacing against the window and the artwork against 796. Inside
- * this container the reference is the unit, so spacing is written in its pixels.
- */
-.exact-page .site-foot {
-  padding: 30px 45px 14px;
-}
-.exact-page .site-foot .foot-top { gap: 26px; }
-.exact-page .site-foot .foot-bottom { margin-top: 16px; padding-top: 10px; font-size: 11px; }
-.exact-page .site-foot .foot-brand > p { font-size: 11.5px; }
-.exact-page .site-foot .foot-cols a { font-size: 11.5px; }
-.exact-page .site-foot .foot-cols h3, .exact-page .site-foot .foot-signup h3 { font-size: 13px; }
-.exact-page .site-foot .foot-signup > p { font-size: 11.5px; margin-bottom: 10px; }
-
-/* The palm route sits with the small print rather than in a strip of its own. */
-.foot-bottom .palm-link { font-size: 11px; color: rgba(255,255,255,.55); }
-.foot-bottom .palm-link:hover { color: #4f9dff; }
-.foot-bottom .error { min-height: 0; flex-basis: 100%; text-align: center; }
-
-/* --------------------------------------------- footer, against the reference */
+/* ----------------------------------------------- footer, matched to the design */
 
 /* The tagline is one line under the name, never two. */
 .home-mark small { white-space: nowrap; }
 
 /*
- * In the reference the field and its button are one control: a single rounded well with the
- * arrow sitting inside it, not a box with a button parked next to it.
+ * The field and its button are one control: a single rounded well with the arrow inside it,
+ * rather than a box with a button parked next to it.
  */
-.exact-page .signup-row {
+.signup-row {
   gap: 0;
-  padding: 4px 4px 4px 0;
+  padding: 5px 5px 5px 0;
   border: 1px solid rgba(255, 255, 255, .16);
-  border-radius: 10px;
+  border-radius: 11px;
   background: rgba(255, 255, 255, .06);
 }
-.exact-page .signup-row input {
-  height: 30px;
-  border: 0;
-  background: transparent;
-  font-size: 12px;
+.signup-row input { height: 34px; border: 0; background: transparent; }
+.signup-row input:focus { outline: none; }
+.signup-row:focus-within { border-color: var(--quvault-blue); }
+.signup-row .round-btn { width: 34px; height: 34px; border-radius: 8px; }
+.foot-bottom .palm-link { font-size: 12px; color: rgba(255, 255, 255, .55); }
+.foot-bottom .palm-link:hover { color: var(--quvault-blue-bright); }
+.foot-bottom .error { min-height: 0; flex-basis: 100%; text-align: center; }
+
+/* ============================================ one measure for the whole site */
+
+/*
+ * A page that runs edge to edge on a wide screen reads as a poster, not a site. Every band
+ * still spans the window — the darks, the tints, the footer — but what sits inside them is
+ * held to a single measure and centred, so lines never run to an unreadable length and the
+ * left edge of the text is the same from the nav to the copyright.
+ */
+.home,
+.about {
+  --measure: 1240px;
+  --gutter: max(20px, calc((100% - var(--measure)) / 2));
 }
-.exact-page .signup-row input:focus { outline: none; }
-.exact-page .signup-row:focus-within { border-color: var(--quvault-blue); }
-.exact-page .signup-row .round-btn { width: 30px; height: 30px; border-radius: 7px; }
-.exact-page .foot-signup .check { margin-top: 10px; font-size: 11px; }
-.exact-page .socials a { width: 30px; height: 30px; border-radius: 8px; }
-.exact-page .socials svg { width: 15px; height: 15px; }
+
+.home-top,
+.hero-inner,
+.trust,
+.why,
+.built,
+.join,
+.site-foot,
+.about-hero,
+.about-purpose,
+.home-features,
+.about-stats,
+.about-story {
+  padding-left: var(--gutter);
+  padding-right: var(--gutter);
+}
+
+.how,
+.about-vision { margin-left: var(--gutter); margin-right: var(--gutter); }
+
+/* The testimonial keeps its picture bleeding off the right edge. */
+.voices { padding-left: var(--gutter); padding-right: 0; }
+@media (max-width: 1040px) { .voices { padding-right: var(--gutter); } }
