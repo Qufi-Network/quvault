@@ -19,10 +19,11 @@ const clamp = (v, lo = 0, hi = 1) => (v < lo ? lo : v > hi ? hi : v);
 const still = window.matchMedia('(prefers-reduced-motion: reduce)');
 
 /*
- * The marketing surface is two pages sharing one document and one bar: the dark home page and
- * the light enterprise pages. Both are hidden until the application decides which to put up.
+ * The marketing surface is three pages sharing one document and one bar: the dark home page
+ * and the two light enterprise pages. All are hidden until the application decides which to
+ * put up, so nothing here can be measured before that happens.
  */
-const PAGES = ['view-signin', 'view-about'].map($).filter(Boolean);
+const PAGES = ['view-signin', 'view-about', 'view-technology'].map($).filter(Boolean);
 const showing = () => PAGES.find(page => !page.hidden) || null;
 
 /* ------------------------------------------------------- scroll driver */
@@ -844,6 +845,286 @@ liveCanvas($('cta-net'), (paint, w, h) => {
   const note = $('about-note');
   $('about-demo')?.addEventListener('click', () => {
     if (note) note.textContent = 'Demo booking is not connected yet — nothing has been sent.';
+  });
+}
+/* ================================================== the Technology page */
+
+/* -------------------------------------------------- the drawn module */
+
+{
+  const stack = $('tech-stack');
+  const hero = document.querySelector('.tech-hero');
+  if (stack && hero && !still.matches) {
+    /* The layers separate as the page moves, which is the point being made about them. */
+    drive(hero, progress => {
+      stack.style.setProperty('--tech-spread', `${(18 + progress * 30).toFixed(1)}px`);
+    }, 1, 0);
+  }
+}
+
+/* -------------------------------------------------- the seven steps */
+
+{
+  const flow = $('flow');
+  const steps = flow ? [...flow.children] : [];
+  if (flow && steps.length) {
+    drive(flow, progress => {
+      const run = clamp(progress / 0.82);
+      flow.style.setProperty('--tech-run', run.toFixed(3));
+      const reached = Math.round(run * steps.length);
+      steps.forEach((step, i) => step.classList.toggle('on', i < reached));
+    }, 0.84, 0.5);
+  }
+}
+
+/* ------------------------------------------------------ the firewall */
+
+{
+  const wall = $('wall');
+  const checks = $('checks');
+  const verdict = $('verdict');
+  const text = $('verdict-text');
+  if (wall && checks && verdict && text) {
+    const rows = [...checks.children];
+    drive(wall, progress => {
+      /* The last fifth is left for the verdict, so it does not land on the final check. */
+      const reached = Math.floor(clamp(progress / 0.8) * rows.length);
+      rows.forEach((row, i) => row.classList.toggle('on', i < reached));
+      const done = reached >= rows.length;
+      verdict.dataset.state = done ? 'allow' : 'waiting';
+      text.textContent = done ? 'Policy satisfied · release to signing' : 'Evaluating policy';
+    }, 0.88, 0.45);
+  }
+}
+
+/* -------------------------------------------------- the policy builder */
+
+{
+  const form = $('builder2');
+  const amount = $('pol-amount');
+  const out = $('pol-amount-out');
+  const asset = $('pol-asset');
+  const dest = $('pol-dest');
+  const rules = $('rules');
+  const decision = $('decision');
+  const label = $('decision-text');
+  const why = $('decision-why');
+  const approvals = $('rule-approvals');
+
+  if (form && amount && out && asset && dest && rules && decision && label && why) {
+    const LIMIT = 5_000_000;
+    const PERMITTED = new Set(['USDC', 'BTC']);
+    const money = n => `$${n.toLocaleString('en-US')}`;
+
+    const settle = () => {
+      const value = Number(amount.value);
+      const which = asset.value;
+      const whitelisted = dest.value === 'approved';
+      /* More money, more people: the rule the vault actually implements. */
+      const needed = value > 1_000_000 ? 3 : 2;
+
+      out.textContent = money(value);
+      if (approvals) approvals.textContent = `${needed} palms required`;
+
+      const verdicts = {
+        limit: value <= LIMIT,
+        asset: PERMITTED.has(which),
+        dest: whitelisted,
+        approvals: true,
+      };
+      for (const row of rules.children) {
+        const ok = verdicts[row.dataset.rule];
+        row.classList.toggle('on', ok);
+        row.classList.toggle('fail', !ok);
+      }
+
+      const broken = Object.entries(verdicts).filter(([, ok]) => !ok).map(([name]) => name);
+      if (!broken.length) {
+        decision.dataset.state = 'allow';
+        label.textContent = 'Policy satisfied';
+        why.textContent = `A ${money(value)} ${which} transfer to a whitelisted destination, `
+          + `authorized by ${needed} palms.`;
+        return;
+      }
+      decision.dataset.state = 'deny';
+      label.textContent = 'Policy refuses';
+      const said = {
+        limit: `${money(value)} is over the ${money(LIMIT)} limit`,
+        asset: `${which} is not a permitted asset`,
+        dest: 'the destination is not on the whitelist',
+      };
+      why.textContent = `Refused before any key is reached for: ${broken.map(b => said[b]).join(', ')}.`;
+    };
+
+    for (const control of [amount, asset, dest]) control.addEventListener('input', settle);
+    settle();
+  }
+}
+
+/* ------------------------------------------------------ the agility */
+
+{
+  const art = $('agility-art');
+  const eras = art ? [...art.querySelectorAll('.tech-eras li')] : [];
+  if (art && eras.length) {
+    drive(art, progress => {
+      const reached = Math.round(clamp(progress / 0.8) * eras.length);
+      eras.forEach((era, i) => era.classList.toggle('on', i < reached));
+    }, 0.86, 0.55);
+  }
+}
+
+/* --------------------------------------------------- the trust boundary */
+
+{
+  const zones = $('zones');
+  const say = $('zone-say');
+
+  /*
+   * What crosses, and what does not. Written from what this system does rather than from what
+   * a diagram implies, including the part that is not built yet.
+   */
+  const ZONES = {
+    app: 'Treasury and custody systems ask for a transfer. What leaves this zone is an intent: '
+      + 'an asset, an amount and a destination. No key material ever enters it, and nothing here '
+      + 'can decide that a transfer is permitted.',
+    plane: 'The control plane turns that intent into a plan, evaluates the policy against it, and '
+      + 'collects the palms the policy demands. It is the only place that decides. What leaves it '
+      + 'is a plan and an authorization bound to that plan by digest.',
+    keys: 'Key material is sealed with ML-KEM-768 and X25519 and is unsealed only to sign one '
+      + 'plan, in one window that closes behind it. Today that unsealing happens in the browser, '
+      + 'not in dedicated hardware — which is the single most important thing on this page to be '
+      + 'accurate about. Moving it behind hardware is what the architecture is designed for.',
+    chain: 'What crosses into the network is a signed transaction and nothing else. No identity, '
+      + 'no policy, no approver. The chain sees a valid spend; who authorized it stays in the '
+      + 'evidence record on this side of the boundary.',
+  };
+  const REST = 'Select a zone to see what crosses its boundary, and what never does.';
+
+  if (zones && say) {
+    const buttons = [...zones.querySelectorAll('button')];
+    const light = name => {
+      for (const button of buttons) button.setAttribute('aria-pressed', String(button.dataset.zone === name));
+      say.textContent = name ? ZONES[name] : REST;
+    };
+    for (const button of buttons) {
+      const { zone } = button.dataset;
+      button.addEventListener('click', () => {
+        light(button.getAttribute('aria-pressed') === 'true' ? null : zone);
+      });
+      button.addEventListener('pointerenter', () => light(zone));
+      button.addEventListener('focus', () => light(zone));
+    }
+  }
+}
+
+/* ------------------------------------------------- the binding demo */
+
+/*
+ * This one is real. The record is canonicalised and digested with SHA-256 in the browser, the
+ * same way the vault does it, so changing a field genuinely changes the digest and genuinely
+ * breaks the match against the approval that was given for the old one.
+ *
+ * What is not done here is the signature. That needs a palm.
+ */
+{
+  const amount = $('bind-amount');
+  const dest = $('bind-dest');
+  const hash = $('bind-hash');
+  const approvedOut = $('bind-approved');
+  const state = $('bind-state');
+  const label = $('bind-state-text');
+  const again = $('bind-reapprove');
+
+  /** Objects serialise with their keys in order, so the same record always gives the same bytes. */
+  const canonical = value => {
+    if (value === null || typeof value !== 'object') return JSON.stringify(value);
+    if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+    return `{${Object.keys(value).sort().map(k => `${JSON.stringify(k)}:${canonical(value[k])}`).join(',')}}`;
+  };
+
+  const base64url = bytes => btoa(String.fromCharCode(...bytes))
+    .replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+
+  const digestOf = async record => {
+    const bytes = new TextEncoder().encode(canonical(record));
+    return base64url(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)));
+  };
+
+  const recordNow = () => ({
+    vault: 'vault_8f42a1c9',
+    asset: 'USDC',
+    amount: (amount?.value || '').trim(),
+    destination: (dest?.value || '').trim(),
+    network: 'ethereum',
+    policy: 'institutional-treasury-v3',
+    nonce: '7c1d4e8b',
+  });
+
+  if (amount && dest && hash && approvedOut && state && label && crypto?.subtle) {
+    let approved = null;
+
+    const refresh = async () => {
+      const now = await digestOf(recordNow());
+      hash.textContent = now;
+      approvedOut.textContent = approved ?? now;
+      const matches = approved === null || approved === now;
+      state.dataset.state = matches ? 'allow' : 'deny';
+      label.textContent = matches
+        ? 'Authorization matches this transaction'
+        : 'Authorization invalid · the transaction changed';
+      if (again) again.hidden = matches;
+    };
+
+    const fix = async () => { approved = await digestOf(recordNow()); await refresh(); };
+
+    for (const field of [amount, dest]) field.addEventListener('input', refresh);
+    again?.addEventListener('click', fix);
+    /* The first digest computed is the one that was approved. */
+    fix();
+  }
+}
+
+/* --------------------------------------------- the closing panel */
+
+liveCanvas($('tech-net'), (paint, w, h) => {
+  const nodes = [];
+  const count = Math.round(clamp((w * h) / 22000, 10, 30));
+  for (let i = 0; i < count; i++) {
+    nodes.push({ x: Math.random() * w, y: Math.random() * h, dx: (Math.random() - 0.5) * 0.14, dy: (Math.random() - 0.5) * 0.14 });
+  }
+  return () => {
+    paint.clearRect(0, 0, w, h);
+    for (const n of nodes) {
+      n.x += n.dx; n.y += n.dy;
+      if (n.x < 0 || n.x > w) n.dx *= -1;
+      if (n.y < 0 || n.y > h) n.dy *= -1;
+    }
+    paint.lineWidth = 1;
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const d = Math.hypot(nodes[i].x - nodes[j].x, nodes[i].y - nodes[j].y);
+        if (d > 150) continue;
+        paint.strokeStyle = `rgba(110, 170, 245, ${(0.18 * (1 - d / 150)).toFixed(3)})`;
+        paint.beginPath();
+        paint.moveTo(nodes[i].x, nodes[i].y);
+        paint.lineTo(nodes[j].x, nodes[j].y);
+        paint.stroke();
+      }
+    }
+    paint.fillStyle = 'rgba(150, 200, 255, .5)';
+    for (const n of nodes) {
+      paint.beginPath();
+      paint.arc(n.x, n.y, 1.6, 0, Math.PI * 2);
+      paint.fill();
+    }
+  };
+});
+
+{
+  const note = $('tech-note');
+  $('tech-demo')?.addEventListener('click', () => {
+    if (note) note.textContent = 'Technical demo booking is not connected yet — nothing has been sent.';
   });
 }
 /* ----------------------------------------------------------------- go */

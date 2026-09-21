@@ -46,8 +46,8 @@
 }
 
 /* While an enterprise page is the one on show, the document behind it is white. */
-body:has(#view-about:not([hidden])) { background: var(--en-page); }
-body:has(#view-about:not([hidden])) .field { display: none; }
+body:has(:is(#view-about, #view-technology):not([hidden])) { background: var(--en-page); }
+body:has(:is(#view-about, #view-technology):not([hidden])) .field { display: none; }
 
 /* Zero-specificity reset, so every .en- rule below outranks it. */
 .en :where(h1, h2, h3) { margin: 0; color: var(--en-ink); font-weight: 650; letter-spacing: -.03em; line-height: 1.08; }
@@ -637,4 +637,402 @@ body:has(#view-about:not([hidden])) .field { display: none; }
   .en-ico svg * { stroke-dashoffset: 0; }
   .en-hero-scene, .en-building { transform: none; }
   .en-art.on .en-draw { animation: none; }
+}
+
+/* =========================================== the Technology page ========= */
+
+.en-fine { font-size: 12.5px; line-height: 1.6; color: var(--en-ink-3); }
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+/* a third state, for something the architecture defines but the system does not do */
+.en-state[data-state="none"] { background: rgba(102, 120, 143, .12); color: var(--en-ink-3); }
+
+/* ---------------------------------------------------- the drawn module */
+
+.tech-hero .en-hero-veil {
+  background:
+    linear-gradient(180deg, rgba(3, 10, 20, .7) 0%, transparent 16%),
+    linear-gradient(90deg, var(--en-darker) 26%, transparent 66%);
+}
+.tech-stack {
+  position: absolute;
+  top: 50%;
+  right: clamp(20px, 7vw, 130px);
+  width: min(46%, 560px);
+  height: auto;
+  transform: translateY(-50%);
+}
+.tech-layer {
+  /* pulled apart by the page, and by the pointer, both in the same direction */
+  transform: translateY(calc((var(--tech-i) - 2) * var(--tech-spread, 26px) * -1));
+  transition: transform 900ms cubic-bezier(.16, 1, .3, 1);
+}
+.tech-layer[data-layer="0"] { --tech-i: 0; }
+.tech-layer[data-layer="1"] { --tech-i: 1; }
+.tech-layer[data-layer="2"] { --tech-i: 2; }
+.tech-layer[data-layer="3"] { --tech-i: 3; }
+.tech-layer[data-layer="4"] { --tech-i: 4; }
+.tech-face { fill: url(#tech-face); opacity: .92; }
+.tech-edge { fill: none; stroke: rgba(120, 180, 255, .5); stroke-width: 1.2; }
+.tech-layer.core .tech-edge { stroke: #5fb0ff; stroke-width: 1.8; }
+.tech-core {
+  fill: rgba(95, 176, 255, .9);
+  filter: drop-shadow(0 0 14px rgba(79, 157, 255, .9));
+  animation: tech-pulse 3.4s cubic-bezier(.4, 0, .2, 1) infinite;
+}
+@keyframes tech-pulse { 0%, 100% { opacity: .75; r: 24; } 50% { opacity: 1; r: 28; } }
+
+/* the light that travels down through the layers */
+.tech-beam {
+  fill: none;
+  stroke: rgba(150, 215, 255, .85);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-dasharray: 40 360;
+  animation: tech-travel 3.6s cubic-bezier(.5, 0, .5, 1) infinite;
+}
+@keyframes tech-travel { from { stroke-dashoffset: 400; } to { stroke-dashoffset: -40; } }
+
+.tech-caps .en-ico { margin-bottom: 18px; }
+
+/* ------------------------------------------------- the seven steps */
+
+.tech-flow { position: relative; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px; }
+.tech-flow::before {
+  content: '';
+  position: absolute;
+  left: 3%;
+  right: 3%;
+  top: 27px;
+  height: 2px;
+  background: var(--en-line-2);
+}
+.tech-flow::after {
+  content: '';
+  position: absolute;
+  left: 3%;
+  right: 3%;
+  top: 27px;
+  height: 2px;
+  background: var(--en-blue);
+  transform: scaleX(var(--tech-run, 0));
+  transform-origin: left;
+  transition: transform 220ms linear;
+}
+.tech-flow li {
+  position: relative;
+  padding-top: 70px;
+  opacity: .5;
+  transition: opacity 460ms cubic-bezier(.4, 0, .2, 1);
+}
+.tech-flow li.on { opacity: 1; }
+.tech-step {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  border: 2px solid var(--en-line-2);
+  border-radius: 50%;
+  background: var(--en-tint);
+  font: 600 12px/1 var(--mono);
+  letter-spacing: .06em;
+  color: var(--en-ink-3);
+  transition: border-color 460ms, color 460ms, box-shadow 460ms;
+}
+.tech-flow li.on .tech-step { border-color: var(--en-blue); color: var(--en-blue); box-shadow: 0 0 0 5px rgba(18, 114, 255, .1); }
+.tech-flow b { display: block; font-size: 15.5px; font-weight: 650; letter-spacing: -.02em; }
+.tech-flow p { margin-top: 8px; font-size: 12.5px; line-height: 1.5; color: var(--en-ink-2); }
+
+/* ------------------------------------------------- the firewall */
+
+.tech-wall {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  gap: clamp(20px, 3vw, 44px);
+  align-items: start;
+  padding: clamp(24px, 3vw, 40px);
+  border: 1px solid var(--en-line);
+  border-radius: 16px;
+  background: #fff;
+}
+.tech-request { display: grid; border-top: 1px solid var(--en-line); }
+.tech-request > div { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--en-line); }
+.tech-request dt { font-size: 13px; color: var(--en-ink-3); }
+.tech-request dd { font: 500 13px/1 var(--mono); color: var(--en-ink); }
+
+.tech-checks { display: grid; gap: 10px; }
+.tech-checks li,
+.tech-rules li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13.5px;
+  color: var(--en-ink-3);
+  transition: color 460ms cubic-bezier(.4, 0, .2, 1);
+}
+.tech-checks li.on { color: var(--en-ink); }
+
+/* the tick: a circle that fills, with a mark drawn inside it */
+.tech-tick {
+  position: relative;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid var(--en-line-2);
+  border-radius: 50%;
+  transition: background-color 400ms, border-color 400ms;
+}
+.tech-tick::after {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 4px;
+  width: 5px;
+  height: 9px;
+  border: solid #fff;
+  border-width: 0 1.8px 1.8px 0;
+  transform: rotate(45deg) scale(0);
+  transition: transform 340ms cubic-bezier(.16, 1, .3, 1);
+}
+:is(.tech-checks, .tech-rules) li.on .tech-tick { background: var(--en-ok); border-color: var(--en-ok); }
+:is(.tech-checks, .tech-rules) li.on .tech-tick::after { transform: rotate(45deg) scale(1); }
+:is(.tech-checks, .tech-rules) li.fail .tech-tick { background: #c3301c; border-color: #c3301c; }
+:is(.tech-checks, .tech-rules) li.fail .tech-tick::after {
+  transform: rotate(45deg) scale(1);
+  border-width: 0 1.8px 1.8px 0;
+  left: 6px;
+  top: 3px;
+  height: 11px;
+  width: 0;
+}
+.tech-rules li.fail { color: #a8291a; }
+
+.tech-verdict, .tech-decision {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  grid-column: 1 / -1;
+  margin-top: clamp(18px, 2.4vw, 26px);
+  padding-top: 18px;
+  border-top: 1px solid var(--en-line);
+  font: 600 11.5px/1 var(--sans);
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  transition: color 400ms;
+}
+.tech-verdict-mark { width: 9px; height: 9px; border-radius: 50%; background: currentColor; }
+:is(.tech-verdict, .tech-decision)[data-state="waiting"] { color: var(--en-plan); }
+:is(.tech-verdict, .tech-decision)[data-state="allow"] { color: var(--en-ok); }
+:is(.tech-verdict, .tech-decision)[data-state="deny"] { color: #c3301c; }
+
+/* ------------------------------------------------ the policy builder */
+
+.tech-builder {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: clamp(20px, 3vw, 44px);
+  padding: clamp(24px, 3vw, 40px);
+  border: 1px solid var(--en-line);
+  border-radius: 16px;
+  background: #fff;
+}
+.tech-builder-head { font: 600 10.5px/1 var(--sans); letter-spacing: .2em; text-transform: uppercase; color: var(--en-ink-3); margin-bottom: 20px; }
+.tech-field { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 14px; align-items: center; margin-bottom: 20px; }
+.tech-field > span { font: 500 13.5px/1 var(--sans); color: var(--en-ink); }
+.tech-field output { font: 600 14px/1 var(--mono); color: var(--en-blue); }
+.tech-field input[type="range"] { grid-column: 1 / -1; width: 100%; accent-color: var(--en-blue); }
+.tech-field select {
+  grid-column: 1 / -1;
+  height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--en-line-2);
+  border-radius: 9px;
+  background: #fff;
+  font: 500 13.5px/1 var(--sans);
+  color: var(--en-ink);
+}
+.tech-rules ul { display: grid; gap: 12px; }
+.tech-rules b { font: 500 13.5px/1 var(--sans); color: inherit; }
+.tech-rules small { font: 400 12.5px/1 var(--sans); color: var(--en-ink-3); }
+.tech-rules li > b { min-width: 86px; }
+.tech-decision-why { margin-top: 12px; font-size: 13px; line-height: 1.58; color: var(--en-ink-2); }
+
+.tech-spec { font: 500 11.5px/1.4 var(--mono) !important; color: var(--en-blue) !important; margin: 8px 0 0 !important; }
+
+/* ------------------------------------------------------- agility */
+
+.tech-agility { padding: clamp(24px, 3vw, 40px); border: 1px solid var(--en-line); border-radius: 16px; background: #fff; }
+.tech-eras { position: relative; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.tech-eras li {
+  position: relative;
+  padding: 20px 22px;
+  border: 1px solid var(--en-line);
+  border-radius: 12px;
+  opacity: .5;
+  transition: opacity 500ms, border-color 500ms, background-color 500ms;
+}
+.tech-eras li.on { opacity: 1; border-color: var(--en-blue); background: var(--en-blue-wash); }
+.tech-eras li + li::before {
+  content: '';
+  position: absolute;
+  left: -14px;
+  top: 50%;
+  width: 14px;
+  height: 1px;
+  background: var(--en-line-2);
+}
+.tech-eras b { display: block; font-size: 16px; font-weight: 650; letter-spacing: -.022em; }
+.tech-eras small { display: block; margin-top: 7px; font-size: 12.5px; color: var(--en-ink-2); }
+
+.tech-constant { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 26px; padding-top: 24px; border-top: 1px dashed var(--en-line-2); }
+.tech-constant li { padding: 9px 14px; border: 1px solid var(--en-line); border-radius: 999px; font: 500 12.5px/1 var(--sans); color: var(--en-ink-2); }
+.tech-constant-note { margin-top: 12px; font-size: 12.5px; color: var(--en-ink-3); }
+
+/* -------------------------------------------------- trust boundary */
+
+.tech-zones { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(20px, 3vw, 44px); align-items: start; }
+.tech-zone-list { display: grid; gap: 10px; }
+.tech-zone-list button {
+  display: block;
+  width: 100%;
+  padding: 16px 18px;
+  border: 1px solid var(--en-line);
+  border-radius: 12px;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 190ms, box-shadow 460ms, transform 460ms cubic-bezier(.16, 1, .3, 1);
+}
+.tech-zone-list button:hover { border-color: var(--en-line-2); transform: translateX(2px); }
+.tech-zone-list button[aria-pressed="true"] { border-color: var(--en-blue); box-shadow: 0 0 0 3px rgba(18, 114, 255, .12); }
+.tech-zone-list b { display: block; font-size: 15px; font-weight: 650; letter-spacing: -.02em; }
+.tech-zone-list small { display: block; margin-top: 5px; font-size: 12.5px; color: var(--en-ink-3); }
+
+/* the line nothing crosses without being asked */
+.tech-boundary-row { padding: 6px 0; }
+.tech-boundary {
+  display: block;
+  padding: 10px 0;
+  border-top: 2px solid var(--en-blue);
+  border-bottom: 2px solid var(--en-blue);
+  font: 600 10px/1 var(--sans);
+  letter-spacing: .24em;
+  text-transform: uppercase;
+  text-align: center;
+  color: var(--en-blue);
+  background: linear-gradient(90deg, transparent, rgba(18, 114, 255, .09), transparent);
+}
+.tech-zone-say {
+  padding: clamp(22px, 2.4vw, 30px);
+  border: 1px solid var(--en-line);
+  border-radius: 14px;
+  background: var(--en-tint);
+  font-size: 14.5px;
+  line-height: 1.62;
+  color: var(--en-ink-2);
+  min-height: 9em;
+}
+
+/* --------------------------------------------- the binding demo */
+
+.tech-bind { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(20px, 3vw, 44px); align-items: start; }
+.tech-record, .tech-digest { padding: clamp(24px, 3vw, 36px); border: 1px solid var(--en-line); border-radius: 16px; background: #fff; }
+.tech-record dl { display: grid; border-top: 1px solid var(--en-line); }
+.tech-record dl > div { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 0; border-bottom: 1px solid var(--en-line); }
+.tech-record dt { font-size: 13px; color: var(--en-ink-3); }
+.tech-record dd { font: 500 13px/1 var(--mono); color: var(--en-ink); }
+.tech-record input {
+  width: 15ch;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--en-line-2);
+  border-radius: 8px;
+  background: var(--en-tint);
+  font: 500 13px/1 var(--mono);
+  color: var(--en-ink);
+  text-align: right;
+}
+.tech-record input:focus { border-color: var(--en-blue); background: #fff; }
+.tech-record .en-fine { margin-top: 14px; }
+
+.tech-hash {
+  padding: 14px 16px;
+  border: 1px solid var(--en-line);
+  border-radius: 10px;
+  background: var(--en-tint);
+  font: 500 12.5px/1.6 var(--mono);
+  word-break: break-all;
+  color: var(--en-ink);
+}
+.tech-hash.quiet { color: var(--en-ink-3); }
+.tech-approved-label { margin: 18px 0 8px; font: 600 10.5px/1 var(--sans); letter-spacing: .2em; text-transform: uppercase; color: var(--en-ink-3); }
+.tech-digest .tech-decision { grid-column: auto; }
+.tech-digest .vx-btn { margin-top: 16px; }
+
+/* ------------------------------------------------------ evidence */
+
+.tech-evidence { padding: clamp(24px, 3vw, 40px); border: 1px solid var(--en-line); border-radius: 16px; background: #fff; }
+.tech-table { width: 100%; border-collapse: collapse; }
+.tech-table th, .tech-table td { padding: 13px 0; border-bottom: 1px solid var(--en-line); text-align: left; vertical-align: top; }
+.tech-table th { width: 26%; font: 600 10.5px/1.6 var(--sans); letter-spacing: .18em; text-transform: uppercase; color: var(--en-ink-3); }
+.tech-table td { font: 500 13.5px/1.5 var(--mono); color: var(--en-ink); }
+.tech-evidence .tech-decision { grid-column: auto; }
+
+/* --------------------------------------------------- integration */
+
+.tech-integrations { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: clamp(12px, 1.4vw, 18px); }
+.tech-integrations li {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 20px 22px;
+  border: 1px solid var(--en-line);
+  border-radius: 12px;
+  background: #fff;
+}
+.tech-integrations b { font-size: 15px; font-weight: 650; letter-spacing: -.02em; }
+.tech-integrations small { flex: 1; font: 500 12.5px/1.5 var(--mono); color: var(--en-ink-3); }
+
+/* --------------------------------------------------- principles */
+
+.tech-principles { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: clamp(14px, 1.8vw, 26px); }
+.tech-principles li { padding-top: 22px; border-top: 2px solid var(--en-line); }
+.tech-principles .en-num { display: block; margin-bottom: 14px; color: var(--en-blue); }
+.tech-principles b { display: block; font-size: 16px; font-weight: 650; letter-spacing: -.022em; }
+.tech-principles p { margin-top: 10px; font-size: 13px; line-height: 1.55; color: var(--en-ink-2); }
+
+/* -------------------------------------------------- responsive */
+
+@media (max-width: 1080px) {
+  .tech-stack { position: relative; top: auto; right: auto; transform: none; width: min(78%, 440px); margin: 0 auto; }
+  .tech-hero .en-hero-bed { position: relative; }
+  .tech-wall, .tech-builder, .tech-zones, .tech-bind { grid-template-columns: minmax(0, 1fr); }
+  .tech-flow { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 26px 10px; }
+  .tech-flow::before, .tech-flow::after { display: none; }
+}
+
+@media (max-width: 760px) {
+  .tech-flow { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .tech-flow li { padding: 0 0 0 68px; min-height: 54px; }
+  .tech-eras { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+  .tech-eras li + li::before { left: 50%; top: -24px; width: 1px; height: 24px; }
+  .tech-principles { grid-template-columns: minmax(0, 1fr); }
+  .tech-record input { width: 12ch; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tech-layer { transform: none; }
+  .tech-beam, .tech-core { animation: none; }
 }

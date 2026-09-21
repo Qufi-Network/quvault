@@ -68,7 +68,7 @@
         <span></span><span></span><span></span>
       </button>
       <nav class="vx-links" id="marketing-nav">
-        <a href="#product">Product</a>
+        <a href="#technology">Product</a>
         <a href="#solutions">Solutions</a>
         <a href="#security">Security</a>
         <a href="#uses">Use Cases</a>
@@ -888,7 +888,7 @@
       </div>
     </section>
     <!-- ================================================== our technology -->
-    <section class="en-sec tint" id="technology">
+    <section class="en-sec tint" id="about-technology">
       <div class="en-wrap">
         <div class="en-split">
           <div>
@@ -1187,10 +1187,10 @@
           <div class="en-foot-cols">
             <div>
               <h3>Product</h3>
-              <a href="#technology">Quantum Vault</a>
+              <a href="#about-technology">Quantum Vault</a>
               <a href="#approach">Policy engine</a>
-              <a href="#technology">Key protection</a>
-              <a href="#technology">Technology</a>
+              <a href="#about-technology">Key protection</a>
+              <a href="#about-technology">Technology</a>
             </div>
             <div>
               <h3>Solutions</h3>
@@ -1210,7 +1210,7 @@
             <div>
               <h3>Resources</h3>
               <a href="#approach">Architecture</a>
-              <a href="#technology">Cryptography</a>
+              <a href="#about-technology">Cryptography</a>
               <a href="#journey">Journey</a>
               <a href="#impact">Capabilities</a>
             </div>
@@ -1229,6 +1229,597 @@
             <a href="#about-contact">Terms</a>
             <a href="#approach">Security</a>
             <a href="#about-contact">Responsible disclosure</a>
+          </nav>
+          <span class="en-status"><i></i>Operational</span>
+        </div>
+      </div>
+    </footer>
+  </main>
+
+  <main id="view-technology" class="view en" hidden>
+
+    <!-- ================================================== hero -->
+    <section class="en-hero tech-hero" id="tech-top">
+      <div class="en-hero-bed" aria-hidden="true">
+        <!--
+          The reference puts a photograph of a cryptographic hardware module here. There is no
+          such photograph in this project, so the module is drawn: five layers that separate as
+          the page moves and carry a light down through them. It says the same thing the
+          photograph would, and it says it in about two kilobytes.
+        -->
+        <svg class="tech-stack" id="tech-stack" viewBox="0 0 520 420" role="img" aria-labelledby="tech-stack-title">
+          <title id="tech-stack-title">Five layers of the architecture, separating: application, policy, cryptography, key material, execution</title>
+          <defs>
+            <linearGradient id="tech-face" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#16324f"/>
+              <stop offset="100%" stop-color="#0a1b2e"/>
+            </linearGradient>
+          </defs>
+          <g class="tech-layer" data-layer="0" data-label="Application">
+            <path class="tech-face" d="M260 40 430 120 260 200 90 120z"/>
+            <path class="tech-edge" d="M260 40 430 120 260 200 90 120z"/>
+          </g>
+          <g class="tech-layer" data-layer="1" data-label="Policy">
+            <path class="tech-face" d="M260 40 430 120 260 200 90 120z"/>
+            <path class="tech-edge" d="M260 40 430 120 260 200 90 120z"/>
+          </g>
+          <g class="tech-layer" data-layer="2" data-label="Cryptography">
+            <path class="tech-face" d="M260 40 430 120 260 200 90 120z"/>
+            <path class="tech-edge" d="M260 40 430 120 260 200 90 120z"/>
+          </g>
+          <g class="tech-layer core" data-layer="3" data-label="Key material">
+            <path class="tech-face" d="M260 40 430 120 260 200 90 120z"/>
+            <path class="tech-edge" d="M260 40 430 120 260 200 90 120z"/>
+            <circle class="tech-core" cx="260" cy="120" r="26"/>
+          </g>
+          <g class="tech-layer" data-layer="4" data-label="Execution">
+            <path class="tech-face" d="M260 40 430 120 260 200 90 120z"/>
+            <path class="tech-edge" d="M260 40 430 120 260 200 90 120z"/>
+          </g>
+          <path class="tech-beam" d="M260 40v360"/>
+        </svg>
+        <div class="en-hero-veil"></div>
+      </div>
+
+      <div class="en-hero-in">
+        <div class="en-hero-copy">
+          <p class="en-eyebrow light" data-reveal>Technology</p>
+          <h1 data-reveal>The infrastructure<br>for trust in a<br><em>post quantum world.</em></h1>
+          <div class="en-hero-lede" data-reveal>
+            <p>Veyns combines human authorization, programmable policy controls and post quantum
+              cryptography into a single architecture for institutional digital assets.</p>
+          </div>
+          <div class="en-hero-cta" data-reveal>
+            <a class="vx-btn solid lg" href="#architecture">Explore the architecture<svg class="vx-chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.6 4.8 5.6 5.2-5.6 5.2"/></svg></a>
+            <a class="vx-btn ghost lg" href="#firewall">See it decide<svg class="vx-chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.6 4.8 5.6 5.2-5.6 5.2"/></svg></a>
+          </div>
+        </div>
+
+        <ul class="en-hero-tags" data-reveal-group>
+          <li>Human</li><li>Policy</li><li>Cryptography</li><li>Key material</li><li>Blockchain</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ======================================= technology overview -->
+    <section class="en-sec" id="overview">
+      <div class="en-wrap">
+        <div class="en-split">
+          <div>
+            <p class="en-eyebrow" data-reveal>Technology overview</p>
+            <h2 data-reveal>A unified architecture<br>for <em>institutional security.</em></h2>
+          </div>
+          <div class="en-prose" data-reveal>
+            <p>Veyns provides a programmable security layer between institutional applications and
+              digital asset networks.</p>
+            <p>The architecture combines human authorization, policy enforcement and post quantum
+              cryptography to control how transactions are authorized and executed. Each block says
+              what is running today.</p>
+          </div>
+        </div>
+
+        <ul class="en-caps tech-caps" data-reveal-group>
+          <li>
+            <span class="en-ico"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 5.4a10 10 0 0 0-10 10v3.4"/><path d="M16 10.2a5.2 5.2 0 0 0-5.2 5.2v5.2"/><path d="M16 14.4v6.6"/><path d="M21.2 15.4a5.2 5.2 0 0 0-5.2-5.2"/><path d="M26 15.4a10 10 0 0 0-3.9-7.9"/></svg></span>
+            <h3>Human authorized</h3>
+            <p>Critical actions require a verified palm, and can require several of them before
+              anything is signed.</p>
+            <span class="en-state" data-state="live">Implemented</span>
+          </li>
+          <li>
+            <span class="en-ico"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M6 10.4h20M6 16h20M6 21.6h20"/><circle cx="12" cy="10.4" r="2.6"/><circle cx="20.5" cy="16" r="2.6"/><circle cx="14.5" cy="21.6" r="2.6"/></svg></span>
+            <h3>Policy driven</h3>
+            <p>Amount thresholds, how many approvals are required and which destinations are
+              permitted, evaluated before signing.</p>
+            <span class="en-state" data-state="live">Implemented</span>
+          </li>
+          <li>
+            <span class="en-ico"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="m16 5 9.5 5.5v11L16 27l-9.5-5.5v-11z"/><path d="M16 5v22M6.5 10.5l19 11M25.5 10.5l-19 11"/></svg></span>
+            <h3>Post quantum</h3>
+            <p>ML-DSA-65 signs authorizations. ML-KEM-768 and X25519 together establish the keys
+              that seal the vault.</p>
+            <span class="en-state" data-state="live">Implemented</span>
+          </li>
+          <li>
+            <span class="en-ico"><svg viewBox="0 0 32 32" aria-hidden="true"><rect x="7" y="13" width="18" height="13" rx="2.4"/><path d="M11.4 13V9.4a4.6 4.6 0 0 1 9.2 0V13"/><path d="M16 18v3"/></svg></span>
+            <h3>Hardware rooted</h3>
+            <p>Keeping key material inside protected hardware, so an application asks for a
+              signature rather than receiving a key.</p>
+            <span class="en-state" data-state="planned">Designed for</span>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ========================================= core architecture -->
+    <section class="en-sec tint" id="architecture">
+      <div class="en-wrap">
+        <div class="en-split">
+          <div>
+            <p class="en-eyebrow" data-reveal>Architecture</p>
+            <h2 data-reveal>From intent<br>to <em>execution.</em></h2>
+          </div>
+          <div class="en-prose" data-reveal>
+            <p>Every transaction passes through each of these before it can execute. Scroll, and
+              the architecture assembles in the order the transaction moves through it.</p>
+          </div>
+        </div>
+
+        <ol class="tech-flow" id="flow">
+          <li>
+            <span class="tech-step">01</span>
+            <b>Initiate</b>
+            <p>Asset, amount and destination become a plan the server alone is allowed to make.</p>
+          </li>
+          <li>
+            <span class="tech-step">02</span>
+            <b>Authorize</b>
+            <p>A palm read by Veyns, and as many more as the policy requires.</p>
+          </li>
+          <li>
+            <span class="tech-step">03</span>
+            <b>Policy</b>
+            <p>Amount, quorum, destination and window, all evaluated before any key is reached for.</p>
+          </li>
+          <li>
+            <span class="tech-step">04</span>
+            <b>Cryptography</b>
+            <p>The plan is canonicalised, digested, and that digest is what the approval signs.</p>
+          </li>
+          <li>
+            <span class="tech-step">05</span>
+            <b>Signing</b>
+            <p>The spending key is unsealed for one narrow window and signs that plan only.</p>
+          </li>
+          <li>
+            <span class="tech-step">06</span>
+            <b>Execute</b>
+            <p>Broadcast, then watched until it confirms.</p>
+          </li>
+          <li>
+            <span class="tech-step">07</span>
+            <b>Evidence</b>
+            <p>What was authorized, by whom, under which policy, against which transaction.</p>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- ======================================== transaction firewall -->
+    <section class="en-sec" id="firewall">
+      <div class="en-wrap">
+        <div class="en-split">
+          <div>
+            <p class="en-eyebrow" data-reveal>Transaction firewall</p>
+            <h2 data-reveal>Policy before <em>keys.</em></h2>
+          </div>
+          <div class="en-prose" data-reveal>
+            <p>A transaction must satisfy its authorization conditions before it reaches the
+              signing boundary. A key that can sign anything is a key that can lose everything.</p>
+          </div>
+        </div>
+
+        <div class="tech-wall" id="wall" data-reveal>
+          <dl class="tech-request">
+            <div><dt>Asset</dt><dd>USDC</dd></div>
+            <div><dt>Amount</dt><dd>$10,000,000</dd></div>
+            <div><dt>Network</dt><dd>Ethereum</dd></div>
+            <div><dt>Destination</dt><dd>0xABCD…41F9</dd></div>
+            <div><dt>Initiator</dt><dd>Treasury operator</dd></div>
+            <div><dt>Policy</dt><dd>Institutional treasury v3</dd></div>
+          </dl>
+
+          <ul class="tech-checks" id="checks">
+            <li><span class="tech-tick"></span>Authorized operator</li>
+            <li><span class="tech-tick"></span>Approved asset</li>
+            <li><span class="tech-tick"></span>Approved destination</li>
+            <li><span class="tech-tick"></span>Amount within limit</li>
+            <li><span class="tech-tick"></span>Required approvals collected</li>
+            <li><span class="tech-tick"></span>Human authorization present</li>
+            <li><span class="tech-tick"></span>Transaction unchanged since approval</li>
+            <li><span class="tech-tick"></span>Policy version valid</li>
+          </ul>
+
+          <p class="tech-verdict" id="verdict" data-state="waiting">
+            <span class="tech-verdict-mark"></span><span id="verdict-text">Evaluating policy</span>
+          </p>
+        </div>
+      </div>
+    </section>
+    <!-- ============================================== policy engine -->
+    <section class="en-sec tint" id="policy-engine">
+      <div class="en-wrap">
+        <div class="en-split">
+          <div>
+            <p class="en-eyebrow" data-reveal>Policy engine</p>
+            <h2 data-reveal>Programmable<br><em>security policies.</em></h2>
+          </div>
+          <div class="en-prose" data-reveal>
+            <p>Institutional security needs more than key storage. Change the transfer below and
+              the policy re-evaluates against it.</p>
+          </div>
+        </div>
+
+        <form class="tech-builder" id="builder2" data-reveal>
+          <div class="tech-builder-in">
+            <p class="tech-builder-head">The transfer</p>
+            <label class="tech-field">
+              <span>Amount</span>
+              <input type="range" id="pol-amount" min="100000" max="9000000" step="100000" value="1200000">
+              <output id="pol-amount-out">$1,200,000</output>
+            </label>
+            <label class="tech-field">
+              <span>Asset</span>
+              <select id="pol-asset">
+                <option value="USDC">USDC</option>
+                <option value="BTC">BTC</option>
+                <option value="ETH">ETH</option>
+              </select>
+            </label>
+            <label class="tech-field">
+              <span>Destination</span>
+              <select id="pol-dest">
+                <option value="approved">Whitelisted · Treasury 04</option>
+                <option value="new">Not on the whitelist</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="tech-rules">
+            <p class="tech-builder-head">The policy</p>
+            <ul id="rules">
+              <li data-rule="limit"><span class="tech-tick"></span><b>Limit</b><small>Up to $5,000,000</small></li>
+              <li data-rule="asset"><span class="tech-tick"></span><b>Asset</b><small>USDC and BTC permitted</small></li>
+              <li data-rule="dest"><span class="tech-tick"></span><b>Destination</b><small>Whitelisted only</small></li>
+              <li data-rule="approvals"><span class="tech-tick"></span><b>Approvals</b><small id="rule-approvals">2 palms required</small></li>
+            </ul>
+            <p class="tech-decision" id="decision" data-state="allow">
+              <span class="tech-verdict-mark"></span><span id="decision-text">Policy satisfied</span>
+            </p>
+            <p class="tech-decision-why" id="decision-why">A $1,200,000 USDC transfer to a whitelisted
+              destination, authorized by two palms.</p>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <!-- ================================================ cryptography -->
+    <section class="en-sec" id="cryptography">
+      <div class="en-wrap">
+        <div class="en-split">
+          <div>
+            <p class="en-eyebrow" data-reveal>Cryptography</p>
+            <h2 data-reveal>Built for today.<br>Ready for <em>tomorrow.</em></h2>
+          </div>
+          <div class="en-prose" data-reveal>
+            <p>Veyns is designed around modern cryptographic primitives with a focus on long term
+              cryptographic resilience and algorithmic agility. Each card says whether the
+              primitive is in the running system.</p>
+          </div>
+        </div>
+
+        <ul class="en-caps" data-reveal-group>
+          <li>
+            <h3>ML-DSA-65</h3>
+            <p class="tech-spec">FIPS 204 · module lattice signatures</p>
+            <p>Signs every human authorization, under a context that separates it from every other
+              kind of signature this system makes.</p>
+            <span class="en-state" data-state="live">Implemented</span>
+          </li>
+          <li>
+            <h3>ML-KEM-768</h3>
+            <p class="tech-spec">FIPS 203 · module lattice key encapsulation</p>
+            <p>Establishes the key that seals the vault, combined with X25519 so the seal holds if
+              either one of the two is broken.</p>
+            <span class="en-state" data-state="live">Implemented</span>
+          </li>
+          <li>
+            <h3>SLH-DSA</h3>
+            <p class="tech-spec">FIPS 205 · hash based signatures</p>
+            <p>Stateless hash based signatures, whose security rests on the hash alone. Not in this
+              system today.</p>
+            <span class="en-state" data-state="none">Not implemented</span>
+          </li>
+          <li>
+            <h3>Hybrid establishment</h3>
+            <p class="tech-spec">ML-KEM-768 + X25519 · HKDF-SHA256</p>
+            <p>Both secrets feed one derivation, so the result is no weaker than the stronger of
+              the two.</p>
+            <span class="en-state" data-state="live">Implemented</span>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ========================================= cryptographic agility -->
+    <section class="en-sec tint" id="agility">
+      <div class="en-wrap">
+        <div class="en-split">
+          <div>
+            <p class="en-eyebrow" data-reveal>Cryptographic agility</p>
+            <h2 data-reveal>Security should evolve<br>without <em>rebuilding the system.</em></h2>
+          </div>
+          <div class="en-prose" data-reveal>
+            <p>Algorithms change and threat models change. Identity, policy, key management and the
+              transaction model stay where they are; only the cryptographic layer moves.</p>
+          </div>
+        </div>
+
+        <div class="tech-agility" id="agility-art" data-reveal>
+          <ol class="tech-eras">
+            <li data-era="0"><b>Classical</b><small>RSA and elliptic curve</small></li>
+            <li data-era="1"><b>Hybrid</b><small>Classical and lattice together</small></li>
+            <li data-era="2"><b>Post quantum</b><small>Lattice throughout</small></li>
+          </ol>
+          <ul class="tech-constant">
+            <li>Identity</li><li>Policy</li><li>Key management</li><li>Transaction model</li>
+          </ul>
+          <p class="tech-constant-note">These do not move.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================== trust boundary -->
+    <section class="en-sec" id="boundary">
+      <div class="en-wrap">
+        <div class="en-split">
+          <div>
+            <p class="en-eyebrow" data-reveal>Trust boundary</p>
+            <h2 data-reveal>The security<br>boundary <em>matters.</em></h2>
+          </div>
+          <div class="en-prose" data-reveal>
+            <p>What may cross a boundary is a more useful question than what is encrypted. Select a
+              zone to see what enters and leaves it.</p>
+          </div>
+        </div>
+
+        <div class="tech-zones" id="zones">
+          <ul class="tech-zone-list">
+            <li><button type="button" data-zone="app" aria-pressed="false">
+              <b>Enterprise environment</b><small>Treasury, custody, applications</small></button></li>
+            <li><button type="button" data-zone="plane" aria-pressed="false">
+              <b>Veyns control plane</b><small>Identity, policy, authorization</small></button></li>
+            <li class="tech-boundary-row"><span class="tech-boundary">Cryptographic trust boundary</span></li>
+            <li><button type="button" data-zone="keys" aria-pressed="false">
+              <b>Key material</b><small>Sealed, unsealed only to sign</small></button></li>
+            <li><button type="button" data-zone="chain" aria-pressed="false">
+              <b>Network</b><small>Broadcast and confirmation</small></button></li>
+          </ul>
+          <p class="tech-zone-say" id="zone-say" role="status">Select a zone to see what crosses its
+            boundary, and what never does.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================================== authorization object -->
+    <section class="en-sec tint" id="authorization">
+      <div class="en-wrap">
+        <div class="en-split">
+          <div>
+            <p class="en-eyebrow" data-reveal>Transaction binding</p>
+            <h2 data-reveal>Authorize the transaction.<br>Not just the <em>key.</em></h2>
+          </div>
+          <div class="en-prose" data-reveal>
+            <p>An approval carries the digest of the exact transaction it approves. Change any
+              field below and watch the digest change with it — at which point the approval that
+              was given for the old one no longer matches.</p>
+            <p class="en-fine">The digest here is computed in your browser, with SHA-256 over the
+              canonical record, exactly as the vault computes it. The signature is not: that needs
+              a palm.</p>
+          </div>
+        </div>
+
+        <div class="tech-bind" data-reveal>
+          <form class="tech-record" id="record">
+            <p class="tech-builder-head">Authorization record</p>
+            <dl>
+              <div><dt>Vault</dt><dd>vault_8f42a1c9</dd></div>
+              <div><dt>Asset</dt><dd>USDC</dd></div>
+              <div><dt><label for="bind-amount">Amount</label></dt>
+                <dd><input id="bind-amount" type="text" inputmode="numeric" value="10000000" aria-describedby="bind-hint"></dd></div>
+              <div><dt><label for="bind-dest">Destination</label></dt>
+                <dd><input id="bind-dest" type="text" value="0xABCD41F9"></dd></div>
+              <div><dt>Network</dt><dd>ethereum</dd></div>
+              <div><dt>Policy</dt><dd>institutional-treasury-v3</dd></div>
+              <div><dt>Nonce</dt><dd>7c1d4e8b</dd></div>
+            </dl>
+            <p class="en-fine" id="bind-hint">Editing either field re-canonicalises the record and
+              re-digests it.</p>
+          </form>
+
+          <div class="tech-digest">
+            <p class="tech-builder-head">Authorization digest</p>
+            <p class="tech-hash" id="bind-hash">computing…</p>
+            <p class="tech-approved-label">Approved digest</p>
+            <p class="tech-hash quiet" id="bind-approved">computing…</p>
+            <p class="tech-decision" id="bind-state" data-state="allow">
+              <span class="tech-verdict-mark"></span><span id="bind-state-text">Authorization matches this transaction</span>
+            </p>
+            <button class="vx-btn line" id="bind-reapprove" type="button" hidden>Approve the changed transaction</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =================================================== evidence -->
+    <section class="en-sec" id="evidence">
+      <div class="en-wrap">
+        <div class="en-split">
+          <div>
+            <p class="en-eyebrow" data-reveal>Verifiable evidence</p>
+            <h2 data-reveal>Security should<br>be <em>verifiable.</em></h2>
+          </div>
+          <div class="en-prose" data-reveal>
+            <p>Every authorization produces a structured record of what was authorized, by whom,
+              under which policy and when. The record is stored and queryable.</p>
+            <p class="en-fine">A hash linked chain over those records — where each entry commits to
+              the one before it — is an architectural model, not something running today.</p>
+          </div>
+        </div>
+
+        <div class="tech-evidence" data-reveal>
+          <table class="tech-table">
+            <caption class="visually-hidden">An example authorization record</caption>
+            <tbody>
+              <tr><th scope="row">Who</th><td>Two approvers · pairwise subjects</td></tr>
+              <tr><th scope="row">What</th><td>Spend · 0.4200 BTC</td></tr>
+              <tr><th scope="row">When</th><td>09:41:12 · approval window 300s</td></tr>
+              <tr><th scope="row">Policy</th><td>Quorum 2 of 3 · amount rule applied</td></tr>
+              <tr><th scope="row">Transaction</th><td>Digest bound to the signed plan</td></tr>
+              <tr><th scope="row">Signature</th><td>ML-DSA-65 · QUVAULT-HUMAN-AUTHORIZATION-V1</td></tr>
+              <tr><th scope="row">Result</th><td>Broadcast · confirmed</td></tr>
+            </tbody>
+          </table>
+          <p class="tech-decision" data-state="allow"><span class="tech-verdict-mark"></span>Authorization evidence recorded</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================================================ integration -->
+    <section class="en-sec tint" id="integration">
+      <div class="en-wrap">
+        <div class="en-split">
+          <div>
+            <p class="en-eyebrow" data-reveal>Integration</p>
+            <h2 data-reveal>Designed to fit<br>existing <em>infrastructure.</em></h2>
+          </div>
+          <div class="en-prose" data-reveal>
+            <p>Veyns speaks to an identity provider over OpenID Connect and to a chain over its own
+              adapter. Everything else below is an interface the architecture defines rather than a
+              connector that ships today.</p>
+          </div>
+        </div>
+
+        <ul class="tech-integrations" data-reveal-group>
+          <li><b>Identity</b><small>OpenID Connect · Veyns</small><span class="en-state" data-state="live">Implemented</span></li>
+          <li><b>Bitcoin</b><small>testnet4 · PSBT multisig</small><span class="en-state" data-state="live">Implemented</span></li>
+          <li><b>Further networks</b><small>Ethereum, Stellar and others</small><span class="en-state" data-state="planned">Planned</span></li>
+          <li><b>Hardware security module</b><small>Signing inside protected hardware</small><span class="en-state" data-state="planned">Designed for</span></li>
+          <li><b>Enterprise API</b><small>An interface for treasury and custody systems</small><span class="en-state" data-state="none">Architectural interface</span></li>
+          <li><b>SIEM and audit export</b><small>Streaming the evidence record outward</small><span class="en-state" data-state="none">Architectural interface</span></li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ========================================= security principles -->
+    <section class="en-sec" id="principles">
+      <div class="en-wrap">
+        <div class="en-split">
+          <div>
+            <p class="en-eyebrow" data-reveal>Security principles</p>
+            <h2 data-reveal>Simple principles.<br>Strong <em>architecture.</em></h2>
+          </div>
+        </div>
+        <ol class="tech-principles" data-reveal-group>
+          <li><span class="en-num">01</span><b>Key material stays sealed</b><p>It is unsealed to sign one plan, in one window, and the window closes behind it.</p></li>
+          <li><span class="en-num">02</span><b>Policy precedes signing</b><p>Conditions are evaluated before a key is reached for, not after.</p></li>
+          <li><span class="en-num">03</span><b>People authorize critical actions</b><p>A palm, present, at the moment of signing.</p></li>
+          <li><span class="en-num">04</span><b>Transactions are explicit</b><p>An approval carries the digest of the transaction it approves and no other.</p></li>
+          <li><span class="en-num">05</span><b>Security is verifiable</b><p>What was authorized, by whom and under which policy, recorded and readable.</p></li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- ===================================================== cta -->
+    <section class="en-sec" id="tech-contact">
+      <div class="en-wrap">
+        <div class="en-cta" data-reveal>
+          <canvas class="en-cta-net" id="tech-net" aria-hidden="true"></canvas>
+          <div class="en-cta-copy">
+            <p class="en-eyebrow light">Technology that builds trust</p>
+            <h2>See the security<br><em>architecture in action.</em></h2>
+            <p class="en-cta-lede">Explore how Veyns integrates programmable authorization and post
+              quantum cryptography into institutional digital asset infrastructure.</p>
+            <div class="en-cta-row">
+              <button class="vx-btn solid lg" id="tech-demo" type="button">Book a technical demo<svg class="vx-chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.6 4.8 5.6 5.2-5.6 5.2"/></svg></button>
+              <a class="vx-btn ghost lg" href="#architecture">Read the architecture</a>
+            </div>
+            <p class="en-cta-note" id="tech-note" role="status"></p>
+          </div>
+          <ul class="en-cta-tags">
+            <li>Human</li><li>Policy</li><li>Cryptography</li><li>Evidence</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================================================== footer -->
+    <footer class="en-foot">
+      <div class="en-wrap">
+        <div class="en-foot-top">
+          <div class="en-foot-brand">
+            <img src="/veyns-lockup-black.png" width="480" height="99" alt="Veyns">
+            <p>Security infrastructure for a more trusted financial future.</p>
+            <ul class="en-social">
+              <li><a href="#tech-top" aria-label="LinkedIn"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3.2" y="3.2" width="13.6" height="13.6" rx="2.4"/><path d="M6.8 8.6v5M6.8 6.6v.1M10.2 13.6v-5M13.4 13.6v-2.8a2.2 2.2 0 0 0-3.2-1.9"/></svg></a></li>
+              <li><a href="#tech-top" aria-label="X"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 4 12 12M16 4 4 16"/></svg></a></li>
+              <li><a href="#tech-contact" aria-label="Contact"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.8" y="4.6" width="14.4" height="10.8" rx="2"/><path d="m3.4 6 6.6 4.8L16.6 6"/></svg></a></li>
+            </ul>
+          </div>
+
+          <div class="en-foot-cols">
+            <div>
+              <h3>Product</h3>
+              <a href="#overview">Quantum Vault</a>
+              <a href="#policy-engine">Policy engine</a>
+              <a href="#boundary">Key protection</a>
+              <a href="#architecture">Architecture</a>
+            </div>
+            <div>
+              <h3>Security</h3>
+              <a href="#firewall">Transaction firewall</a>
+              <a href="#authorization">Transaction binding</a>
+              <a href="#evidence">Evidence</a>
+              <a href="#principles">Principles</a>
+            </div>
+            <div>
+              <h3>Cryptography</h3>
+              <a href="#cryptography">Primitives</a>
+              <a href="#agility">Agility</a>
+              <a href="#boundary">Trust boundary</a>
+              <a href="#integration">Integration</a>
+            </div>
+            <div>
+              <h3>Company</h3>
+              <a href="#about">About</a>
+              <a href="#home">Home</a>
+              <a href="#tech-contact">Contact</a>
+            </div>
+          </div>
+
+          <p class="en-foot-tags">
+            People<br>Policy<br>Cryptography<br>A brighter tomorrow
+            <span class="en-foot-rule"></span>
+          </p>
+        </div>
+
+        <div class="en-foot-bottom">
+          <small>&copy; 2026 Veyns. All rights reserved.</small>
+          <nav class="en-foot-legal">
+            <a href="#tech-contact">Privacy</a>
+            <a href="#tech-contact">Terms</a>
+            <a href="#principles">Security</a>
+            <a href="#tech-contact">Responsible disclosure</a>
           </nav>
           <span class="en-status"><i></i>Operational</span>
         </div>

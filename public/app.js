@@ -6,7 +6,7 @@ import {
 
 const $ = id => document.getElementById(id);
 
-const VIEWS = ['loading', 'setup', 'signin', 'about', 'create', 'wallet'];
+const VIEWS = ['loading', 'setup', 'signin', 'about', 'technology', 'create', 'wallet'];
 const VAULT_PANES = ['dashboard', 'security'];
 const ACCOUNT_TABS = [
   { key: 'overview', label: 'Overview' },
@@ -83,7 +83,16 @@ function toast(message) {
 }
 
 /** The pages somebody sees before they are signed in, and the header they share. */
-const MARKETING = ['signin', 'about'];
+const MARKETING = ['signin', 'about', 'technology'];
+
+/*
+ * Which marketing page an address asks for. Anything not named here is the home page, which
+ * is also what every in-page anchor on the home page resolves to — that is the point: a jump
+ * to a section must not be read as a request for a different page.
+ */
+const MARKETING_ROUTES = { '#about': 'about', '#technology': 'technology' };
+const routeOf = hash => MARKETING_ROUTES[hash] || 'signin';
+const PAGE_LINKS = new Set(['#home', ...Object.keys(MARKETING_ROUTES)]);
 
 function show(view) {
   for (const name of VIEWS) $(`view-${name}`).hidden = name !== view;
@@ -93,8 +102,8 @@ function show(view) {
   document.querySelector('.top').hidden = marketing;
   $('marketing-top').hidden = !marketing;
   for (const link of $('marketing-nav').querySelectorAll('a')) {
-    const here = (link.getAttribute('href') === '#about') === (view === 'about');
-    link.classList.toggle('on', here && ['#about', '#home'].includes(link.getAttribute('href')));
+    const href = link.getAttribute('href');
+    link.classList.toggle('on', PAGE_LINKS.has(href) && routeOf(href) === view);
   }
 }
 
@@ -238,7 +247,7 @@ const SIGNIN_BUTTONS = [
 
 /** Home or About, whichever the address bar asks for. Both can sign you in. */
 async function showSignin() {
-  show(location.hash === '#about' ? 'about' : 'signin');
+  show(routeOf(location.hash));
   const ready = state => { for (const [id] of SIGNIN_BUTTONS) $(id).disabled = state; };
   /*
    * A vault that insists on a palm has nothing to offer the ordinary way in, so those routes
@@ -265,7 +274,7 @@ async function showSignin() {
 window.addEventListener('hashchange', () => {
   const here = VIEWS.find(name => !$(`view-${name}`).hidden);
   if (!MARKETING.includes(here)) return;
-  const wanted = location.hash === '#about' ? 'about' : 'signin';
+  const wanted = routeOf(location.hash);
   /*
    * Only a move between the two pages is handled here. Every other hash is a section on the
    * page already showing, and the browser has already taken the reader to it.
