@@ -18,6 +18,13 @@ const $ = id => document.getElementById(id);
 const clamp = (v, lo = 0, hi = 1) => (v < lo ? lo : v > hi ? hi : v);
 const still = window.matchMedia('(prefers-reduced-motion: reduce)');
 
+/*
+ * The marketing surface is two pages sharing one document and one bar: the dark home page and
+ * the light enterprise pages. Both are hidden until the application decides which to put up.
+ */
+const PAGES = ['view-signin', 'view-about'].map($).filter(Boolean);
+const showing = () => PAGES.find(page => !page.hidden) || null;
+
 /* ------------------------------------------------------- scroll driver */
 
 const drivers = [];
@@ -55,7 +62,7 @@ function onScroll() {
  * to the stylesheet; the timing and the trigger stay in CSS.
  */
 function measureIcons() {
-  for (const shape of document.querySelectorAll('.vx-ico svg > *')) {
+  for (const shape of document.querySelectorAll('.vx-ico svg > *, .en-ico svg > *')) {
     const length = typeof shape.getTotalLength === 'function' ? shape.getTotalLength() : 0;
     if (length) shape.style.setProperty('--vx-len', Math.ceil(length));
   }
@@ -109,18 +116,19 @@ function watchArrivals() {
   const nav = $('marketing-top');
   if (nav) {
     /*
-     * The bar is transparent while it sits on the hero and earns a ground of its own the
-     * moment the page moves. It has to be the moment the page moves and not the moment the
-     * hero leaves: the bar overlaps whatever is beneath it the whole way down, and a
+     * Both marketing pages open on a dark hero, so the bar is transparent until the page
+     * moves and then earns a ground of its own. The moment the page moves, not the moment
+     * the hero leaves: the bar overlaps whatever runs beneath it the whole way down, and a
      * transparent bar over running content is unreadable.
+     *
+     * Which ground depends on the page. The home page stays dark to the bottom; the
+     * enterprise pages turn white below their hero, and the bar has to turn with them.
      */
-    const home = $('view-signin');
-    /*
-     * Transparent only while it is actually sitting on the hero. Anywhere else it needs a
-     * ground of its own, including the About page, which is a light page — a bar of white
-     * type on it is a bar of nothing at all.
-     */
-    drive(nav, () => nav.classList.toggle('stuck', window.scrollY > 28 || !home || home.hidden));
+    drive(nav, () => {
+      const page = showing();
+      nav.classList.toggle('light', !!page && page.classList.contains('en'));
+      nav.classList.toggle('stuck', window.scrollY > 28);
+    });
   }
 }
 
@@ -139,11 +147,11 @@ document.addEventListener('click', event => {
   if (!link || event.metaKey || event.ctrlKey || event.shiftKey || event.button) return;
 
   const id = link.getAttribute('href').slice(1);
-  const home = $('view-signin');
-  if (!id || !home || home.hidden) return;
+  const page = showing();
+  if (!id || !page) return;
 
   const target = document.getElementById(id);
-  if (!target || !home.contains(target)) return;
+  if (!target || !page.contains(target)) return;
 
   event.preventDefault();
   history.replaceState(null, '', `#${id}`);
@@ -471,6 +479,373 @@ for (const bar of document.querySelectorAll('.vx-bar[data-w]')) {
   $('talk-cta')?.addEventListener('click', () => say('Security contact is not connected yet — nothing has been sent.'));
 }
 
+/* ===================================================== the About page */
+
+/**
+ * A canvas that only draws while it is on screen, sized to the device and to its box.
+ * Everything animated on these pages goes through this, so nothing is ever left running
+ * behind a page nobody is looking at.
+ */
+function liveCanvas(canvas, setup) {
+  if (!canvas || still.matches) return;
+  const paint = canvas.getContext('2d');
+  let w = 0, h = 0, running = false, draw = () => {};
+
+  const fit = () => {
+    const ratio = Math.min(window.devicePixelRatio || 1, 2);
+    w = canvas.clientWidth;
+    h = canvas.clientHeight;
+    if (!w || !h) return false;
+    canvas.width = Math.round(w * ratio);
+    canvas.height = Math.round(h * ratio);
+    paint.setTransform(ratio, 0, 0, ratio, 0, 0);
+    draw = setup(paint, w, h);
+    return true;
+  };
+
+  const tick = () => {
+    if (!running) return;
+    draw();
+    requestAnimationFrame(tick);
+  };
+  const start = () => { if (!running && (w || fit())) { running = true; requestAnimationFrame(tick); } };
+  const stop = () => { running = false; };
+
+  fit();
+  window.addEventListener('resize', () => { fit(); }, { passive: true });
+  new IntersectionObserver(([entry]) => (entry.isIntersecting ? start() : stop())).observe(canvas);
+  document.addEventListener('visibilitychange', () => (document.hidden ? stop() : start()));
+}
+
+/* ------------------------------------------------------- the About hero */
+
+{
+  const hero = document.querySelector('.en-hero');
+  const scene = document.querySelector('.en-hero-scene');
+  const figure = $('story-figure');
+
+  /* The palm and the drawn building both answer the pointer, by about ten pixels. */
+  const follow = (host, target) => {
+    if (!host || !target || still.matches) return;
+    let pending = false;
+    host.addEventListener('pointermove', event => {
+      if (pending) return;
+      pending = true;
+      requestAnimationFrame(() => {
+        pending = false;
+        const box = host.getBoundingClientRect();
+        target.style.setProperty('--en-px', ((event.clientX - box.left) / box.width - 0.5).toFixed(3));
+        target.style.setProperty('--en-py', ((event.clientY - box.top) / box.height - 0.5).toFixed(3));
+      });
+    });
+    host.addEventListener('pointerleave', () => {
+      target.style.setProperty('--en-px', 0);
+      target.style.setProperty('--en-py', 0);
+    });
+  };
+
+  follow(hero, scene);
+  follow(figure, figure?.querySelector('.en-building'));
+}
+
+/* ------------------------------------------------ the architecture -------- */
+
+{
+  const arch = $('arch');
+  const nodes = $('arch-nodes');
+  const say = $('arch-say');
+
+  /*
+   * What each layer actually does, written to be true of this system rather than of a
+   * brochure. Where something is not built yet it says so in the sentence.
+   */
+  const LAYERS = {
+    human: 'A palm read by Veyns, bound to the exact transaction it approves. The approval carries '
+      + 'the digest of that transaction, so it cannot be moved onto another one, and it is spent '
+      + 'the moment it is used.',
+    policy: 'Conditions evaluated before anything is signed: how much may move, how many people '
+      + 'must agree, which destinations are permitted, and within which window.',
+    crypto: 'ML-DSA-65 signs every authorisation under its own domain separated context. '
+      + 'ML-KEM-768 and X25519 together establish the keys that seal the vault, so the seal holds '
+      + 'even if one of the two is broken.',
+    hardware: 'Keeping cryptographic operations inside protected hardware rather than in software. '
+      + 'This is the direction of the architecture, not something running today.',
+  };
+  const REST = 'Select a layer to see what it does.';
+
+  if (arch && nodes && say) {
+    const buttons = [...nodes.querySelectorAll('button')];
+    const web = $('arch-web');
+    const core = $('arch-core');
+    const out = arch.querySelector('.en-arch-out');
+    let wires = [];
+
+    /*
+     * The wires are drawn from where things actually are. A fixed viewBox stretched over the
+     * box cannot line up with a column of buttons whose height depends on how their labels
+     * wrapped, so the geometry is measured and the paths rebuilt whenever the layout changes.
+     */
+    const rewire = () => {
+      if (!web || !core || !out || web.clientWidth < 2) return;
+      const box = arch.getBoundingClientRect();
+      const at = el => {
+        const r = el.getBoundingClientRect();
+        return { l: r.left - box.left, r: r.right - box.left, y: r.top - box.top + r.height / 2 };
+      };
+      /*
+       * The mark, not the cell it sits in. The cell is a whole grid column wide, so measuring
+       * it puts the ends of every wire hundreds of pixels to the left of anything visible.
+       */
+      const c = at(core.querySelector('img') || core);
+      const o = at(out);
+
+      web.setAttribute('viewBox', `0 0 ${Math.round(box.width)} ${Math.round(box.height)}`);
+      web.innerHTML = buttons.map(button => {
+        const b = at(button);
+        const bend = (c.l - b.r) * 0.55;
+        return `<path class="en-wire" data-wire="${button.dataset.node}" `
+          + `d="M${b.r.toFixed(1)} ${b.y.toFixed(1)} C${(b.r + bend).toFixed(1)} ${b.y.toFixed(1)} `
+          + `${(c.l - bend).toFixed(1)} ${c.y.toFixed(1)} ${c.l.toFixed(1)} ${c.y.toFixed(1)}"/>`;
+      }).join('')
+        + `<path class="en-wire out" data-wire="out" d="M${c.r.toFixed(1)} ${c.y.toFixed(1)}H${o.l.toFixed(1)}"/>`;
+
+      wires = [...web.querySelectorAll('.en-wire')];
+      paint();
+    };
+
+    let chosen = null;
+
+    /* Applied from `chosen` rather than from the event, so rebuilding the wires keeps the state. */
+    function paint() {
+      arch.toggleAttribute('data-live', !!chosen);
+      for (const wire of wires) {
+        const mine = wire.dataset.wire;
+        wire.classList.toggle('hot', !!chosen && (mine === chosen || mine === 'out'));
+      }
+      for (const button of buttons) {
+        button.setAttribute('aria-pressed', String(button.dataset.node === chosen));
+      }
+      say.textContent = chosen ? LAYERS[chosen] : REST;
+    }
+
+    const light = name => { chosen = name; paint(); };
+
+    /* The layout settles late — fonts, wrapping, the view being shown at all — so it is redrawn
+     * on every frame the driver runs, which is cheap because it only rebuilds when the box moved. */
+    let was = '';
+    drive(arch, () => {
+      const box = arch.getBoundingClientRect();
+      const now = `${Math.round(box.width)}x${Math.round(box.height)}`;
+      if (now === was) return;
+      was = now;
+      rewire();
+    });
+
+    for (const button of buttons) {
+      const { node } = button.dataset;
+      /* Pointer and keyboard reach the same state, and clicking a lit one puts it out again. */
+      button.addEventListener('click', () => {
+        light(button.getAttribute('aria-pressed') === 'true' ? null : node);
+      });
+      button.addEventListener('pointerenter', () => light(node));
+      button.addEventListener('focus', () => light(node));
+    }
+    nodes.addEventListener('pointerleave', () => {
+      if (!buttons.some(b => b.matches(':focus-visible'))) light(null);
+    });
+  }
+}
+
+/* ------------------------------------------------------ the technology */
+
+{
+  const tabs = $('tech-tabs');
+  const panel = $('tech-panel');
+  const title = $('tech-title');
+  const body = $('tech-body');
+  const state = $('tech-state');
+
+  /*
+   * One visual with four states. Each says what is implemented and what is not, because the
+   * page is aimed at people whose job is to check.
+   */
+  const TECH = {
+    human: ['Human', 'Verified human authorization. A palm read by Veyns is bound to the exact '
+      + 'transaction it approves, and the approval is spent the moment it is used.', 'live', 'Implemented'],
+    policy: ['Policy', 'Programmable transaction controls: amount rules, how many people must '
+      + 'approve, permitted destinations and the window in which they apply.', 'live', 'Implemented'],
+    crypto: ['Cryptography', 'ML-DSA-65 for authorisation signatures under a domain separated '
+      + 'context, and ML-KEM-768 alongside X25519 for key establishment.', 'live', 'Implemented'],
+    keys: ['Key protection', 'Keeping private key material inside protected hardware, so an '
+      + 'application asks for a signature rather than receiving the key. Designed for, not yet built.',
+      'planned', 'Designed for'],
+  };
+
+  if (tabs && panel && title && body && state) {
+    const buttons = [...tabs.querySelectorAll('button')];
+    const arts = [...panel.querySelectorAll('.en-art')];
+
+    const pick = (name, moveFocus) => {
+      const [heading, said, mark, label] = TECH[name];
+      for (const button of buttons) {
+        const mine = button.dataset.tech === name;
+        button.setAttribute('aria-selected', String(mine));
+        button.tabIndex = mine ? 0 : -1;
+        if (mine) {
+          panel.setAttribute('aria-labelledby', button.id);
+          if (moveFocus) button.focus();
+        }
+      }
+      /* Re-adding the class restarts the trace, so switching back redraws rather than sitting. */
+      for (const art of arts) art.classList.toggle('on', art.dataset.art === name);
+      title.textContent = heading;
+      body.textContent = said;
+      state.dataset.state = mark;
+      state.textContent = label;
+    };
+
+    for (const button of buttons) button.addEventListener('click', () => pick(button.dataset.tech));
+
+    /* Arrow keys move between tabs, which is what a tablist is expected to do. */
+    tabs.addEventListener('keydown', event => {
+      const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
+      if (!step) return;
+      event.preventDefault();
+      const here = buttons.findIndex(b => b.getAttribute('aria-selected') === 'true');
+      pick(buttons[(here + step + buttons.length) % buttons.length].dataset.tech, true);
+    });
+
+    pick('human');
+  }
+}
+
+/* ------------------------------------------------------- the network */
+
+/*
+ * Deliberately abstract rather than a world map. A map would put nodes in named places and
+ * imply operations there, which is a claim nobody has made.
+ */
+liveCanvas($('globe'), (paint, w, h) => {
+  const points = [];
+  const count = Math.round(clamp(w / 34, 14, 40));
+  for (let i = 0; i < count; i++) {
+    const a = (i / count) * Math.PI * 2 + Math.random() * 0.3;
+    const r = 0.26 + Math.random() * 0.22;
+    points.push({
+      x: w * (0.5 + Math.cos(a) * r * 1.5),
+      y: h * (0.5 + Math.sin(a) * r),
+      phase: Math.random() * Math.PI * 2,
+    });
+  }
+  /* A handful of paths, each carrying one travelling pulse. */
+  const paths = [];
+  for (let i = 0; i < Math.min(9, count); i++) {
+    const a = points[Math.floor(Math.random() * points.length)];
+    const b = points[Math.floor(Math.random() * points.length)];
+    if (a !== b) paths.push({ a, b, t: Math.random(), speed: 0.0016 + Math.random() * 0.0026 });
+  }
+
+  let beat = 0;
+  return () => {
+    beat += 0.012;
+    paint.clearRect(0, 0, w, h);
+
+    paint.lineWidth = 1;
+    for (const { a, b } of paths) {
+      paint.strokeStyle = 'rgba(96, 150, 220, .16)';
+      paint.beginPath();
+      paint.moveTo(a.x, a.y);
+      paint.quadraticCurveTo((a.x + b.x) / 2, (a.y + b.y) / 2 - h * 0.2, b.x, b.y);
+      paint.stroke();
+    }
+
+    for (const p of points) {
+      const lit = 0.3 + 0.3 * Math.sin(beat + p.phase);
+      paint.fillStyle = `rgba(120, 180, 255, ${lit.toFixed(3)})`;
+      paint.beginPath();
+      paint.arc(p.x, p.y, 1.8, 0, Math.PI * 2);
+      paint.fill();
+    }
+
+    for (const path of paths) {
+      path.t += path.speed;
+      if (path.t > 1) path.t = 0;
+      const { a, b, t } = path;
+      const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2 - h * 0.2;
+      const u = 1 - t;
+      const x = u * u * a.x + 2 * u * t * cx + t * t * b.x;
+      const y = u * u * a.y + 2 * u * t * cy + t * t * b.y;
+      paint.fillStyle = 'rgba(150, 210, 255, .9)';
+      paint.beginPath();
+      paint.arc(x, y, 2.2, 0, Math.PI * 2);
+      paint.fill();
+    }
+  };
+});
+
+/* A slower, sparser version of the same idea behind the closing panel. */
+liveCanvas($('cta-net'), (paint, w, h) => {
+  const nodes = [];
+  const count = Math.round(clamp((w * h) / 22000, 10, 30));
+  for (let i = 0; i < count; i++) {
+    nodes.push({
+      x: Math.random() * w,
+      y: Math.random() * h,
+      dx: (Math.random() - 0.5) * 0.16,
+      dy: (Math.random() - 0.5) * 0.16,
+    });
+  }
+  return () => {
+    paint.clearRect(0, 0, w, h);
+    for (const n of nodes) {
+      n.x += n.dx; n.y += n.dy;
+      if (n.x < 0 || n.x > w) n.dx *= -1;
+      if (n.y < 0 || n.y > h) n.dy *= -1;
+    }
+    paint.lineWidth = 1;
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const d = Math.hypot(nodes[i].x - nodes[j].x, nodes[i].y - nodes[j].y);
+        if (d > 160) continue;
+        paint.strokeStyle = `rgba(110, 170, 245, ${(0.16 * (1 - d / 160)).toFixed(3)})`;
+        paint.beginPath();
+        paint.moveTo(nodes[i].x, nodes[i].y);
+        paint.lineTo(nodes[j].x, nodes[j].y);
+        paint.stroke();
+      }
+    }
+    paint.fillStyle = 'rgba(150, 200, 255, .5)';
+    for (const n of nodes) {
+      paint.beginPath();
+      paint.arc(n.x, n.y, 1.6, 0, Math.PI * 2);
+      paint.fill();
+    }
+  };
+});
+
+/* --------------------------------------------------------- the journey */
+
+{
+  const line = $('timeline');
+  const stages = line ? [...line.children] : [];
+  if (line && stages.length) {
+    drive(line, progress => {
+      const run = clamp(progress / 0.8);
+      line.style.setProperty('--en-run', run.toFixed(3));
+      const reached = Math.round(run * stages.length);
+      stages.forEach((stage, i) => stage.classList.toggle('on', i < reached));
+    }, 0.84, 0.5);
+  }
+}
+
+/* ------------------------------------------------------ the demo ask */
+
+{
+  const note = $('about-note');
+  $('about-demo')?.addEventListener('click', () => {
+    if (note) note.textContent = 'Demo booking is not connected yet — nothing has been sent.';
+  });
+}
 /* ----------------------------------------------------------------- go */
 
 window.addEventListener('scroll', onScroll, { passive: true });
@@ -487,18 +862,17 @@ function begin() {
   frame();
 }
 
-const home = document.getElementById('view-signin');
-if (home) {
-  if (!home.hidden) begin();
-  /*
-   * Either direction matters. Arriving, everything has to be measured and started; leaving,
-   * the bar still has to be told, because it is shared with the page being moved to.
-   */
-  new MutationObserver(() => (home.hidden ? frame() : begin()))
-    .observe(home, { attributes: true, attributeFilter: ['hidden'] });
-} else {
-  frame();
+/*
+ * Either direction matters. Arriving, everything has to be measured and started; leaving, the
+ * bar still has to be told, because it is shared with the page being moved to.
+ */
+let started = false;
+for (const page of PAGES) {
+  if (!page.hidden) { begin(); started = true; }
+  new MutationObserver(() => (page.hidden ? frame() : begin()))
+    .observe(page, { attributes: true, attributeFilter: ['hidden'] });
 }
+if (!started) frame();
 
 /* Web fonts land late, and every measurement above depends on the layout they change. */
 window.addEventListener('load', frame);

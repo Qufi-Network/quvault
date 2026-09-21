@@ -98,8 +98,8 @@ body:has(#view-signin:not([hidden])) .field { display: none; }
  * here. Nothing is ever left invisible: .reveal-off is the failsafe the script sets when it
  * cannot observe anything, and it snaps everything into place rather than transitioning it.
  */
-.vx [data-reveal],
-.vx [data-reveal-group] > * {
+:is(.vx, .en) [data-reveal],
+:is(.vx, .en) [data-reveal-group] > * {
   opacity: 0;
   transform: translate3d(0, 22px, 0);
   transition:
@@ -108,20 +108,20 @@ body:has(#view-signin:not([hidden])) .field { display: none; }
     filter var(--vx-slow) var(--vx-spring);
   filter: blur(6px);
 }
-.vx [data-reveal].in,
-.vx [data-reveal-group].in > * {
+:is(.vx, .en) [data-reveal].in,
+:is(.vx, .en) [data-reveal-group].in > * {
   opacity: 1;
   transform: none;
   filter: none;
 }
 /* A group arrives as a group, one just behind the next. */
-.vx [data-reveal-group] > *:nth-child(2) { transition-delay: 80ms; }
-.vx [data-reveal-group] > *:nth-child(3) { transition-delay: 160ms; }
-.vx [data-reveal-group] > *:nth-child(4) { transition-delay: 240ms; }
-.vx [data-reveal-group] > *:nth-child(5) { transition-delay: 320ms; }
+:is(.vx, .en) [data-reveal-group] > *:nth-child(2) { transition-delay: 80ms; }
+:is(.vx, .en) [data-reveal-group] > *:nth-child(3) { transition-delay: 160ms; }
+:is(.vx, .en) [data-reveal-group] > *:nth-child(4) { transition-delay: 240ms; }
+:is(.vx, .en) [data-reveal-group] > *:nth-child(5) { transition-delay: 320ms; }
 
-.reveal-off .vx [data-reveal],
-.reveal-off .vx [data-reveal-group] > * {
+.reveal-off :is(.vx, .en) [data-reveal],
+.reveal-off :is(.vx, .en) [data-reveal-group] > * {
   opacity: 1;
   transform: none;
   filter: none;

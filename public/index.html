@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/veyns.css">
+  <link rel="stylesheet" href="/enterprise.css">
   <script src="/app.js" type="module"></script>
   <script src="/veyns.js" type="module"></script>
 </head>
@@ -671,123 +672,566 @@
     </footer>
   </main>
 
-  <main id="view-about" class="view home about" hidden>
-    <section class="about-hero">
-      <div class="about-hero-copy">
-        <p class="eyebrow spaced">About us</p>
-        <h1>A More <em>Human</em><br>Financial Future</h1>
-        <p class="lede">Veyns is building a safer, more resilient world for digital assets,
-          where advanced cryptography meets something irreplaceable. You.</p>
-        <span class="rule"></span>
-        <p class="eyebrow spaced">Your hand. Your key. A safer tomorrow.</p>
+  <main id="view-about" class="view en" hidden>
+
+    <!-- ============================================== hero (the one dark section) -->
+    <section class="en-hero" id="about-top">
+      <div class="en-hero-bed" aria-hidden="true">
+        <div class="en-hero-scene"></div>
+        <!-- The scan that reads the palm: drawn, so it costs nothing and never stalls. -->
+        <svg class="en-scan" viewBox="0 0 400 480" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id="en-scan-beam" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="rgba(79,157,255,0)"/>
+              <stop offset="45%" stop-color="rgba(120,205,255,.85)"/>
+              <stop offset="55%" stop-color="rgba(120,205,255,.85)"/>
+              <stop offset="100%" stop-color="rgba(79,157,255,0)"/>
+            </linearGradient>
+          </defs>
+          <rect class="en-scan-beam" x="0" y="-40" width="400" height="80" fill="url(#en-scan-beam)"/>
+        </svg>
+        <div class="en-hero-veil"></div>
       </div>
 
-      <div class="about-hero-art">
-        <p class="stack-note">Human<br>verified<br>post<br>quantum</p>
-        <div class="hand-frame about-hand">
-          <img src="/veyns-palm.webp" alt="A hand held up to be scanned" width="1145" height="1374">
-          <img class="vein-glow" src="/veyns-palm.webp" alt="" aria-hidden="true" width="1145" height="1374">
-          <img class="vein-flow" src="/veyns-palm.webp" alt="" aria-hidden="true" width="1145" height="1374">
-          <svg class="palm-q" viewBox="0 0 400 400" aria-hidden="true">
-            <circle class="glow" cx="200" cy="200" r="108" fill="url(#palm-glow)"/>
-          </svg>
+      <div class="en-hero-in">
+        <div class="en-hero-copy">
+          <p class="en-eyebrow light" data-reveal>About Veyns</p>
+          <h1 data-reveal>Security infrastructure<br>for a more trusted<br><em>financial future.</em></h1>
+          <div class="en-hero-lede" data-reveal>
+            <p>Veyns builds institutional security infrastructure for organizations protecting and
+              controlling digital assets.</p>
+            <p>We combine human authorization, programmable policy controls and post quantum
+              cryptography to create a stronger foundation for digital asset operations.</p>
+          </div>
+          <div class="en-hero-cta" data-reveal>
+            <a class="vx-btn solid lg" href="#our-story">Our story<svg class="vx-chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.6 4.8 5.6 5.2-5.6 5.2"/></svg></a>
+            <a class="vx-btn ghost lg" href="#approach">Our approach<svg class="vx-chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.6 4.8 5.6 5.2-5.6 5.2"/></svg></a>
+          </div>
+        </div>
+
+        <ul class="en-hero-tags" data-reveal-group>
+          <li>People</li>
+          <li>Technology</li>
+          <li>Trust</li>
+          <li>A more secure tomorrow</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ===================================================== our mission -->
+    <section class="en-sec" id="mission">
+      <div class="en-wrap">
+        <div class="en-split">
+          <div>
+            <p class="en-eyebrow" data-reveal>Our mission</p>
+            <h2 data-reveal>Enable a safer,<br>more open <em>financial system.</em></h2>
+          </div>
+          <div class="en-prose" data-reveal>
+            <p>Veyns exists to help institutions protect, authorize and manage digital value with
+              confidence.</p>
+            <p>As computing power evolves, today's security assumptions will not remain sufficient
+              forever. Veyns brings together human authorization, programmable policy controls and
+              post quantum cryptography to create a stronger foundation for digital asset
+              operations.</p>
+          </div>
+        </div>
+
+        <ul class="en-pillars" data-reveal-group>
+          <li>
+            <span class="en-ico"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 4.6 25 8v7.6c0 5.4-3.5 9.3-9 10.8-5.5-1.5-9-5.4-9-10.8V8z"/><path d="m11.8 15.8 2.8 2.8 5.6-6"/></svg></span>
+            <span class="en-num">01</span>
+            <h3>Protect</h3>
+            <p>Keep critical digital assets behind cryptography chosen for the decade ahead.</p>
+            <i class="en-underline"></i>
+          </li>
+          <li>
+            <span class="en-ico"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 5.4a10 10 0 0 0-10 10v3.4"/><path d="M16 10.2a5.2 5.2 0 0 0-5.2 5.2v5.2"/><path d="M16 14.4v6.6"/><path d="M21.2 15.4a5.2 5.2 0 0 0-5.2-5.2"/><path d="M26 15.4a10 10 0 0 0-3.9-7.9"/></svg></span>
+            <span class="en-num">02</span>
+            <h3>Authorize</h3>
+            <p>Human verification and multi party approval before value is allowed to move.</p>
+            <i class="en-underline"></i>
+          </li>
+          <li>
+            <span class="en-ico"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M6 10.4h20M6 16h20M6 21.6h20"/><circle cx="12" cy="10.4" r="2.6"/><circle cx="20.5" cy="16" r="2.6"/><circle cx="14.5" cy="21.6" r="2.6"/></svg></span>
+            <span class="en-num">03</span>
+            <h3>Control</h3>
+            <p>Programmable policies, permissions and transaction conditions.</p>
+            <i class="en-underline"></i>
+          </li>
+          <li>
+            <span class="en-ico"><svg viewBox="0 0 32 32" aria-hidden="true"><rect x="7.5" y="5" width="17" height="22" rx="2.6"/><path d="M11.5 11h9M11.5 15.5h9M11.5 20h5"/></svg></span>
+            <span class="en-num">04</span>
+            <h3>Prove</h3>
+            <p>A structured record of what was authorized, by whom and under which policy.</p>
+            <i class="en-underline"></i>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ======================================================= our story -->
+    <section class="en-sec tint" id="our-story">
+      <div class="en-wrap">
+        <div class="en-split story">
+          <div>
+            <p class="en-eyebrow" data-reveal>Our story</p>
+            <h2 data-reveal>Built by experts.<br>Driven by a <em>bigger purpose.</em></h2>
+            <div class="en-prose" data-reveal>
+              <p>Veyns was created around a simple belief: digital assets can only reach their full
+                potential when the infrastructure protecting them is designed for the world ahead.</p>
+              <p>The company brings together expertise across security, cryptography, digital assets
+                and financial infrastructure.</p>
+              <p>We are building for organizations that cannot afford uncertainty about who can
+                authorize value, how transactions are controlled and where cryptographic trust
+                resides.</p>
+            </div>
+            <a class="vx-btn solid" href="#journey" data-reveal>Our journey<svg class="vx-chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.6 4.8 5.6 5.2-5.6 5.2"/></svg></a>
+          </div>
+
+          <!--
+            The reference puts a photograph of an enterprise environment here. There is no such
+            photograph in this project, and inventing one is not on the table, so the slot is
+            filled by a drawn one: a building section with the mark on the wall, lit floor by
+            floor. It is marked up as a figure so it can be swapped for the real photograph
+            without touching anything around it.
+          -->
+          <figure class="en-figure" id="story-figure" data-reveal>
+            <svg class="en-building" viewBox="0 0 640 460" role="img" aria-labelledby="story-figure-title">
+              <title id="story-figure-title">A drawn section through an enterprise floor, lit level by level</title>
+              <defs>
+                <linearGradient id="en-sky" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stop-color="#0b1b30"/>
+                  <stop offset="100%" stop-color="#16324f"/>
+                </linearGradient>
+              </defs>
+              <rect width="640" height="460" fill="url(#en-sky)"/>
+              <g class="en-city">
+                <rect x="26" y="196" width="54" height="264"/>
+                <rect x="94" y="152" width="40" height="308"/>
+                <rect x="148" y="224" width="62" height="236"/>
+                <rect x="470" y="166" width="48" height="294"/>
+                <rect x="530" y="212" width="38" height="248"/>
+                <rect x="580" y="140" width="44" height="320"/>
+              </g>
+              <g class="en-windows"></g>
+              <g class="en-floors">
+                <rect class="en-floor" x="224" y="104" width="222" height="86" rx="3"/>
+                <rect class="en-floor" x="224" y="200" width="222" height="86" rx="3"/>
+                <rect class="en-floor" x="224" y="296" width="222" height="86" rx="3"/>
+                <rect class="en-floor" x="224" y="392" width="222" height="68" rx="3"/>
+              </g>
+              <g class="en-mullions">
+                <path d="M280 104v356M335 104v356M390 104v356"/>
+              </g>
+              <image class="en-wall-mark" href="/veyns-lockup-white.png" x="252" y="322" width="166" height="34" preserveAspectRatio="xMidYMid meet"/>
+            </svg>
+            <figcaption>Building trust across markets</figcaption>
+          </figure>
         </div>
       </div>
     </section>
 
-    <section class="about-purpose">
-      <div>
-        <p class="eyebrow ruled">Our purpose</p>
-        <h2>Protecting What<br>Moves Your World</h2>
-      </div>
-      <p class="lede">Veyns exists to give individuals, institutions and innovators complete
-        confidence in their digital assets. By combining biometric verification with post-quantum
-        cryptography, we ensure your coins, tokens and data move only when you are there to
-        authorise them.</p>
-    </section>
+    <!-- ==================================================== our approach -->
+    <section class="en-sec" id="approach">
+      <div class="en-wrap">
+        <div class="en-split">
+          <div>
+            <p class="en-eyebrow" data-reveal>Our approach</p>
+            <h2 data-reveal>Where people,<br>policy and technology<br><em>work as one.</em></h2>
+          </div>
+          <div class="en-prose" data-reveal>
+            <p>Security is not simply a cryptographic problem. It is the combination of people,
+              processes and technology.</p>
+            <p>Veyns connects human authorization, programmable policy controls and post quantum
+              cryptography into a single architecture. Select a layer to see what it does.</p>
+          </div>
+        </div>
 
-    <section class="home-features about-features">
-      <article>
-        <span class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 19 6v6c0 4.2-2.8 7.3-7 8.5-4.2-1.2-7-4.3-7-8.5V6z"/><path d="m9 12 2.2 2.2L15.5 10"/></svg></span>
-        <h2>Built for a safer future</h2>
-        <p>Designed for today.<br>Ready for tomorrow.</p>
-      </article>
-      <article>
-        <span class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4a8 8 0 0 0-8 8v3"/><path d="M12 8a4 4 0 0 0-4 4v4"/><path d="M12 12v5"/><path d="M16 12a4 4 0 0 0-4-4"/><path d="M20 12a8 8 0 0 0-3-6.2"/></svg></span>
-        <h2>Human at the core</h2>
-        <p>Your hand is the key.<br>No one else can move your assets.</p>
-      </article>
-      <article>
-        <span class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3.6 8 4.2-8 4.2-8-4.2z"/><path d="m4 12 8 4.2 8-4.2"/><path d="m4 16.2 8 4.2 8-4.2"/></svg></span>
-        <h2>Advanced by design</h2>
-        <p>Post-quantum security<br>from the ground up.</p>
-      </article>
-      <article>
-        <span class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.2"/><path d="M3.8 12h16.4"/><path d="M12 3.8c2.2 2.4 3.3 5.2 3.3 8.2s-1.1 5.8-3.3 8.2c-2.2-2.4-3.3-5.2-3.3-8.2s1.1-5.8 3.3-8.2z"/></svg></span>
-        <h2>Open to a better world</h2>
-        <p>Enabling a more secure<br>and inclusive financial future.</p>
-      </article>
-    </section>
+        <!--
+          The architecture, and it is genuinely interactive: each input is a button, the path it
+          owns lights when it is chosen, and the panel underneath says what that layer actually
+          does. Keyboard reaches all of it, and the panel is a live region so the explanation is
+          announced rather than only drawn.
+        -->
+        <div class="en-arch" id="arch">
+          <ul class="en-arch-nodes" id="arch-nodes">
+            <li><button type="button" data-node="human" aria-pressed="false">
+              <span class="en-ico sm"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 5.4a10 10 0 0 0-10 10v3.4"/><path d="M16 10.2a5.2 5.2 0 0 0-5.2 5.2v5.2"/><path d="M16 14.4v6.6"/><path d="M21.2 15.4a5.2 5.2 0 0 0-5.2-5.2"/><path d="M26 15.4a10 10 0 0 0-3.9-7.9"/></svg></span>
+              Human authorization</button></li>
+            <li><button type="button" data-node="policy" aria-pressed="false">
+              <span class="en-ico sm"><svg viewBox="0 0 32 32" aria-hidden="true"><rect x="7.5" y="5" width="17" height="22" rx="2.6"/><path d="M11.5 11.5h9M11.5 16h9M11.5 20.5h5"/></svg></span>
+              Policy enforcement</button></li>
+            <li><button type="button" data-node="crypto" aria-pressed="false">
+              <span class="en-ico sm"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="m16 5 9.5 5.5v11L16 27l-9.5-5.5v-11z"/><path d="M16 5v22M6.5 10.5l19 11M25.5 10.5l-19 11"/></svg></span>
+              Post quantum cryptography</button></li>
+            <li><button type="button" data-node="hardware" aria-pressed="false">
+              <span class="en-ico sm"><svg viewBox="0 0 32 32" aria-hidden="true"><rect x="9" y="9" width="14" height="14" rx="2"/><path d="M13 5v4M19 5v4M13 23v4M19 23v4M5 13h4M5 19h4M23 13h4M23 19h4"/></svg></span>
+              Key protection</button></li>
+          </ul>
 
-    <section class="about-vision">
-      <div class="about-vision-copy">
-        <p class="eyebrow ruled light">Our vision</p>
-        <h2>A World Where Value<br>Is Truly Yours</h2>
-        <p>We envision a global financial system that is more secure, more human and more open.
-          Where advanced technology protects freedom, opportunity and trust for everyone.</p>
-      </div>
-      <ul class="about-vision-list">
-        <li>People</li>
-        <li>Technology</li>
-        <li>Trust</li>
-        <li>A brighter tomorrow</li>
-      </ul>
-    </section>
+          <!--
+            The wires are drawn from the real positions of the buttons and the core, measured in
+            the page rather than guessed in a viewBox. A stretched viewBox cannot line up with a
+            column of buttons whose height depends on how the text wrapped.
+          -->
+          <svg class="en-arch-web" id="arch-web" aria-hidden="true"></svg>
 
-    <section class="about-stats">
-      <div><b>100%</b><small>Human verified</small></div>
-      <div><b>Post quantum</b><small>Security</small></div>
-      <div><b>Global</b><small>Use cases</small></div>
-      <div><b>A safer</b><small>Tomorrow</small></div>
-    </section>
+          <div class="en-arch-core" id="arch-core">
+            <span class="en-core-glow" aria-hidden="true"></span>
+            <img src="/veyns-symbol-white.png" alt="Veyns" width="220" height="146">
+          </div>
 
-    <section class="about-story">
-      <div>
-        <p class="eyebrow ruled">Our story</p>
-        <h2>Innovation with<br>A Human Touch</h2>
-        <p class="lede">Veyns was founded by a team of technologists, security experts and
-          industry leaders who believe that the future of finance should be both highly advanced
-          and deeply human. We combine world-class cryptography with biometric verification to
-          create a new standard for asset protection.</p>
-        <div class="hero-cta">
-          <button class="btn brand lg" id="about-join" type="button" disabled>
-            Join the Journey
-            <svg class="chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.5 4.5 6 5.5-6 5.5"/></svg>
-          </button>
-          <a class="link go" href="#contact">
-            Contact Us
-            <svg class="chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.5 4.5 6 5.5-6 5.5"/></svg>
-          </a>
+          <p class="en-arch-out"><span class="en-ico sm"><svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="11"/><path d="M5 16h22M16 5c3 3.4 4.6 7 4.6 11S19 24.6 16 27c-3-2.4-4.6-6-4.6-11S13 8.4 16 5z"/></svg></span>A more secure financial future</p>
+
+          <p class="en-arch-say" id="arch-say" role="status">Select a layer to see what it does.</p>
         </div>
       </div>
-      <figure class="about-story-art">
-        <p class="stack-note light">Real security<br>creates<br>real freedom</p>
-        <div class="about-story-mark">
-          <img class="about-veyns-mark" src="/veyns-lockup-black.png" alt="Veyns" width="480" height="99">
-          <span>
-            <small>Human secures value</small>
-          </span>
+    </section>
+    <!-- ================================================== our technology -->
+    <section class="en-sec tint" id="technology">
+      <div class="en-wrap">
+        <div class="en-split">
+          <div>
+            <p class="en-eyebrow" data-reveal>Our technology</p>
+            <h2 data-reveal>From trust<br>to <em>transaction.</em></h2>
+          </div>
+          <div class="en-prose" data-reveal>
+            <p>Four things have to agree before value moves. Choose one to see how it works and
+              what is running today.</p>
+          </div>
         </div>
-      </figure>
+
+        <!--
+          One visual, four states, rather than four pictures. The panel says plainly which parts
+          are implemented and which are architecture, because a technology page that overstates
+          is a technology page a security team stops reading.
+        -->
+        <div class="en-tech" id="tech">
+          <ul class="en-tech-tabs" id="tech-tabs" role="tablist" aria-label="Veyns technology">
+            <li><button type="button" role="tab" id="tech-tab-human" aria-controls="tech-panel" aria-selected="true" data-tech="human"><span class="en-num">01</span>Human</button></li>
+            <li><button type="button" role="tab" id="tech-tab-policy" aria-controls="tech-panel" aria-selected="false" tabindex="-1" data-tech="policy"><span class="en-num">02</span>Policy</button></li>
+            <li><button type="button" role="tab" id="tech-tab-crypto" aria-controls="tech-panel" aria-selected="false" tabindex="-1" data-tech="crypto"><span class="en-num">03</span>Cryptography</button></li>
+            <li><button type="button" role="tab" id="tech-tab-keys" aria-controls="tech-panel" aria-selected="false" tabindex="-1" data-tech="keys"><span class="en-num">04</span>Key protection</button></li>
+          </ul>
+
+          <div class="en-tech-stage" id="tech-panel" role="tabpanel" aria-labelledby="tech-tab-human">
+            <svg class="en-tech-art" viewBox="0 0 420 300" aria-hidden="true">
+              <g class="en-art" data-art="human">
+                <circle class="en-ring" cx="210" cy="150" r="86"/>
+                <circle class="en-ring" cx="210" cy="150" r="62"/>
+                <path class="en-draw" d="M210 104a46 46 0 0 0-46 46v16"/>
+                <path class="en-draw" d="M210 124a26 26 0 0 0-26 26v24"/>
+                <path class="en-draw" d="M210 142v34"/>
+                <path class="en-draw" d="M236 150a26 26 0 0 0-26-26"/>
+                <path class="en-draw" d="M256 150a46 46 0 0 0-18-36"/>
+              </g>
+              <g class="en-art" data-art="policy">
+                <rect class="en-draw" x="150" y="52" width="120" height="34" rx="6"/>
+                <path class="en-draw" d="M210 86v26M210 112H126v24M210 112h84v24"/>
+                <rect class="en-draw" x="70" y="136" width="112" height="34" rx="6"/>
+                <rect class="en-draw" x="238" y="136" width="112" height="34" rx="6"/>
+                <path class="en-draw" d="M126 170v30h84v-30"/>
+                <rect class="en-draw" x="150" y="200" width="120" height="34" rx="6"/>
+              </g>
+              <g class="en-art" data-art="crypto">
+                <path class="en-draw" d="m210 58 78 45v90l-78 45-78-45v-90z"/>
+                <path class="en-draw" d="M210 58v180M132 103l156 90M288 103l-156 90"/>
+                <circle class="en-node" cx="210" cy="58" r="5"/><circle class="en-node" cx="288" cy="103" r="5"/>
+                <circle class="en-node" cx="288" cy="193" r="5"/><circle class="en-node" cx="210" cy="238" r="5"/>
+                <circle class="en-node" cx="132" cy="193" r="5"/><circle class="en-node" cx="132" cy="103" r="5"/>
+              </g>
+              <g class="en-art" data-art="keys">
+                <rect class="en-draw" x="120" y="96" width="180" height="120" rx="10"/>
+                <rect class="en-draw" x="146" y="126" width="128" height="62" rx="6"/>
+                <path class="en-draw" d="M120 126H92M120 156H92M120 186H92M300 126h28M300 156h28M300 186h28"/>
+                <path class="en-draw" d="M190 156h40M210 142v28"/>
+              </g>
+            </svg>
+
+            <div class="en-tech-said">
+              <h3 id="tech-title">Human</h3>
+              <p id="tech-body">Verified human authorization. A palm read by Veyns is bound to the
+                exact transaction it approves, and the approval is spent the moment it is used.</p>
+              <p class="en-state" id="tech-state" data-state="live">Implemented</p>
+            </div>
+          </div>
+        </div>
+      </div>
     </section>
 
-    <footer class="home-foot" id="about-contact">
-      <p class="home-foot-line">A safer<br>financial future<br>for a brighter tomorrow</p>
-      <div class="home-foot-mark">
-        <img class="about-veyns-mark" src="/veyns-lockup-black.png" alt="Veyns" width="480" height="99">
-          <span>
-            <small>Built for a more secure tomorrow</small>
-          </span>
+    <!-- ================================================ global presence -->
+    <section class="en-sec" id="global">
+      <div class="en-wrap">
+        <div class="en-split">
+          <div>
+            <p class="en-eyebrow" data-reveal>Global system</p>
+            <h2 data-reveal>Built for a<br><em>global financial system.</em></h2>
+          </div>
+          <div class="en-prose" data-reveal>
+            <p>Digital assets operate across borders, networks and institutions. Veyns is designed
+              around the infrastructure required to protect and control digital value wherever it
+              moves.</p>
+          </div>
+        </div>
+
+        <!--
+          A contained dark panel on an otherwise white page. The network is drawn rather than
+          photographed, and deliberately abstract: it is not a world map, because a map would
+          imply operations in places that have not been substantiated.
+        -->
+        <div class="en-globe-panel" data-reveal>
+          <canvas class="en-globe" id="globe" aria-hidden="true"></canvas>
+          <p class="en-globe-note">An abstract network. Node positions are illustrative and do not
+            represent operations in any particular market.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================== our belief -->
+    <section class="en-sec tint" id="belief">
+      <div class="en-wrap narrow">
+        <p class="en-eyebrow centred" data-reveal>Our belief</p>
+        <h2 class="en-statement" data-reveal>Technology is only as strong<br>as the <em>trust behind it.</em></h2>
+        <p class="en-prose centred" data-reveal>We believe security should be verifiable, transparent
+          and governed by design. By combining people, policy and cryptography, Veyns helps
+          organizations create a stronger foundation for the future of digital finance.</p>
+        <blockquote class="en-quote" data-reveal>
+          Give organizations the control they need to move digital value with confidence.
+        </blockquote>
+      </div>
+    </section>
+
+    <!-- ======================================================= values -->
+    <section class="en-sec" id="values">
+      <div class="en-wrap">
+        <div class="en-split">
+          <div>
+            <p class="en-eyebrow" data-reveal>Our values</p>
+            <h2 data-reveal>Principles that<br>guide <em>everything we do.</em></h2>
+          </div>
+        </div>
+        <ul class="en-values" data-reveal-group>
+          <li>
+            <span class="en-ico"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 4.6 25 8v7.6c0 5.4-3.5 9.3-9 10.8-5.5-1.5-9-5.4-9-10.8V8z"/><path d="M16 12v8M16 9.4v.2"/></svg></span>
+            <h3>Security first</h3><p>Design for resilience and long term protection.</p><i class="en-underline"></i>
+          </li>
+          <li>
+            <span class="en-ico"><svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="12" r="4.4"/><path d="M7.4 26c0-4.6 3.9-7.6 8.6-7.6s8.6 3 8.6 7.6"/></svg></span>
+            <h3>Human centred</h3><p>People remain part of the trusted financial system.</p><i class="en-underline"></i>
+          </li>
+          <li>
+            <span class="en-ico"><svg viewBox="0 0 32 32" aria-hidden="true"><rect x="5" y="13" width="22" height="14" rx="2.4"/><path d="M16 5 27 13H5z"/><path d="M10.6 18v5M16 18v5M21.4 18v5"/></svg></span>
+            <h3>Built for institutions</h3><p>Solve real problems for serious organizations.</p><i class="en-underline"></i>
+          </li>
+          <li>
+            <span class="en-ico"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M6 24 14 16l5 5 7-9"/><path d="M6 6v20h20"/><circle cx="14" cy="16" r="2"/></svg></span>
+            <h3>Technical precision</h3><p>Make security understandable and verifiable.</p><i class="en-underline"></i>
+          </li>
+          <li>
+            <span class="en-ico"><svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="11"/><path d="M16 9.4V16l4.6 3"/></svg></span>
+            <h3>Long term thinking</h3><p>Build infrastructure for what comes next.</p><i class="en-underline"></i>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ====================================================== journey -->
+    <section class="en-sec tint" id="journey">
+      <div class="en-wrap">
+        <div class="en-split">
+          <div>
+            <p class="en-eyebrow" data-reveal>Our journey</p>
+            <h2 data-reveal>Building for<br>a more <em>resilient tomorrow.</em></h2>
+          </div>
+          <div class="en-prose" data-reveal>
+            <!--
+              The reference dates this timeline year by year. None of those dates are recorded
+              anywhere in this project, so the stages are named rather than dated — which is what
+              the brief itself asks for when the history is not verified.
+            -->
+            <p>The stages below describe how the architecture was built, not when. Dates are not
+              published because they are not recorded.</p>
+          </div>
+        </div>
+
+        <ol class="en-timeline" id="timeline">
+          <li>
+            <span class="en-stage-dot"></span>
+            <b>Vision</b>
+            <p>A security layer for digital assets that puts a verified person at the point where
+              value moves.</p>
+          </li>
+          <li>
+            <span class="en-stage-dot"></span>
+            <b>Architecture</b>
+            <p>Human authorization bound to the exact transaction, policy ahead of signing, and
+              post quantum primitives from the start.</p>
+          </li>
+          <li>
+            <span class="en-stage-dot"></span>
+            <b>Development</b>
+            <p>Palm approvals, programmable amount rules, multi party quorum and on chain multisig
+              built and tested end to end.</p>
+          </li>
+          <li>
+            <span class="en-stage-dot"></span>
+            <b>Deployment</b>
+            <p>Running on Bitcoin testnet, with further networks and hardware backed key protection
+              next.</p>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- =============================================== enterprise impact -->
+    <section class="en-sec" id="impact">
+      <div class="en-wrap">
+        <div class="en-split">
+          <div>
+            <p class="en-eyebrow" data-reveal>What we build</p>
+            <h2 data-reveal>Capabilities, not<br><em>claims.</em></h2>
+          </div>
+          <div class="en-prose" data-reveal>
+            <!--
+              The reference carries four statistics here. None of them exist anywhere in this
+              project, and publishing a number nobody can stand behind is the fastest way to lose
+              a technical reader. The capabilities are stated instead.
+            -->
+            <p>We publish what the system does rather than numbers about who uses it. Each
+              capability below says plainly whether it is running today or designed for.</p>
+          </div>
+        </div>
+
+        <ul class="en-caps" data-reveal-group>
+          <li>
+            <h3>Institutional security</h3>
+            <p>Every approval is signed with ML-DSA-65 under its own domain separated context and
+              recorded against the operation it authorized.</p>
+            <span class="en-state" data-state="live">Implemented</span>
+          </li>
+          <li>
+            <h3>Digital asset control</h3>
+            <p>Amount rules, multi party quorum, single use approvals and on chain multisig with
+              lexicographically ordered keys.</p>
+            <span class="en-state" data-state="live">Implemented</span>
+          </li>
+          <li>
+            <h3>Post quantum readiness</h3>
+            <p>ML-KEM-768 alongside X25519 for key establishment, so the seal holds even if one of
+              the two is broken.</p>
+            <span class="en-state" data-state="live">Implemented</span>
+          </li>
+          <li>
+            <h3>Hardware backed protection</h3>
+            <p>Keeping cryptographic operations inside protected hardware rather than in software.</p>
+            <span class="en-state" data-state="planned">Designed for</span>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ================================================= closing vision -->
+    <section class="en-sec pale" id="vision">
+      <div class="en-wrap">
+        <div class="en-split">
+          <div>
+            <p class="en-eyebrow" data-reveal>Our vision</p>
+            <h2 data-reveal>A more open,<br>resilient and<br><em>trusted financial world.</em></h2>
+          </div>
+          <div class="en-prose" data-reveal>
+            <p>Digital assets can create a more efficient, transparent and accessible financial
+              system.</p>
+            <p>Veyns provides the security infrastructure required to make that future possible.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================== final cta -->
+    <section class="en-sec" id="about-contact">
+      <div class="en-wrap">
+        <div class="en-cta" data-reveal>
+          <canvas class="en-cta-net" id="cta-net" aria-hidden="true"></canvas>
+          <div class="en-cta-copy">
+            <p class="en-eyebrow light">Let's build together</p>
+            <h2>Build a more<br><em>secure financial future.</em></h2>
+            <p class="en-cta-lede">Talk to the Veyns team about institutional security, digital
+              assets and the future of cryptographic infrastructure.</p>
+            <div class="en-cta-row">
+              <button class="vx-btn solid lg" id="about-demo" type="button">Book a demo<svg class="vx-chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.6 4.8 5.6 5.2-5.6 5.2"/></svg></button>
+              <button class="vx-btn ghost lg" id="about-join" type="button" disabled>Enter the vault</button>
+            </div>
+            <p class="en-cta-note" id="about-note" role="status"></p>
+          </div>
+          <ul class="en-cta-tags">
+            <li>Institutions</li><li>Ideas</li><li>Infrastructure</li><li>A brighter tomorrow</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================================================= footer -->
+    <footer class="en-foot">
+      <div class="en-wrap">
+        <div class="en-foot-top">
+          <div class="en-foot-brand">
+            <img src="/veyns-lockup-black.png" width="480" height="99" alt="Veyns">
+            <p>Security infrastructure for a more trusted financial future.</p>
+            <ul class="en-social">
+              <li><a href="#about-top" aria-label="LinkedIn"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3.2" y="3.2" width="13.6" height="13.6" rx="2.4"/><path d="M6.8 8.6v5M6.8 6.6v.1M10.2 13.6v-5M13.4 13.6v-2.8a2.2 2.2 0 0 0-3.2-1.9"/></svg></a></li>
+              <li><a href="#about-top" aria-label="X"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 4 12 12M16 4 4 16"/></svg></a></li>
+              <li><a href="#about-contact" aria-label="Contact"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.8" y="4.6" width="14.4" height="10.8" rx="2"/><path d="m3.4 6 6.6 4.8L16.6 6"/></svg></a></li>
+            </ul>
+          </div>
+
+          <div class="en-foot-cols">
+            <div>
+              <h3>Product</h3>
+              <a href="#technology">Quantum Vault</a>
+              <a href="#approach">Policy engine</a>
+              <a href="#technology">Key protection</a>
+              <a href="#technology">Technology</a>
+            </div>
+            <div>
+              <h3>Solutions</h3>
+              <a href="#home">Financial institutions</a>
+              <a href="#home">Custody</a>
+              <a href="#home">Asset management</a>
+              <a href="#home">Treasury</a>
+              <a href="#home">Tokenized assets</a>
+            </div>
+            <div>
+              <h3>Company</h3>
+              <a href="#about-top">About</a>
+              <a href="#our-story">Our story</a>
+              <a href="#values">Values</a>
+              <a href="#about-contact">Contact</a>
+            </div>
+            <div>
+              <h3>Resources</h3>
+              <a href="#approach">Architecture</a>
+              <a href="#technology">Cryptography</a>
+              <a href="#journey">Journey</a>
+              <a href="#impact">Capabilities</a>
+            </div>
+          </div>
+
+          <p class="en-foot-tags">
+            People<br>Policy<br>Cryptography<br>A brighter tomorrow
+            <span class="en-foot-rule"></span>
+          </p>
+        </div>
+
+        <div class="en-foot-bottom">
+          <small>&copy; 2026 Veyns. All rights reserved.</small>
+          <nav class="en-foot-legal">
+            <a href="#about-contact">Privacy</a>
+            <a href="#about-contact">Terms</a>
+            <a href="#approach">Security</a>
+            <a href="#about-contact">Responsible disclosure</a>
+          </nav>
+          <span class="en-status"><i></i>Operational</span>
+        </div>
       </div>
     </footer>
   </main>
