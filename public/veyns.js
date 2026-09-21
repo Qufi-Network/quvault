@@ -19,10 +19,10 @@ const clamp = (v, lo = 0, hi = 1) => (v < lo ? lo : v > hi ? hi : v);
 const still = window.matchMedia('(prefers-reduced-motion: reduce)');
 
 /*
- * The marketing surface is three pages sharing one document and one bar. All three are the
- * same light enterprise page: one dark hero, a white body, contained dark panels where
- * something is genuinely a system. All are hidden until the application decides which to put
- * up, so nothing here can be measured before that happens.
+ * The marketing surface is four pages sharing one document and one bar. All four are the
+ * same light enterprise page: a dark header, a white body, and contained dark panels only
+ * where something is genuinely a system. All are hidden until the application decides which
+ * to put up, so nothing here can be measured before that happens.
  */
 const PAGES = ['view-signin', 'view-about', 'view-technology', 'view-pricing'].map($).filter(Boolean);
 const showing = () => PAGES.find(page => !page.hidden) || null;
@@ -51,12 +51,6 @@ function frame() {
 }
 
 function onScroll() {
-  /*
-   * Arrival runs here, on the event itself, and not inside the frame below. Everything else on
-   * the page is decoration and can wait for a frame that may never be scheduled; whether the
-   * words are visible cannot. It costs a bounding box per element still waiting, and that list
-   * empties as the reader goes down the page.
-   */
   if (queued) return;
   queued = true;
   requestAnimationFrame(frame);
@@ -370,9 +364,7 @@ function liveCanvas(canvas, setup) {
 {
   const hero = document.querySelector('.en-hero');
   const scene = document.querySelector('.en-hero-scene');
-  const figure = $('story-figure');
-
-  /* The palm and the drawn building both answer the pointer, by about ten pixels. */
+  /* The palm answers the pointer, by about ten pixels. */
   const follow = (host, target) => {
     if (!host || !target || still.matches) return;
     let pending = false;
@@ -393,7 +385,6 @@ function liveCanvas(canvas, setup) {
   };
 
   follow(hero, scene);
-  follow(figure, figure?.querySelector('.en-building'));
 }
 
 /* ------------------------------------------------ the architecture -------- */
@@ -1231,6 +1222,20 @@ for (const [group, mark] of [
 
 slowField($('price-net'));
 slowField($('price-cta-net'));
+/* ------------------------------------------------------- the collage */
+
+{
+  const collage = $('collage');
+  if (collage && !still.matches) {
+    /*
+     * The panels drift against each other as the page moves — each one a different distance,
+     * so the column reads as depth rather than as a block sliding past. A few pixels only.
+     */
+    drive(collage, progress => {
+      collage.style.setProperty('--drift', (progress * 2 - 1).toFixed(3));
+    }, 1, 0);
+  }
+}
 /* ----------------------------------------------------------------- go */
 
 window.addEventListener('scroll', onScroll, { passive: true });

@@ -1896,3 +1896,61 @@ body:has(:is(#view-signin, #view-about, #view-technology):not([hidden])) { backg
   .price-toggle { width: 100%; }
   .price-toggle button { flex: 1; justify-content: center; padding: 0 12px; }
 }
+
+/* ============================== the staggered collage ================== */
+
+/*
+ * Portrait panels at different heights, offset column against column. It is the arrangement
+ * the reference uses on its about page, and the shape photographs will take here when there
+ * are photographs — each panel is a figure with its own aspect, so a real image drops into
+ * any of them and nothing around it moves.
+ */
+.en-collage {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: clamp(10px, 1.2vw, 16px);
+  align-items: start;
+}
+.en-col { display: grid; gap: clamp(10px, 1.2vw, 16px); }
+.en-col[data-depth="2"] { margin-top: clamp(26px, 4vw, 54px); }
+.en-col[data-depth="3"] { margin-top: clamp(10px, 1.6vw, 22px); }
+
+.en-plate {
+  position: relative;
+  display: grid;
+  place-items: end start;
+  padding: 18px;
+  border-radius: 20px;
+  overflow: hidden;
+  background:
+    repeating-linear-gradient(var(--plate-angle, 130deg), rgba(255, 255, 255, .42) 0 1px, transparent 1px 14px),
+    linear-gradient(var(--plate-angle, 130deg), var(--plate-a, #dbe7fa), var(--plate-b, #f1f5fd));
+  /* they drift against each other as the page moves, a few pixels each */
+  transform: translate3d(0, calc(var(--drift, 0) * var(--plate-pull, 10px)), 0);
+  transition: transform 700ms cubic-bezier(.4, 0, .2, 1);
+}
+.en-plate.tall { aspect-ratio: 3 / 5; }
+.en-plate.mid { aspect-ratio: 3 / 4; }
+.en-plate.short { aspect-ratio: 4 / 3.4; }
+.en-plate.mark { aspect-ratio: 1 / 1; place-items: center; background: var(--en-dark); }
+.en-plate.mark img { width: 46%; height: auto; }
+
+.en-plate span {
+  font: 500 11px/1 var(--sans);
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--en-ink-2);
+}
+
+.en-plate[data-plate="1"] { --plate-angle: 130deg; --plate-a: #d7e5fa; --plate-b: #f2f6fe; --plate-pull: 14px; }
+.en-plate[data-plate="2"] { --plate-angle: 55deg;  --plate-a: #e2ecf8; --plate-b: #f6f9fe; --plate-pull: 8px; }
+.en-plate[data-plate="4"] { --plate-angle: 150deg; --plate-a: #dde8fb; --plate-b: #f3f7fe; --plate-pull: 18px; }
+.en-plate[data-plate="5"] { --plate-angle: 30deg;  --plate-a: #e0eaf8; --plate-b: #f5f8fe; --plate-pull: 6px; }
+.en-plate[data-plate="6"] { --plate-angle: 110deg; --plate-a: #d4e3fb; --plate-b: #f0f5fe; --plate-pull: 20px; }
+
+@media (max-width: 760px) {
+  .en-collage { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .en-col[data-depth="3"] { grid-column: 1 / -1; grid-auto-flow: column; }
+  .en-plate { transform: none; }
+}
+@media (prefers-reduced-motion: reduce) { .en-plate { transform: none; } }

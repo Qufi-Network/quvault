@@ -751,44 +751,27 @@
           </div>
 
           <!--
-            The reference puts a photograph of an enterprise environment here. There is no such
-            photograph in this project, and inventing one is not on the table, so the slot is
-            filled by a drawn one: a building section with the mark on the wall, lit floor by
-            floor. It is marked up as a figure so it can be swapped for the real photograph
-            without touching anything around it.
+            A staggered column of portrait panels, which is what the reference does here and
+            the shape the photographs will take when there are photographs. Each one is a
+            figure with its own aspect, so a real image drops into any of them and the
+            arrangement holds. They drift against each other as the page moves.
           -->
-          <figure class="en-figure" id="story-figure" data-reveal>
-            <svg class="en-building" viewBox="0 0 640 460" role="img" aria-labelledby="story-figure-title">
-              <title id="story-figure-title">A drawn section through an enterprise floor, lit level by level</title>
-              <defs>
-                <linearGradient id="en-sky" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stop-color="#0b1b30"/>
-                  <stop offset="100%" stop-color="#16324f"/>
-                </linearGradient>
-              </defs>
-              <rect width="640" height="460" fill="url(#en-sky)"/>
-              <g class="en-city">
-                <rect x="26" y="196" width="54" height="264"/>
-                <rect x="94" y="152" width="40" height="308"/>
-                <rect x="148" y="224" width="62" height="236"/>
-                <rect x="470" y="166" width="48" height="294"/>
-                <rect x="530" y="212" width="38" height="248"/>
-                <rect x="580" y="140" width="44" height="320"/>
-              </g>
-              <g class="en-windows"></g>
-              <g class="en-floors">
-                <rect class="en-floor" x="224" y="104" width="222" height="86" rx="3"/>
-                <rect class="en-floor" x="224" y="200" width="222" height="86" rx="3"/>
-                <rect class="en-floor" x="224" y="296" width="222" height="86" rx="3"/>
-                <rect class="en-floor" x="224" y="392" width="222" height="68" rx="3"/>
-              </g>
-              <g class="en-mullions">
-                <path d="M280 104v356M335 104v356M390 104v356"/>
-              </g>
-              <image class="en-wall-mark" href="/veyns-lockup-white.png" x="252" y="322" width="166" height="34" preserveAspectRatio="xMidYMid meet"/>
-            </svg>
-            <figcaption>Building trust across markets</figcaption>
-          </figure>
+          <div class="en-collage" id="collage" aria-hidden="true">
+            <div class="en-col" data-depth="1">
+              <figure class="en-plate tall" data-plate="1"><span>Human</span></figure>
+              <figure class="en-plate short" data-plate="2"><span>Policy</span></figure>
+            </div>
+            <div class="en-col" data-depth="2">
+              <figure class="en-plate mark" data-plate="3">
+                <img src="/veyns-symbol-white.png" width="220" height="146" alt="">
+              </figure>
+              <figure class="en-plate mid" data-plate="4"><span>Evidence</span></figure>
+            </div>
+            <div class="en-col" data-depth="3">
+              <figure class="en-plate short" data-plate="5"><span>Hardware</span></figure>
+              <figure class="en-plate tall" data-plate="6"><span>Cryptography</span></figure>
+            </div>
+          </div>
         </div>
       </div>
     </section>
