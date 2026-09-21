@@ -117,17 +117,47 @@ function watchArrivals() {
   const nav = $('marketing-top');
   if (nav) {
     /*
-     * Both marketing pages open on a dark hero, so the bar is transparent until the page
-     * moves and then earns a ground of its own. The moment the page moves, not the moment
-     * the hero leaves: the bar overlaps whatever runs beneath it the whole way down, and a
-     * transparent bar over running content is unreadable.
+     * Every page opens on a dark hero, so the bar is transparent until the page moves and then
+     * earns a ground of its own. The moment the page moves, not the moment the hero leaves:
+     * the bar overlaps whatever runs beneath it the whole way down.
      *
-     * Which ground depends on the page. The home page stays dark to the bottom; the
-     * enterprise pages turn white below their hero, and the bar has to turn with them.
+     * Which ground depends on the page. The home page stays dark to the bottom; the enterprise
+     * pages turn white below their hero, and the bar has to turn with them.
+     *
+     * This is deliberately NOT driven by the scroll handler. That handler runs inside an
+     * animation frame, and somewhere frames are not delivered the bar would keep its
+     * transparent state for the whole page — which on a white page means white type on white.
+     * An observer reports whether a sentinel at the top of the page is still on screen, and
+     * observers are not frame driven, so the bar stays legible even where nothing animates.
      */
-    drive(nav, () => {
+    const paintLight = () => {
       const page = showing();
       nav.classList.toggle('light', !!page && page.classList.contains('en'));
+    };
+
+    const sentinels = PAGES.map(page => {
+      const mark = document.createElement('span');
+      mark.className = 'vx-nav-sentinel';
+      mark.setAttribute('aria-hidden', 'true');
+      page.prepend(mark);
+      return mark;
+    });
+
+    if ('IntersectionObserver' in window && sentinels.length) {
+      const watch = new IntersectionObserver(entries => {
+        for (const entry of entries) {
+          /* Only the sentinel of the page actually on show has anything to say. */
+          if (entry.target.parentElement?.hidden) continue;
+          paintLight();
+          nav.classList.toggle('stuck', !entry.isIntersecting);
+        }
+      }, { threshold: 0 });
+      for (const mark of sentinels) watch.observe(mark);
+    }
+
+    /* The scroll driver agrees with it, and covers the moment a page is first shown. */
+    drive(nav, () => {
+      paintLight();
       nav.classList.toggle('stuck', window.scrollY > 28);
     });
   }
@@ -376,26 +406,6 @@ for (const bar of document.querySelectorAll('.vx-bar[data-w]')) {
       const reached = Math.round(run * stops.length);
       stops.forEach((stop, i) => stop.classList.toggle('on', i < reached));
     }, 0.84, 0.5);
-  }
-}
-
-/* --------------------------------------------------------- the use rail */
-
-{
-  const view = $('rail-view');
-  const rail = $('rail');
-  /*
-   * On a wide screen the rail is carried by the scroll. On a narrow one it is something to
-   * swipe, and the stylesheet says so, so the transform is left alone below that width.
-   */
-  const wide = window.matchMedia('(min-width: 861px)');
-
-  if (view && rail) {
-    drive(view, progress => {
-      if (!wide.matches) { rail.style.setProperty('--vx-rail', 0); return; }
-      const over = Math.max(0, rail.scrollWidth - view.clientWidth);
-      rail.style.setProperty('--vx-rail', Math.round(progress * over));
-    }, 1, 0);
   }
 }
 
@@ -857,8 +867,25 @@ liveCanvas($('cta-net'), (paint, w, h) => {
   if (stack && hero && !still.matches) {
     /* The layers separate as the page moves, which is the point being made about them. */
     drive(hero, progress => {
-      stack.style.setProperty('--tech-spread', `${(18 + progress * 30).toFixed(1)}px`);
+      stack.style.setProperty('--tech-spread', `${(22 + progress * 34).toFixed(1)}px`);
     }, 1, 0);
+
+    /* And the whole stack turns a few degrees towards the pointer, so it reads as an object. */
+    let pending = false;
+    hero.addEventListener('pointermove', event => {
+      if (pending) return;
+      pending = true;
+      requestAnimationFrame(() => {
+        pending = false;
+        const box = hero.getBoundingClientRect();
+        stack.style.setProperty('--tech-rx', ((event.clientX - box.left) / box.width - 0.5).toFixed(3));
+        stack.style.setProperty('--tech-ry', ((event.clientY - box.top) / box.height - 0.5).toFixed(3));
+      });
+    });
+    hero.addEventListener('pointerleave', () => {
+      stack.style.setProperty('--tech-rx', 0);
+      stack.style.setProperty('--tech-ry', 0);
+    });
   }
 }
 
@@ -1126,6 +1153,111 @@ liveCanvas($('tech-net'), (paint, w, h) => {
   $('tech-demo')?.addEventListener('click', () => {
     if (note) note.textContent = 'Technical demo booking is not connected yet — nothing has been sent.';
   });
+}
+/* ===================================================== how things feel */
+
+/**
+ * A track of cards that browses with the pointer.
+ *
+ * The scroll position sets where the rail rests; moving the pointer across the section pushes
+ * it further either way, and it eases back when the pointer leaves. Both are clamped to the
+ * overflow, so the rail can never be pushed past its own ends.
+ *
+ * Only on a pointer that can hover and a screen wide enough to have overflow worth browsing.
+ * A phone gets a rail it can swipe, which it is already better at.
+ */
+function pointerRail(view, track) {
+  if (!view || !track || still.matches) return;
+  const fine = window.matchMedia('(hover: hover) and (pointer: fine) and (min-width: 861px)');
+
+  let base = 0;        // where the scroll has put it
+  let bias = 0;        // where the pointer is pushing it
+  let shown = 0;       // where it actually is, easing towards base + bias
+  let running = false;
+
+  const overflow = () => Math.max(0, track.scrollWidth - view.clientWidth);
+
+  const ease = () => {
+    const want = clamp(base + bias, 0, overflow());
+    shown += (want - shown) * 0.12;
+    if (Math.abs(want - shown) < 0.4) { shown = want; running = false; }
+    track.style.setProperty('--vx-rail', Math.round(shown));
+    if (running) requestAnimationFrame(ease);
+  };
+  const nudge = () => { if (!running) { running = true; requestAnimationFrame(ease); } };
+
+  /* The scroll keeps setting the resting point, whether or not a pointer is anywhere near. */
+  drive(view, progress => {
+    if (!fine.matches) { track.style.setProperty('--vx-rail', 0); return; }
+    base = progress * overflow();
+    nudge();
+  }, 1, 0);
+
+  view.addEventListener('pointermove', event => {
+    if (!fine.matches || event.pointerType !== 'mouse') return;
+    const box = view.getBoundingClientRect();
+    /* Half the overflow either way, so the pointer can reach both ends but not fling it. */
+    bias = ((event.clientX - box.left) / box.width - 0.5) * overflow() * 0.9;
+    nudge();
+  });
+  view.addEventListener('pointerleave', () => { bias = 0; nudge(); });
+}
+
+/**
+ * Cards that answer the pointer: a few degrees of tilt towards it, a lift, and a soft light
+ * that follows it across the face. Delegated per group rather than one listener per card.
+ */
+function tiltGroup(group, selector) {
+  if (!group || still.matches) return;
+  if (!window.matchMedia('(hover: hover) and (pointer: fine)').matches) return;
+
+  for (const card of group.querySelectorAll(selector)) card.classList.add('vx-tilt');
+
+  let pending = false;
+  group.addEventListener('pointermove', event => {
+    const card = event.target.closest(selector);
+    if (!card || pending) return;
+    pending = true;
+    requestAnimationFrame(() => {
+      pending = false;
+      const box = card.getBoundingClientRect();
+      const x = (event.clientX - box.left) / box.width;
+      const y = (event.clientY - box.top) / box.height;
+      card.style.setProperty('--tilt-x', (x - 0.5).toFixed(3));
+      card.style.setProperty('--tilt-y', (y - 0.5).toFixed(3));
+      card.style.setProperty('--sheen-x', `${(x * 100).toFixed(1)}%`);
+      card.style.setProperty('--sheen-y', `${(y * 100).toFixed(1)}%`);
+    });
+  });
+
+  /* Leaving a card has to reset that card, not whichever one the pointer happens to be over. */
+  group.addEventListener('pointerout', event => {
+    const card = event.target.closest(selector);
+    if (!card || card.contains(event.relatedTarget)) return;
+    card.style.setProperty('--tilt-x', 0);
+    card.style.setProperty('--tilt-y', 0);
+  });
+}
+
+{
+  /* The rails. */
+  pointerRail($('rail-view'), $('rail'));
+  pointerRail($('int-view'), $('integrations'));
+
+  /* The cards, everywhere there are cards. */
+  const tilts = [
+    ['.vx-cards', '.vx-card'],
+    ['.vx-rail', 'li'],
+    ['.vx-controls', 'li'],
+    ['.en-pillars', 'li'],
+    ['.en-values', 'li'],
+    ['.en-caps', 'li'],
+    ['.tech-integrations', 'li'],
+    ['.tech-principles', 'li'],
+  ];
+  for (const [groupSelector, cardSelector] of tilts) {
+    for (const group of document.querySelectorAll(groupSelector)) tiltGroup(group, cardSelector);
+  }
 }
 /* ----------------------------------------------------------------- go */
 

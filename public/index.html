@@ -1247,36 +1247,82 @@
           the page moves and carry a light down through them. It says the same thing the
           photograph would, and it says it in about two kilobytes.
         -->
-        <svg class="tech-stack" id="tech-stack" viewBox="0 0 520 420" role="img" aria-labelledby="tech-stack-title">
-          <title id="tech-stack-title">Five layers of the architecture, separating: application, policy, cryptography, key material, execution</title>
+        <svg class="tech-stack" id="tech-stack" viewBox="0 0 560 520" role="img" aria-labelledby="tech-stack-title">
+          <title id="tech-stack-title">Five plates of the architecture, separated: application, policy, cryptography, key material, execution</title>
           <defs>
-            <linearGradient id="tech-face" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stop-color="#16324f"/>
-              <stop offset="100%" stop-color="#0a1b2e"/>
+            <linearGradient id="tech-plate-face" x1=".1" y1="0" x2=".9" y2="1">
+              <stop offset="0%" stop-color="#1d3d5e"/>
+              <stop offset="52%" stop-color="#112742"/>
+              <stop offset="100%" stop-color="#0a1a2e"/>
             </linearGradient>
+            <linearGradient id="tech-plate-core" x1=".1" y1="0" x2=".9" y2="1">
+              <stop offset="0%" stop-color="#2f6fb8"/>
+              <stop offset="55%" stop-color="#17407a"/>
+              <stop offset="100%" stop-color="#0d2450"/>
+            </linearGradient>
+            <linearGradient id="tech-side-g" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#0d2038"/>
+              <stop offset="100%" stop-color="#050e1b"/>
+            </linearGradient>
+            <radialGradient id="tech-halo">
+              <stop offset="0%" stop-color="rgba(90,175,255,.55)"/>
+              <stop offset="55%" stop-color="rgba(50,120,220,.18)"/>
+              <stop offset="100%" stop-color="rgba(20,60,140,0)"/>
+            </radialGradient>
+            <filter id="tech-soft" x="-60%" y="-60%" width="220%" height="220%">
+              <feGaussianBlur stdDeviation="9"/>
+            </filter>
           </defs>
-          <g class="tech-layer" data-layer="0" data-label="Application">
-            <path class="tech-face" d="M260 40 430 120 260 200 90 120z"/>
-            <path class="tech-edge" d="M260 40 430 120 260 200 90 120z"/>
+
+          <!-- the light the stack stands in -->
+          <ellipse class="tech-halo" cx="280" cy="266" rx="250" ry="180" fill="url(#tech-halo)"/>
+
+          <g class="tech-plates">
+            <g class="tech-layer" data-layer="0">
+              <path class="tech-side" d="M110 150 280 230 280 248 110 168z"/>
+              <path class="tech-side dim" d="M280 230 450 150 450 168 280 248z"/>
+              <path class="tech-top" d="M280 70 450 150 280 230 110 150z"/>
+              <path class="tech-rim" d="M280 70 450 150 280 230 110 150z"/>
+              <path class="tech-glint" d="M280 70 450 150"/>
+            </g>
+            <g class="tech-layer" data-layer="1">
+              <path class="tech-side" d="M110 150 280 230 280 248 110 168z"/>
+              <path class="tech-side dim" d="M280 230 450 150 450 168 280 248z"/>
+              <path class="tech-top" d="M280 70 450 150 280 230 110 150z"/>
+              <path class="tech-rim" d="M280 70 450 150 280 230 110 150z"/>
+              <path class="tech-glint" d="M280 70 450 150"/>
+            </g>
+            <g class="tech-layer" data-layer="2">
+              <path class="tech-side" d="M110 150 280 230 280 248 110 168z"/>
+              <path class="tech-side dim" d="M280 230 450 150 450 168 280 248z"/>
+              <path class="tech-top" d="M280 70 450 150 280 230 110 150z"/>
+              <path class="tech-rim" d="M280 70 450 150 280 230 110 150z"/>
+              <path class="tech-glint" d="M280 70 450 150"/>
+            </g>
+
+            <!-- the plate the key material sits in, lit from inside -->
+            <g class="tech-layer core" data-layer="3">
+              <path class="tech-side" d="M110 150 280 230 280 248 110 168z"/>
+              <path class="tech-side dim" d="M280 230 450 150 450 168 280 248z"/>
+              <path class="tech-top" d="M280 70 450 150 280 230 110 150z"/>
+              <path class="tech-rim" d="M280 70 450 150 280 230 110 150z"/>
+              <path class="tech-glint" d="M280 70 450 150"/>
+              <ellipse class="tech-core-glow" cx="280" cy="150" rx="86" ry="42" filter="url(#tech-soft)"/>
+              <path class="tech-core-mark" d="M280 118 332 150 280 182 228 150z"/>
+            </g>
+
+            <g class="tech-layer" data-layer="4">
+              <path class="tech-side" d="M110 150 280 230 280 248 110 168z"/>
+              <path class="tech-side dim" d="M280 230 450 150 450 168 280 248z"/>
+              <path class="tech-top" d="M280 70 450 150 280 230 110 150z"/>
+              <path class="tech-rim" d="M280 70 450 150 280 230 110 150z"/>
+              <path class="tech-glint" d="M280 70 450 150"/>
+            </g>
           </g>
-          <g class="tech-layer" data-layer="1" data-label="Policy">
-            <path class="tech-face" d="M260 40 430 120 260 200 90 120z"/>
-            <path class="tech-edge" d="M260 40 430 120 260 200 90 120z"/>
-          </g>
-          <g class="tech-layer" data-layer="2" data-label="Cryptography">
-            <path class="tech-face" d="M260 40 430 120 260 200 90 120z"/>
-            <path class="tech-edge" d="M260 40 430 120 260 200 90 120z"/>
-          </g>
-          <g class="tech-layer core" data-layer="3" data-label="Key material">
-            <path class="tech-face" d="M260 40 430 120 260 200 90 120z"/>
-            <path class="tech-edge" d="M260 40 430 120 260 200 90 120z"/>
-            <circle class="tech-core" cx="260" cy="120" r="26"/>
-          </g>
-          <g class="tech-layer" data-layer="4" data-label="Execution">
-            <path class="tech-face" d="M260 40 430 120 260 200 90 120z"/>
-            <path class="tech-edge" d="M260 40 430 120 260 200 90 120z"/>
-          </g>
-          <path class="tech-beam" d="M260 40v360"/>
+
+          <!-- the operation travelling down through every layer -->
+          <path class="tech-beam" d="M280 48v336"/>
+          <circle class="tech-spark" r="4" cx="280" cy="48"/>
         </svg>
         <div class="en-hero-veil"></div>
       </div>
@@ -1710,7 +1756,9 @@
           </div>
         </div>
 
-        <ul class="tech-integrations" data-reveal-group>
+      </div>
+      <div class="tech-int-view" id="int-view">
+        <ul class="tech-integrations" id="integrations" data-reveal-group>
           <li><b>Identity</b><small>OpenID Connect · Veyns</small><span class="en-state" data-state="live">Implemented</span></li>
           <li><b>Bitcoin</b><small>testnet4 · PSBT multisig</small><span class="en-state" data-state="live">Implemented</span></li>
           <li><b>Further networks</b><small>Ethereum, Stellar and others</small><span class="en-state" data-state="planned">Planned</span></li>
@@ -1718,6 +1766,9 @@
           <li><b>Enterprise API</b><small>An interface for treasury and custody systems</small><span class="en-state" data-state="none">Architectural interface</span></li>
           <li><b>SIEM and audit export</b><small>Streaming the evidence record outward</small><span class="en-state" data-state="none">Architectural interface</span></li>
         </ul>
+      </div>
+      <div class="en-wrap">
+
       </div>
     </section>
 

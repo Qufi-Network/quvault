@@ -35,8 +35,6 @@
 }
 
 .en {
-  --vx-gutter: max(22px, 5vw, calc((100% - var(--vx-measure)) / 2));
-
   max-width: none;
   margin: 0;
   padding: 0;
@@ -62,19 +60,21 @@ body:has(:is(#view-about, #view-technology):not([hidden])) .field { display: non
 /* ------------------------------------------------- the bar, in daylight */
 
 /*
- * The bar is shared with the dark site. On these pages it is transparent over the dark hero
- * and becomes a white bar with dark type once the page moves — so the light variant only ever
- * applies together with .stuck.
+ * The bar is shared with all three pages. Here it is transparent over the dark hero and turns
+ * into a white bar once the page moves, so the light treatment only ever applies together
+ * with .stuck — the tokens are swapped rather than each rule being written twice.
  */
 .vx-nav.light.stuck {
-  background: rgba(255, 255, 255, .86);
+  --vx-nav-ink: #46556b;
+  --vx-nav-ink-lit: #0a1526;
+  --vx-nav-pill: rgba(10, 21, 38, .06);
+  --vx-nav-pill-on: rgba(18, 114, 255, .12);
+
+  background: rgba(255, 255, 255, .82);
   border-bottom-color: var(--en-line);
 }
 .vx-nav.light.stuck .vx-brand img { content: url("/veyns-lockup-black.png"); }
-.vx-nav.light.stuck .vx-links a { color: var(--en-ink-2); }
-.vx-nav.light.stuck .vx-links a:hover { color: var(--en-ink); }
 .vx-nav.light.stuck .vx-links a.on { color: var(--en-blue); }
-.vx-nav.light.stuck .vx-links a.on::after { transform: scaleX(1); }
 .vx-nav.light.stuck .vx-btn.ghost { border-color: var(--en-line-2); color: var(--en-ink); }
 .vx-nav.light.stuck .vx-btn.ghost:hover:not(:disabled) { border-color: var(--en-ink-3); background: var(--en-tint); }
 .vx-nav.light.stuck .vx-burger { border-color: var(--en-line-2); }
@@ -659,47 +659,70 @@ body:has(:is(#view-about, #view-technology):not([hidden])) .field { display: non
 
 .tech-hero .en-hero-veil {
   background:
-    linear-gradient(180deg, rgba(3, 10, 20, .7) 0%, transparent 16%),
-    linear-gradient(90deg, var(--en-darker) 26%, transparent 66%);
+    linear-gradient(180deg, rgba(3, 10, 20, .68) 0%, transparent 15%),
+    linear-gradient(90deg, var(--en-darker) 24%, transparent 64%);
 }
 .tech-stack {
   position: absolute;
   top: 50%;
-  right: clamp(20px, 7vw, 130px);
-  width: min(46%, 560px);
+  right: clamp(10px, 5vw, 96px);
+  width: min(50%, 620px);
   height: auto;
-  transform: translateY(-50%);
+  transform: translateY(-50%) perspective(1400px) rotateX(calc(var(--tech-ry, 0) * 5deg)) rotateY(calc(var(--tech-rx, 0) * 7deg));
+  transform-style: preserve-3d;
+  transition: transform 900ms var(--vx-ease, cubic-bezier(.4, 0, .2, 1));
 }
+
+/* the light the stack stands in */
+.tech-halo { animation: tech-halo 6s cubic-bezier(.4, 0, .2, 1) infinite; transform-origin: 280px 266px; }
+@keyframes tech-halo { 0%, 100% { opacity: .7; transform: scale(1); } 50% { opacity: 1; transform: scale(1.05); } }
+
+/*
+ * Each plate is a face, two sides and a lit leading edge. Outlines alone read as a wireframe;
+ * the fill and the thickness are what make it read as a thing with layers.
+ */
 .tech-layer {
-  /* pulled apart by the page, and by the pointer, both in the same direction */
-  transform: translateY(calc((var(--tech-i) - 2) * var(--tech-spread, 26px) * -1));
-  transition: transform 900ms cubic-bezier(.16, 1, .3, 1);
+  transform: translateY(calc((var(--tech-i) - 2) * var(--tech-spread, 30px)));
+  transition: transform 1s cubic-bezier(.16, 1, .3, 1);
 }
 .tech-layer[data-layer="0"] { --tech-i: 0; }
 .tech-layer[data-layer="1"] { --tech-i: 1; }
 .tech-layer[data-layer="2"] { --tech-i: 2; }
 .tech-layer[data-layer="3"] { --tech-i: 3; }
 .tech-layer[data-layer="4"] { --tech-i: 4; }
-.tech-face { fill: url(#tech-face); opacity: .92; }
-.tech-edge { fill: none; stroke: rgba(120, 180, 255, .5); stroke-width: 1.2; }
-.tech-layer.core .tech-edge { stroke: #5fb0ff; stroke-width: 1.8; }
-.tech-core {
-  fill: rgba(95, 176, 255, .9);
-  filter: drop-shadow(0 0 14px rgba(79, 157, 255, .9));
-  animation: tech-pulse 3.4s cubic-bezier(.4, 0, .2, 1) infinite;
-}
-@keyframes tech-pulse { 0%, 100% { opacity: .75; r: 24; } 50% { opacity: 1; r: 28; } }
 
-/* the light that travels down through the layers */
-.tech-beam {
-  fill: none;
-  stroke: rgba(150, 215, 255, .85);
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-dasharray: 40 360;
-  animation: tech-travel 3.6s cubic-bezier(.5, 0, .5, 1) infinite;
+.tech-top { fill: url(#tech-plate-face); }
+.tech-side { fill: url(#tech-side-g); }
+.tech-side.dim { opacity: .74; }
+.tech-rim { fill: none; stroke: rgba(122, 180, 250, .38); stroke-width: 1; }
+/* the one edge the light actually catches */
+.tech-glint { fill: none; stroke: rgba(180, 222, 255, .55); stroke-width: 1.4; stroke-linecap: round; }
+
+.tech-layer.core .tech-top { fill: url(#tech-plate-core); }
+.tech-layer.core .tech-rim { stroke: rgba(120, 200, 255, .9); stroke-width: 1.5; }
+.tech-layer.core .tech-glint { stroke: rgba(216, 240, 255, .95); stroke-width: 1.8; }
+.tech-core-glow { fill: rgba(70, 160, 255, .85); animation: tech-breathe 3.8s cubic-bezier(.4, 0, .2, 1) infinite; }
+@keyframes tech-breathe { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+.tech-core-mark {
+  fill: rgba(226, 244, 255, .96);
+  animation: tech-mark 3.8s cubic-bezier(.4, 0, .2, 1) infinite;
+  transform-origin: 280px 150px;
 }
-@keyframes tech-travel { from { stroke-dashoffset: 400; } to { stroke-dashoffset: -40; } }
+@keyframes tech-mark { 0%, 100% { opacity: .82; transform: scale(.94); } 50% { opacity: 1; transform: scale(1.04); } }
+
+/* the operation travelling down through every layer */
+.tech-beam { fill: none; stroke: rgba(120, 190, 255, .16); stroke-width: 1; }
+.tech-spark {
+  fill: rgba(200, 236, 255, .95);
+  filter: drop-shadow(0 0 10px rgba(90, 180, 255, .95));
+  animation: tech-fall 3.4s cubic-bezier(.45, 0, .55, 1) infinite;
+}
+@keyframes tech-fall {
+  0% { transform: translateY(0); opacity: 0; }
+  12% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { transform: translateY(330px); opacity: 0; }
+}
 
 .tech-caps .en-ico { margin-bottom: 18px; }
 
@@ -1035,4 +1058,54 @@ body:has(:is(#view-about, #view-technology):not([hidden])) .field { display: non
 @media (prefers-reduced-motion: reduce) {
   .tech-layer { transform: none; }
   .tech-beam, .tech-core { animation: none; }
+}
+
+/* -------------------------------------------- the pointer-browsed rail */
+
+/*
+ * On a light card the sheen is the accent rather than white, which on white is nothing.
+ */
+.en :is(.en-pillars, .en-values, .en-caps, .tech-integrations, .tech-principles) .vx-tilt {
+  --sheen: rgba(18, 114, 255, .09);
+}
+
+.tech-int-view { margin-top: clamp(28px, 3.5vw, 44px); overflow: hidden; }
+.tech-int-view .tech-integrations {
+  display: flex;
+  gap: clamp(12px, 1.4vw, 18px);
+  padding: 6px var(--vx-gutter);
+  transform: translate3d(calc(var(--vx-rail, 0) * -1px), 0, 0);
+  will-change: transform;
+}
+.tech-int-view .tech-integrations li { flex: none; width: clamp(230px, 21vw, 290px); }
+
+@media (max-width: 860px) {
+  .tech-int-view { overflow-x: auto; scroll-snap-type: x mandatory; }
+  .tech-int-view .tech-integrations { transform: none; }
+  .tech-int-view .tech-integrations li { scroll-snap-align: start; width: min(74vw, 290px); }
+}
+
+/* --------------------------------------------------------- the finish */
+
+/* Same reason as the dark site: a row of cards should agree on where its text sits. */
+.en-pillars h3,
+.en-values h3,
+.en-caps h3,
+.tech-integrations b { min-height: 2.1em; display: flex; align-items: flex-end; }
+
+/* a light card gets its edge from a soft shadow rather than from a hard line */
+.en-pillars li,
+.en-values li,
+.en-caps li,
+.tech-integrations li,
+.en-arch-nodes button,
+.en-tech-tabs button,
+.tech-zone-list button {
+  box-shadow: 0 1px 2px rgba(10, 21, 38, .04), 0 8px 22px -18px rgba(10, 21, 38, .32);
+}
+.en-pillars li:hover,
+.en-values li:hover,
+.en-caps li:hover,
+.tech-integrations li:hover {
+  box-shadow: 0 2px 4px rgba(10, 21, 38, .05), 0 26px 46px -28px rgba(18, 114, 255, .38);
 }

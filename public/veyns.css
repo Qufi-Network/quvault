@@ -53,12 +53,10 @@
   --vx-ease: cubic-bezier(.4, 0, .2, 1);
 
   --vx-measure: 1280px;
+  --vx-gutter: max(22px, 5vw, calc((100vw - var(--vx-measure)) / 2));
 }
 
-/* The gutter is measured against the page, so it is declared where the page begins. */
 .vx {
-  --vx-gutter: max(22px, 5vw, calc((100% - var(--vx-measure)) / 2));
-
   max-width: none;
   margin: 0;
   padding: 0;
@@ -182,67 +180,94 @@ body:has(#view-signin:not([hidden])) .field { display: none; }
 
 /* ---------------------------------------------------------- navigation */
 
+/*
+ * The bar is a sibling of both page wrappers, not a child of either. That matters more than it
+ * sounds: a custom property declared on .vx or .en is invisible here, so padding written as
+ * var(--vx-gutter) computed to nothing and the logo sat hard against the window edge. The
+ * measure and the gutter are on :root for that reason.
+ *
+ * The same boundary is why this block resets its own link styling. The reset that removes the
+ * document's underline from anchors is scoped to the pages, and the bar is not inside them —
+ * which is how every item in the navigation, and the primary button, came to be underlined.
+ */
 .vx-nav {
+  --vx-nav-h: 76px;
+  --vx-nav-ink: rgba(255, 255, 255, .72);
+  --vx-nav-ink-lit: #fff;
+  --vx-nav-pill: rgba(255, 255, 255, .1);
+  --vx-nav-pill-on: rgba(79, 157, 255, .2);
+
   position: sticky;
   top: 0;
   z-index: 40;
   background: transparent;
   border-bottom: 1px solid transparent;
   transition:
-    background-color var(--vx-mid) var(--vx-ease),
-    border-color var(--vx-mid) var(--vx-ease),
-    backdrop-filter var(--vx-mid) var(--vx-ease);
+    background-color 480ms var(--vx-ease),
+    border-color 480ms var(--vx-ease),
+    backdrop-filter 480ms var(--vx-ease);
 }
+.vx-nav :where(a) { color: inherit; text-decoration: none; }
+
 /* Once the page has moved, the bar earns a ground of its own. */
 .vx-nav.stuck {
-  background: rgba(2, 8, 17, .72);
-  backdrop-filter: blur(18px) saturate(140%);
-  border-bottom-color: var(--vx-line);
+  --vx-nav-h: 62px;
+  background: rgba(2, 8, 17, .68);
+  backdrop-filter: blur(20px) saturate(150%);
+  border-bottom-color: rgba(150, 185, 240, .14);
 }
+
 .vx-nav-in {
   display: flex;
   align-items: center;
-  gap: clamp(16px, 2vw, 34px);
-  padding: 0 var(--vx-gutter);
-  height: var(--vx-nav-h, 82px);
-  transition: height var(--vx-mid) var(--vx-ease);
+  gap: clamp(18px, 2.4vw, 40px);
+  height: var(--vx-nav-h);
+  padding-inline: var(--vx-gutter);
+  transition: height 480ms var(--vx-ease);
 }
-.vx-nav.stuck .vx-nav-in { --vx-nav-h: 66px; }
 
-.vx-brand { flex: none; }
+.vx-brand { flex: none; display: flex; align-items: center; }
 .vx-brand img {
   width: auto;
-  height: clamp(26px, 2.4vw, 32px);
-  transition: height var(--vx-mid) var(--vx-ease);
+  height: clamp(24px, 2.1vw, 29px);
+  transition: height 480ms var(--vx-ease);
 }
-.vx-nav.stuck .vx-brand img { height: 26px; }
+.vx-nav.stuck .vx-brand img { height: 23px; }
 
-.vx-links { display: flex; gap: clamp(14px, 1.9vw, 32px); margin-inline: auto; min-width: 0; }
+.vx-links { display: flex; align-items: center; gap: 2px; margin-inline: auto; min-width: 0; }
 .vx-links a {
   position: relative;
-  padding: 7px 1px;
+  padding: 9px 15px;
+  border-radius: 999px;
   font: 500 14.5px/1 var(--sans);
-  color: var(--vx-ink-2);
+  letter-spacing: -.008em;
   white-space: nowrap;
-  transition: color var(--vx-fast) var(--vx-ease);
+  color: var(--vx-nav-ink);
+  transition: color 220ms var(--vx-ease);
 }
-.vx-links a::after {
+/*
+ * The indicator is a pill that grows into place rather than a line drawn under the word. A
+ * rule under every item reads as a row of underlined links, which is what a document does,
+ * not what a navigation does.
+ */
+.vx-links a::before {
   content: '';
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 1px;
-  background: var(--vx-blue-lit);
-  transform: scaleX(0);
-  transform-origin: left;
-  transition: transform var(--vx-mid) var(--vx-spring);
+  inset: 0;
+  border-radius: inherit;
+  background: var(--vx-nav-pill);
+  opacity: 0;
+  transform: scale(.88);
+  transition: opacity 320ms var(--vx-spring), transform 320ms var(--vx-spring), background-color 220ms var(--vx-ease);
 }
-.vx-links a:hover { color: var(--vx-ink); }
-.vx-links a:hover::after { transform: scaleX(1); }
+.vx-links a > * { position: relative; }
+.vx-links a:hover { color: var(--vx-nav-ink-lit); }
+.vx-links a:hover::before { opacity: 1; transform: none; }
+.vx-links a.on { color: var(--vx-nav-ink-lit); }
+.vx-links a.on::before { opacity: 1; transform: none; background: var(--vx-nav-pill-on); }
 
 .vx-nav-cta { display: flex; align-items: center; gap: 10px; flex: none; }
-.vx-nav-cta .vx-btn { height: 42px; padding: 0 20px; font-size: 14px; }
+.vx-nav-cta .vx-btn { height: 40px; padding: 0 20px; font-size: 14px; }
 
 .vx-burger { display: none; }
 
@@ -1244,8 +1269,8 @@ body:has(#view-signin:not([hidden])) .field { display: none; }
     transition: max-height var(--vx-mid) var(--vx-ease);
   }
   .vx-nav.open .vx-links { max-height: 340px; }
-  .vx-links a { padding: 11px 0; border-bottom: 1px solid var(--vx-line); font-size: 15.5px; }
-  .vx-links a::after { display: none; }
+  .vx-links a { padding: 12px 14px; margin-inline: -14px; border-radius: 10px; font-size: 15.5px; }
+  .vx-links a::before { transform: none; }
   .vx-nav-cta { order: 3; width: 100%; }
   .vx-nav-cta .vx-btn { flex: 1; }
 
@@ -1339,3 +1364,94 @@ body:has(#view-signin:not([hidden])) .field { display: none; }
  */
 .about-veyns-mark { width: auto; height: 30px; }
 .home-foot-mark .about-veyns-mark { height: 22px; }
+
+/* ------------------------------------------------- cards that answer back */
+
+/*
+ * A few degrees towards the pointer, a lift, and a soft light that follows it across the face.
+ * The angles are small on purpose: past about six degrees a card stops reading as a surface
+ * being tilted and starts reading as an animation being played at you.
+ *
+ * The class is added by the page script, and only where a pointer can actually hover, so a
+ * touch screen gets a flat card rather than one stuck at whatever angle it was last tapped.
+ */
+.vx-tilt {
+  transform:
+    perspective(1000px)
+    rotateX(calc(var(--tilt-y, 0) * -4deg))
+    rotateY(calc(var(--tilt-x, 0) * 5.5deg))
+    translate3d(0, var(--tilt-lift, 0), 0);
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+.vx-tilt:hover { --tilt-lift: -6px; }
+.vx-tilt::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(
+    260px circle at var(--sheen-x, 50%) var(--sheen-y, 50%),
+    var(--sheen, rgba(255, 255, 255, .09)),
+    transparent 62%
+  );
+  opacity: 0;
+  transition: opacity 340ms var(--vx-ease);
+  pointer-events: none;
+}
+.vx-tilt:hover::after { opacity: 1; }
+/* the card's own content sits above the light rather than under it */
+.vx-tilt > * { position: relative; z-index: 1; }
+
+/* --------------------------------------------------------- the finish */
+
+/*
+ * A hairline straight across the page separates two sections the way a horizontal rule
+ * separates two paragraphs — bluntly. Inset to the measure and faded at both ends, it reads
+ * as the end of something instead of a line drawn through the page.
+ */
+.vx-sec + .vx-sec { border-top: 0; }
+.vx-sec + .vx-sec::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: var(--vx-gutter);
+  right: var(--vx-gutter);
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--vx-line) 22%, var(--vx-line) 78%, transparent);
+}
+
+/*
+ * Titles that wrap to two lines used to push their own body copy down, so no two cards in a
+ * row agreed on where anything sat. The title block is given the height of two lines and the
+ * rest of the card lines up across the row whatever the words do.
+ */
+.vx-card h3,
+.vx-rail b { min-height: 2.1em; display: flex; align-items: flex-end; }
+
+/* the lit top edge a real surface catches, rather than a border drawn all the way round */
+.vx-card,
+.vx-rail li,
+.vx-controls li {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .055);
+}
+.vx-card:hover {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .1),
+    0 30px 60px -34px rgba(18, 114, 255, .55);
+}
+
+/*
+ * The mark the bar watches to know whether the page has moved. It sits at the very top of
+ * each page, takes no room and draws nothing; when it leaves the viewport the bar takes a
+ * ground of its own.
+ */
+.vx-nav-sentinel {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 30px;
+  pointer-events: none;
+  visibility: hidden;
+}
