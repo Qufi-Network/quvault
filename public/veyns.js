@@ -58,10 +58,18 @@ const drive = (el, run, start, end) => { if (el) drivers.push({ el, run, start, 
 
 function frame() {
   queued = false;
+  arrive();
   for (const { el, run, start, end } of drivers) run(travel(el, start, end), el);
 }
 
 function onScroll() {
+  /*
+   * Arrival runs here, on the event itself, and not inside the frame below. Everything else on
+   * the page is decoration and can wait for a frame that may never be scheduled; whether the
+   * words are visible cannot. It costs a bounding box per element still waiting, and that list
+   * empties as the reader goes down the page.
+   */
+  arrive();
   if (queued) return;
   queued = true;
   requestAnimationFrame(frame);
@@ -86,46 +94,57 @@ measureIcons();
 
 /*
  * Things arrive as they are reached. This only ever adds a class — the distance, the timing
- * and the stagger all live in the stylesheet.
+ * and the stagger live in the stylesheet.
  *
- * The rule that matters: content must never be left invisible by an effect. If no arrival has
- * been reported shortly after the page is up — a throttled tab, a browser that never fires the
- * observer, a frameless environment — the whole thing gives up and simply shows everything.
+ * Arrival is measured in the same pass as every other scroll-linked effect on the page rather
+ * than delegated to an IntersectionObserver. That is deliberate. An observer was the only
+ * thing standing between a reader and the words, and when it did not report — a throttled
+ * tab, a background window, a browser that simply does not schedule the callback — the copy
+ * stayed at zero opacity with the photographs visible behind it. Reported twice, in Chrome.
+ *
+ * This runs off scroll, resize, load and the moment a page is shown: real events, all of them.
+ * Anything within a screen and a half is shown, so content arrives before it is reached rather
+ * than as it is reached, and nothing waits on a callback that may never come.
  */
-function watchArrivals() {
-  const targets = [...document.querySelectorAll('[data-reveal]:not(.in), [data-reveal-group]:not(.in)')];
-  if (!targets.length) return;
+let waiting = [];
 
-  if (still.matches || !('IntersectionObserver' in window)) {
-    for (const el of targets) el.classList.add('in');
+function arrive() {
+  if (!waiting.length) return;
+  const reach = window.innerHeight * 1.4;
+  const later = [];
+  for (const el of waiting) {
+    const box = el.getBoundingClientRect();
+    if (box.top < reach && box.bottom > -reach) el.classList.add('in');
+    else later.push(el);
+  }
+  waiting = later;
+}
+
+function watchArrivals() {
+  waiting = [...document.querySelectorAll('[data-reveal]:not(.in), [data-reveal-group]:not(.in)')];
+  if (!waiting.length) return;
+
+  if (still.matches) {
+    for (const el of waiting) el.classList.add('in');
+    waiting = [];
     return;
   }
 
-  /* Snapping rather than transitioning: without frames a transition never leaves its start. */
-  const showAll = () => {
-    document.documentElement.classList.add('reveal-off');
-    for (const el of targets) el.classList.add('in');
-  };
+  arrive();
 
   /*
-   * Scoped to the targets this call was handed, not to the document. Asking the document
-   * whether anything anywhere had arrived meant that once the first page had shown itself,
-   * every page opened after it lost its safety net.
+   * And a last line behind that one. If nothing has arrived a couple of seconds after the page
+   * is up, something is wrong with the measuring rather than with the page, so the effect is
+   * abandoned and everything is shown — snapped into place, because without frames a
+   * transition never leaves where it started.
    */
-  const failsafe = setTimeout(() => {
-    if (!targets.some(el => el.classList.contains('in'))) showAll();
-  }, 1400);
-
-  const seen = new IntersectionObserver((entries, observer) => {
-    for (const entry of entries) {
-      if (!entry.isIntersecting) continue;
-      clearTimeout(failsafe);
-      entry.target.classList.add('in');
-      observer.unobserve(entry.target); // it arrives once; it does not keep arriving
+  setTimeout(() => {
+    if (!document.querySelector('[data-reveal].in, [data-reveal-group].in')) {
+      document.documentElement.classList.add('reveal-off');
+      for (const el of waiting) el.classList.add('in');
+      waiting = [];
     }
-  }, { rootMargin: '0px 0px -10% 0px', threshold: 0.1 });
-
-  for (const el of targets) seen.observe(el);
+  }, 2200);
 }
 
 /* ------------------------------------------------------------ the bar */
