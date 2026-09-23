@@ -19,8 +19,11 @@ import { hkdf } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { base64 } from '@scure/base';
 import { canonicalJson } from './canonical.js';
+import { SCANNER, evidenceIsUsable } from './scanner.js';
 
 const VERSION = 1;
+const VERSION_2 = 2;
+const KNOWN_VERSIONS = new Set([VERSION, VERSION_2]);
 const CONTEXT = 'QUVAULT-HUMAN-AUTHORIZATION-V1'; // FIPS 204 context: nothing else signs under it
 const utf8 = text => new TextEncoder().encode(text);
 const context = utf8(CONTEXT);
@@ -52,6 +55,113 @@ export function deriveAttestationKeys(seedBytes, epoch = 1) {
 
 /** A short, stable name for a key, so a receipt says which key to check it with. */
 export const keyIdOf = publicKey => base64.encode(sha256(publicKey)).replace(/[+/=]/g, '').slice(0, 22);
+
+/* --------------------------------------------------------- version 2, dormant */
+
+/*
+ * V2 says what a scanner measured, instead of asserting that a palm was verified.
+ *
+ * Nothing produces a V2 record today, and nothing can: `signAuthorizationV2` refuses unless a
+ * provider supplies evidence that passed, and the only provider in this repository is the
+ * null one, which cannot return a pass. That is what "dormant" means here — the shape is
+ * fixed and tested, the door is shut, and it opens when there is hardware behind it.
+ *
+ * The rule that makes the evidence worth carrying is `bindingNonce`: the scanner attests to
+ * the transaction digest being authorised, so an attestation captured for one spend cannot be
+ * replayed onto another. A PAD pass on its own authorises nothing, a match on its own
+ * authorises nothing, and neither of them is a substitute for the signature that the owner's
+ * key — derived from the phrase, not from the palm — puts on the record.
+ */
+export class AuthorizationUnavailable extends Error {}
+
+/** The policy version the evidence was judged against, so a later reading knows the rules. */
+const BIOMETRIC_POLICY_VERSION = 'quvault-biometric-policy-1';
+
+/** Everything a V2 record must name about the thing being authorised, beyond the evidence. */
+const V2_REQUIRED_PARTS = ['vaultId', 'accountId', 'subject', 'transactionHash', 'statementDigest', 'chain', 'network', 'policyVersion', 'nonce'];
+
+export function signAuthorizationV2(parts, keys, evidence) {
+  const absent = V2_REQUIRED_PARTS.filter(name => !parts?.[name]);
+  if (absent.length) {
+    throw new AuthorizationUnavailable(`A version 2 authorisation must name: ${absent.join(', ')}.`);
+  }
+  const usable = evidenceIsUsable(evidence);
+  if (!usable.ok) {
+    throw new AuthorizationUnavailable(
+      `A version 2 authorisation needs scanner evidence, and there is none: ${usable.reasons.join('; ')}.`);
+  }
+  // The evidence has to be about this transaction. Without this, a captured attestation is a
+  // reusable token rather than a statement about a spend.
+  if (evidence.bindingNonce !== parts.transactionHash) {
+    throw new AuthorizationUnavailable('The scanner evidence is bound to a different transaction.');
+  }
+  const record = {
+    v: VERSION_2,
+    // Which vault, which account, and whose. `subject` is the opaque per-application identity
+    // the vault belongs to — never a name, an email or anything from the palm.
+    vaultId: parts.vaultId,
+    accountId: parts.accountId,
+    subject: parts.subject,
+    // What was authorised, and on which chain. The digest already covers chain and network,
+    // and they are named again so a record can be read without recomputing it.
+    transactionHash: parts.transactionHash,
+    statementDigest: parts.statementDigest,
+    chain: parts.chain,
+    network: parts.network,
+    // Which rules were in force. Without this a record survives the rules it was made under.
+    policyVersion: parts.policyVersion,
+    approvalMethod: parts.approvalMethod,
+    // One authorisation, once. Distinct from bindingNonce, which is the scanner's tie to the
+    // transaction: this one makes two authorisations of the same spend distinguishable.
+    nonce: parts.nonce,
+    // What was measured, by what, and about which capture — no scores, no templates, no images.
+    biometricProvider: evidence.provider,
+    biometricVerification: evidence.biometric.result,
+    padResult: evidence.pad.result,
+    captureReference: evidence.captureReference,
+    scannerClass: evidence.scannerClass,
+    scannerAttestation: evidence.attestation.signature,
+    biometricPolicyVersion: BIOMETRIC_POLICY_VERSION,
+    bindingNonce: evidence.bindingNonce,
+    approvals: parts.approvals,
+    approvedBy: [...parts.approvedBy].sort(),
+    decisionIds: [...parts.decisionIds].sort(),
+    approvedAt: parts.approvedAt,
+    keyEpoch: keys.epoch ?? 1,
+  };
+  return {
+    record,
+    algorithm: 'ML-DSA-65',
+    context: CONTEXT,
+    keyId: keys.keyId ?? keyIdOf(keys.publicKey),
+    signature: base64.encode(ml_dsa65.sign(signedBytes(record), keys.secretKey, { context })),
+  };
+}
+
+/**
+ * The structural checks a V2 record must pass beyond its signature.
+ *
+ * A signature proves the owner's key wrote the record; it does not prove the record says
+ * anything. These checks are what stop a V2 record that was signed with `padResult` set to a
+ * placeholder from being read as a measurement.
+ */
+function checkV2(record) {
+  for (const name of V2_REQUIRED_PARTS) {
+    if (!record[name]) return `the record names no ${name}`;
+  }
+  if (record.padResult !== SCANNER.PASSED) return 'the record does not report a passed liveness check';
+  if (record.biometricVerification !== SCANNER.PASSED) return 'the record does not report a passed match';
+  if (typeof record.scannerAttestation !== 'string' || !record.scannerAttestation) return 'the record carries no scanner attestation';
+  if (!record.scannerClass) return 'the record names no scanner class';
+  if (!record.captureReference) return 'the record names no capture';
+  if (record.bindingNonce !== record.transactionHash) return 'the scanner evidence is bound to a different transaction';
+  if (!record.biometricPolicyVersion) return 'the record names no biometric policy version';
+  // V1's unconditional assertion must not reappear inside a V2 record and be read as evidence.
+  if ('biometricVerified' in record) return 'a version 2 record cannot assert biometricVerified';
+  return null;
+}
+
+export const AUTHORIZATION_VERSIONS = Object.freeze({ V1: VERSION, V2: VERSION_2 });
 
 /* ------------------------------------------------- which key is authoritative */
 
@@ -138,7 +248,14 @@ export function verifyChain(chain, { vaultId, maxLength = 64 } = {}) {
   };
 }
 
-/** Builds and signs the record. `biometricVerified` is all it says about the palm itself. */
+/**
+ * Builds and signs a V1 record. `biometricVerified` is all it says about the palm itself.
+ *
+ * That field is written unconditionally, and it is a statement about the Veyns palm decisions
+ * this operation collected — not about any scanner this code spoke to, because there is no
+ * scanner. V2 below replaces it with fields that can only be filled in by measurement. V1 is
+ * left exactly as it was: records already signed under it have to keep verifying.
+ */
 export function signAuthorization(parts, keys) {
   const record = {
     v: VERSION,
@@ -174,7 +291,12 @@ export function verifyAuthorization(authorization, publicKeyBase64, expected = {
       return { ok: false, reason: 'not an ML-DSA-65 authorisation' };
     }
     if (authorization.context !== CONTEXT) return { ok: false, reason: 'signed for a different purpose' };
-    if (authorization.record.v !== VERSION) return { ok: false, reason: 'unknown record version' };
+    if (!KNOWN_VERSIONS.has(authorization.record.v)) return { ok: false, reason: 'unknown record version' };
+    // A caller that has moved to V2 can refuse V1 without this function's default changing:
+    // every existing caller asks for no minimum and keeps exactly the behaviour it had.
+    if (expected.minVersion !== undefined && authorization.record.v < expected.minVersion) {
+      return { ok: false, reason: `this vault requires a version ${expected.minVersion} authorisation` };
+    }
     if (!publicKeyBase64) return { ok: false, reason: 'this vault has no registered attestation key' };
     const publicKey = base64.decode(publicKeyBase64);
     if (authorization.keyId && authorization.keyId !== keyIdOf(publicKey)) {
@@ -184,6 +306,12 @@ export function verifyAuthorization(authorization, publicKeyBase64, expected = {
       return { ok: false, reason: 'signature does not verify' };
     }
     const record = authorization.record;
+    // A V2 record has to carry measurements, not assertions. Checked after the signature, so
+    // a malformed record is never distinguishable from a forged one by timing alone.
+    if (record.v === VERSION_2) {
+      const wrong = checkV2(record);
+      if (wrong) return { ok: false, reason: wrong };
+    }
     if (expected.transactionHash && record.transactionHash !== expected.transactionHash) {
       return { ok: false, reason: 'authorisation is for a different transaction' };
     }
@@ -192,6 +320,21 @@ export function verifyAuthorization(authorization, publicKeyBase64, expected = {
     }
     if (expected.statementDigest && record.statementDigest !== expected.statementDigest) {
       return { ok: false, reason: 'authorisation is for a different statement' };
+    }
+    /*
+     * The rest of what a record can be moved between. Each is checked only when the caller
+     * names it, so every existing V1 caller keeps exactly the behaviour it had; a caller that
+     * does name one is asking a question a V1 record cannot answer, and will be told so.
+     */
+    for (const [field, reason] of [
+      ['accountId', 'authorisation is for a different account'],
+      ['chain', 'authorisation is for a different chain'],
+      ['network', 'authorisation is for a different network'],
+      ['policyVersion', 'authorisation was made under different spending rules'],
+      ['subject', 'authorisation is for a different person'],
+      ['nonce', 'authorisation carries a different nonce'],
+    ]) {
+      if (expected[field] !== undefined && record[field] !== expected[field]) return { ok: false, reason };
     }
     if (expected.keyEpoch !== undefined && (record.keyEpoch ?? 1) !== expected.keyEpoch) {
       return { ok: false, reason: 'authorisation was made with a retired key' };
@@ -214,6 +357,6 @@ export function verifyAuthorization(authorization, publicKeyBase64, expected = {
   }
 }
 
-const sameSet = (a, b) => Array.isArray(a) && a.length === b.length && [...a].sort().join(' ') === [...b].sort().join(' ');
+const sameSet = (a, b) => Array.isArray(a) && a.length === b.length && [...a].sort().join('\u0000') === [...b].sort().join('\u0000');
 
 export const AUTHORIZATION_CONTEXT = CONTEXT;

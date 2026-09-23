@@ -1,7 +1,18 @@
+/*
+ * What this page is allowed to import.
+ *
+ * Every name here either takes no key material or gives none back. The primitives that take
+ * a phrase — makeMnemonic, accountFrom, cosignerFrom, accountsFrom, signPlan, signQuorum,
+ * attest, registerKey, attestationKeys, encryptMnemonic, decryptMnemonic — are deliberately
+ * not on this list. They still exist in the wallet module, which is where the phrase stays.
+ *
+ * `revealPhrase` is the single exception: showing someone their own recovery words is what
+ * that screen is for. Nothing else in this file ever holds a secret.
+ */
 import {
-  accountFrom, accountsFrom, attest, attestationKeys, checkAuthorization, checkChain, clearRecord,
-  decryptMnemonic, encryptMnemonic, fromBase64, jitterFrom, loadRecord, makeMnemonic, planDigest,
-  cosignerFrom, registerKey, saveRecord, signPlan, signQuorum,
+  checkAuthorization, checkChain, clearRecord, fromBase64, loadRecord, planDigest,
+  createVaultKey, browserSigner, cosignerPublicKeyFor, deriveAccountFor,
+  restoreVaultKey, revealPhrase, pinAttestationRoot,
 } from '/vendor/wallet.js';
 
 const $ = id => document.getElementById(id);
@@ -422,50 +433,43 @@ const device = {
   },
 
   /**
-   * Makes the phrase and stores it encrypted, here and nowhere else.
+   * Makes the key and stores it encrypted, here and nowhere else.
    *
    * There is one phrase per browser, and it is the only copy of itself. A second vault made
    * here would write over the first, taking with it that vault's coins and any key derived
    * from the same words for a quorum somebody else is relying on. So it is refused rather
    * than done quietly.
+   *
+   * What comes back is an address, a public key and a signed registration. The phrase itself
+   * never crosses out of the wallet module, so there is no variable in this file that holds
+   * it and nothing here that could pass it somewhere else.
    */
-  async makeKey(operation) {
+  async newKey(operation) {
     if (this.record) {
       throw new Error('This browser already holds a vault key, and making another would write over it. '
         + 'Use a different browser or profile, or erase the vault here first.');
     }
     const [{ random }, unlocked] = await Promise.all([api('/api/random'), this.unlockFor(operation.id)]);
-    const mnemonic = makeMnemonic({
+    const made = await createVaultKey({
       serverRandom: fromBase64(random),
-      jitter: jitterFrom([operation.id, unlocked.salt, screen.width, screen.height]),
-    });
-    const account = accountFrom(mnemonic);
-    const blob = await encryptMnemonic(mnemonic, unlocked.unlock, unlocked.salt);
-    await saveRecord({
-      blob,
+      jitterSeed: [operation.id, unlocked.salt, screen.width, screen.height],
+      unlock: unlocked.unlock,
       salt: unlocked.salt,
-      address: account.address,
-      publicKey: toHex(account.publicKey),
-      // Pinned here so a server that rewrote its own record of the lineage is visible.
-      attestationRootKeyId: attestationKeys(mnemonic, 1).keyId,
-      createdAt: Date.now(),
     });
     this.record = await loadRecord();
-    // The phrase goes back to the caller so the attestation key can be derived here, once,
-    // without asking the server to unlock anything a second time.
-    return { account, mnemonic };
+    return made;
   },
 
   /** A new vault: the server is told the address and two public keys, and no secret. */
   async create(operation) {
-    const { account, mnemonic } = await this.makeKey(operation);
+    const made = await this.newKey(operation);
     await api('/api/wallet/register', {
       operationId: operation.id,
-      address: account.address,
-      publicKey: toHex(account.publicKey),
-      attestationRegistration: registerKey(mnemonic, { vaultId: account.address, epoch: 1 }),
+      address: made.address,
+      publicKey: made.publicKey,
+      attestationRegistration: made.registration,
     });
-    return account;
+    return made;
   },
 
   /**
@@ -473,14 +477,14 @@ const device = {
    * then the server sweeps the old address and retires the key it was holding.
    */
   async moveIn(operation) {
-    const { account, mnemonic } = await this.makeKey(operation);
+    const made = await this.newKey(operation);
     const result = await api('/api/wallet/upgrade', {
       operationId: operation.id,
-      address: account.address,
-      publicKey: toHex(account.publicKey),
-      attestationRegistration: registerKey(mnemonic, { vaultId: account.address, epoch: 1 }),
+      address: made.address,
+      publicKey: made.publicKey,
+      attestationRegistration: made.registration,
     });
-    return { ...result, account };
+    return { ...result, account: made };
   },
 
   /**
@@ -488,27 +492,23 @@ const device = {
    * The plan is re-hashed here and compared with the digest the palm approved, so a plan
    * altered after the approval is refused by the device that holds the key.
    */
+  /**
+   * The signer for one approved operation.
+   *
+   * Built per operation, from that operation's own unlock, so it can only ever sign the thing
+   * that was approved and cannot outlive it. It answers three questions and holds no key the
+   * page can reach — see `browserSigner` and the isolation level it declares.
+   */
+  signerFor(unlocked) {
+    return browserSigner(this.record, unlocked);
+  },
+
   async send(operation) {
-    if (!this.record) throw new Error('This browser does not hold the key for this wallet.');
     const unlocked = await this.unlockFor(operation.id);
-    const mnemonic = await decryptMnemonic(this.record.blob, unlocked.unlock, this.record.salt);
-    const signed = signPlan(mnemonic, unlocked.plan, this.record.address, {
-      transactionHash: unlocked.transactionHash,
-      network: state.config.network,
-    });
-    // The authorisation is signed here, with a key the server does not have.
-    const authorization = attest(mnemonic, {
-      vaultId: this.record.address,
-      accountId: 'bitcoin',
-      transactionHash: unlocked.transactionHash,
-      statementDigest: unlocked.statementDigest,
-      approvalMethod: 'veyns:palm',
-      approvals: unlocked.approvals,
-      approvedBy: unlocked.approvedBy,
-      decisionIds: unlocked.decisionIds,
-      approvedAt: Math.floor(Date.now() / 1000),
-    }, unlocked.attestationEpoch ?? 1);
-    const sent = await api(`/api/operations/${operation.id}/broadcast`, { hex: signed.hex, authorization });
+    // Signing and the authorisation record both happen behind the signer, against the digest
+    // the palm approved; a mismatch throws there and nothing reaches this line.
+    const { hex, authorization } = await this.signerFor(unlocked).signTransaction({ network: state.config.network });
+    const sent = await api(`/api/operations/${operation.id}/broadcast`, { hex, authorization });
     return { ...sent, receipt: await readReceipt(operation.id) };
   },
 
@@ -517,11 +517,9 @@ const device = {
    * wallet here, on a branch of its own; the vault is told the public half and nothing else.
    */
   async makeSigningKey(operation) {
-    if (!this.record) throw new Error('This browser does not hold the key for this wallet.');
     const unlocked = await this.unlockFor(operation.id);
-    const mnemonic = await decryptMnemonic(this.record.blob, unlocked.unlock, this.record.salt);
-    const { publicKey } = cosignerFrom(mnemonic, operation.details.branch);
-    return api('/api/signing-key/register', { operationId: operation.id, publicKey: toHex(publicKey) });
+    const publicKey = await cosignerPublicKeyFor(this.record, unlocked, operation.details.branch);
+    return api('/api/signing-key/register', { operationId: operation.id, publicKey });
   },
 
   /**
@@ -530,25 +528,11 @@ const device = {
    * is the half-signed transaction with this browser's signature added to it.
    */
   async addSignature(operation) {
-    if (!this.record) throw new Error('This browser does not hold the key for this wallet.');
     const unlocked = await this.unlockFor(operation.id);
-    const mnemonic = await decryptMnemonic(this.record.blob, unlocked.unlock, this.record.salt);
-    const { psbt } = signQuorum(mnemonic, {
-      psbt: unlocked.psbt,
-      plan: unlocked.plan,
-      index: unlocked.keyIndex,
-      address: unlocked.address,
-      transactionHash: unlocked.transactionHash,
-      network: state.config.network,
-    });
+    // The same signer: it sees an approval carrying a PSBT and contributes one signature to
+    // it rather than signing the whole spend. What comes back is a PSBT, never a key.
+    const { psbt } = await this.signerFor(unlocked).signTransaction({ network: state.config.network });
     return api(`/api/operations/${operation.id}/signature`, { psbt });
-  },
-
-  /** The phrase, for an operation that has already been palm-approved. */
-  async phraseFromRecord(operationId) {
-    if (!this.record) throw new Error('This browser does not hold the key for this wallet.');
-    const unlocked = await this.unlockFor(operationId);
-    return decryptMnemonic(this.record.blob, unlocked.unlock, this.record.salt);
   },
 
   /**
@@ -556,30 +540,22 @@ const device = {
    * replaces, so the server can see the lineage continue without being able to continue it.
    */
   async rotateAttestation(operation) {
-    const mnemonic = await this.phraseFromRecord(operation.id);
+    const unlocked = await this.unlockFor(operation.id);
     const current = state.data?.wallet?.attestation?.epoch ?? null;
-    const registration = current === null
+    const registration = await this.signerFor(unlocked).signMessage(current === null
       // No lineage yet: start one at epoch 1, signed by itself.
-      ? registerKey(mnemonic, { vaultId: this.record.address, epoch: 1 })
-      : registerKey(mnemonic, { vaultId: this.record.address, epoch: current + 1, previous: current });
+      ? { vaultId: this.record.address, epoch: 1 }
+      : { vaultId: this.record.address, epoch: current + 1, previous: current });
     const result = await api('/api/attestation/register', { operationId: operation.id, attestationRegistration: registration });
     // The device pins the root of whatever lineage it just started.
-    if (current === null && this.record) {
-      await saveRecord({ ...this.record, attestationRootKeyId: result.attestation.rootKeyId });
-      this.record = await loadRecord();
-    }
+    if (current === null) this.record = (await pinAttestationRoot(result.attestation.rootKeyId)) ?? this.record;
     return result;
   },
 
   /** Derives the address for a newly approved network and reports only the public part. */
   async addAccount(operation) {
-    if (!this.record) throw new Error('This browser does not hold the key for this wallet.');
     const unlocked = await this.unlockFor(operation.id);
-    const mnemonic = await decryptMnemonic(this.record.blob, unlocked.unlock, this.record.salt);
-    const derived = accountsFrom(mnemonic);
-    if (derived.bitcoin.address !== this.record.address) throw new Error('That phrase belongs to a different wallet.');
-    const account = derived[operation.network];
-    if (!account) throw new Error('This vault does not know that network.');
+    const account = await deriveAccountFor(this.record, unlocked, operation.network);
     await api('/api/accounts/register', {
       operationId: operation.id,
       address: account.address,
@@ -601,24 +577,23 @@ const device = {
     return result;
   },
 
+  /**
+   * The recovery words, to put on the screen for the person who owns them.
+   *
+   * The only call in this file that receives a secret, and the caller below hands it straight
+   * to the DOM without keeping it.
+   */
   async phrase(operation) {
-    if (!this.record) throw new Error('This browser does not hold the key for this wallet.');
-    const unlocked = await this.unlockFor(operation.id);
-    return decryptMnemonic(this.record.blob, unlocked.unlock, this.record.salt);
+    return revealPhrase(this.record, await this.unlockFor(operation.id));
   },
 
   /** Puts an existing phrase back on this device, after the two-scan ceremony. */
   async restore(operation, mnemonic, expectedAddress) {
-    const account = accountFrom(mnemonic);
-    if (account.address !== expectedAddress) throw new Error('Those words belong to a different wallet.');
     const unlocked = await this.unlockFor(operation.id);
-    const blob = await encryptMnemonic(mnemonic, unlocked.unlock, unlocked.salt);
-    await saveRecord({ blob, salt: unlocked.salt, address: account.address, publicKey: toHex(account.publicKey), createdAt: Date.now() });
+    await restoreVaultKey(mnemonic, unlocked, expectedAddress);
     this.record = await loadRecord();
   },
 };
-
-const toHex = bytes => [...bytes].map(b => b.toString(16).padStart(2, '0')).join('');
 
 /**
  * Fetches the authorisation receipt and checks its ML-DSA-65 signature here, in the page,

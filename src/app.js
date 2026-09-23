@@ -14,6 +14,8 @@ import {
 } from './bitcoin.js';
 import { DEFAULT_POLICY, PolicyError, describePolicy, requiredFor, requiredToChange, validatePolicy } from './policy.js';
 import { NETWORKS, createBalances, format, networkList } from './networks.js';
+import { createSecurityLog } from './events.js';
+import { createScanner, SCANNER } from './scanner.js';
 
 const SESSION_COOKIE = 'palmsafe_sid';
 const LOGIN_COOKIE = 'palmsafe_login';
@@ -22,6 +24,21 @@ const LOGIN_SECONDS = 300;
 const PALM_REQUEST_SECONDS = 300;
 const OPERATION_SECONDS = 1800; // how long a quorum has to come together
 const UNLOCK_SECONDS = 300; // how long the key stays open once a request has opened it
+
+/*
+ * The two custody modes, named rather than spelled out at each of the thirty places that ask.
+ *
+ * BROWSER is the only one that can spend. LEGACY is what the first version of QuVault made:
+ * the server holds the whole private key, so a QuVault operator could sign with it and no
+ * palm would be involved. That is not a property this product is allowed to have, so the
+ * legacy key is now reachable from exactly one function — `sweepLegacyVault` — which can do
+ * nothing but empty the vault to a single address under a completed palm approval.
+ *
+ * Legacy rows are not deleted and legacy coins are not stranded: the way out is
+ * /api/wallet/upgrade, which sweeps to a browser-held key, or /api/wallet/reset, which sweeps
+ * to an address the owner gives. Both end with `sealed_key = NULL` or the row gone.
+ */
+const CUSTODY = { BROWSER: 'client', LEGACY: 'server' };
 
 const STATIC_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -206,6 +223,37 @@ export function createApp(options) {
     return dbPromise;
   };
 
+  // Security events. Field names are filtered against an allowlist in src/events.js, so a
+  // secret cannot be written into one by mistake and an event cannot fail a request.
+  const security = createSecurityLog({ log, now, sink: options.securitySink });
+
+  /*
+   * The scanner, of which there is one and it is the null one.
+   *
+   * It is wired in so that the state is reportable and the events below have somewhere real
+   * to come from. It cannot report a pass, so no code path here can act on one.
+   */
+  const scanner = createScanner({ provider: options.scannerProvider });
+
+  /**
+   * Turns whatever a provider said into the right security event.
+   *
+   * One function rather than three call sites, so that when a provider exists that can
+   * actually fail a check, the failure is already being recorded. Returns the verdicts so a
+   * caller can decide, and decides nothing itself.
+   */
+  function recordScannerEvidence(evidence, context = {}) {
+    const at = { ...context, provider: evidence?.provider ?? scanner.name };
+    const pad = evidence?.pad?.result;
+    const biometric = evidence?.biometric?.result;
+    if (pad === SCANNER.FAILED) security.padFailure({ ...at, reason: 'liveness check did not pass' });
+    if (biometric === SCANNER.FAILED) security.biometricFailure({ ...at, reason: 'no match' });
+    if (pad === undefined || pad === SCANNER.NOT_AVAILABLE || biometric === SCANNER.NOT_AVAILABLE) {
+      security.scannerUnavailable({ ...at, reason: scanner.getCapabilities().reason });
+    }
+    return { pad: pad ?? SCANNER.NOT_AVAILABLE, biometric: biometric ?? SCANNER.NOT_AVAILABLE };
+  }
+
   const veyns = createVeyns({ issuer, getClientId: () => clientId, backendSecret, now, fetchImpl });
   const chain = createChain({ apiUrl: chainApi, fetchImpl });
   const balances = createBalances({ fetchImpl });
@@ -326,9 +374,11 @@ export function createApp(options) {
     // The public half of the owner's attestation key, and the lineage it descends from.
     // The server has never had the other half, and cannot extend the lineage itself.
     attestation: attestationView(w),
-    protection: w.custody === 'client'
+    // A legacy vault is described by what is true of it, not by the strength of the envelope
+    // its key sits in. The server can open that envelope; that is the fact that matters.
+    protection: w.custody === CUSTODY.BROWSER
       ? 'Key in the owner’s browser; its unlock secret sealed with ML-KEM-768 + X25519'
-      : 'ML-KEM-768 + X25519 + AES-256-GCM',
+      : 'Legacy: the key is held on the server and can no longer spend. Move this vault into your browser.',
   });
 
   /** What a page needs to check a vault's key lineage against what its own device pinned. */
@@ -596,19 +646,56 @@ export function createApp(options) {
     }
   }
 
-  /** Only for wallets made before the key moved into the browser. */
-  async function broadcastPlan(op) {
-    const wallet = await one('walletOf', op.wallet_user_id);
-    if (!wallet) throw new HttpError(409, 'This account has no wallet.');
-    const plan = JSON.parse(op.payload);
-    const privateKey = openSealed(wallet.sealed_key, vault());
-    let signed;
-    try {
-      signed = signPlan({ privateKey, publicKey: Buffer.from(wallet.public_key, 'hex'), plan });
-    } finally {
-      privateKey.fill(0);
+  /**
+   * The only function in this codebase that opens a legacy private key, and the only thing
+   * that key is still permitted to do.
+   *
+   * It cannot send an amount, because there is no amount to choose: it sweeps everything to
+   * one address and leaves nothing behind. It cannot pick outputs, set a change address or
+   * be handed a plan from anywhere else — the plan is built here, from the chain's own view
+   * of the vault, immediately before signing. So the worst a compromised caller can do is
+   * empty a legacy vault to an address that a completed palm approval already named, which
+   * is what both of its callers are for.
+   *
+   * There is deliberately no path from a withdrawal to this function. A legacy vault that
+   * wants to spend an amount has to move into a browser first.
+   */
+  async function sweepLegacyVault(wallet, { toAddress, reason, pendingMessage }) {
+    if (wallet?.custody !== CUSTODY.LEGACY || !wallet.sealed_key) {
+      throw new HttpError(409, 'This vault signs in the owner’s browser. The server holds no key for it.');
     }
-    return { txid: await chain.broadcast(signed.hex) };
+    if (!isValidAddress(toAddress)) throw new HttpError(400, `That is not a valid ${network} address.`);
+    try {
+      const [balance, utxos, feeRate] = await Promise.all([
+        chain.balance(wallet.address), chain.spendableUtxos(wallet.address), chain.feeRate(),
+      ]);
+      // An unconfirmed coin cannot be spent yet, and this key is about to stop existing.
+      if (balance.pending > 0) throw new HttpError(409, pendingMessage);
+      if (!utxos.length) return { txid: null, sweptSats: 0 };
+
+      const publicKey = Buffer.from(wallet.public_key, 'hex');
+      const plan = planSpend({ publicKey, utxos, toAddress, amountSats: 'max', feeRate });
+      const privateKey = openSealed(wallet.sealed_key, vault());
+      let hex;
+      try {
+        hex = signPlan({ privateKey, publicKey, plan }).hex;
+      } finally {
+        privateKey.fill(0);
+      }
+      const txid = await chain.broadcast(hex);
+      security.migration({
+        vaultId: wallet.address, address: toAddress, txid, sats: plan.sentSats,
+        custody: CUSTODY.LEGACY, reason, outcome: 'swept',
+      });
+      log.log(`legacy vault ${wallet.address} swept to ${toAddress} (${reason}) in ${txid}`);
+      return { txid, sweptSats: plan.sentSats };
+    } catch (error) {
+      if (error instanceof HttpError) throw error;
+      if (error instanceof ChainError || error instanceof WalletError) {
+        throw new HttpError(409, `The coins could not be moved: ${error.message}`);
+      }
+      throw error;
+    }
   }
 
   /**
@@ -661,7 +748,14 @@ export function createApp(options) {
         // the operation waits, and the owner's device signs and sends it. A lock with nothing
         // to move has no transaction to wait for, so it simply happens.
         const moving = Boolean(op.payload && JSON.parse(op.payload).inputs);
-        if (wallet?.custody === 'client' && moving) return;
+        if (wallet?.custody === CUSTODY.BROWSER && moving) return;
+        // Nothing else may move coins here. A legacy vault used to be signed for at this
+        // point, by the server, with the key it was holding; that path is gone, and both of
+        // the ways a legacy vault can still move its money are palm-approved sweeps.
+        if (moving) {
+          throw new HttpError(409, 'This vault was made before keys lived in the browser and can no longer '
+            + 'spend from the server. Move it into your browser first — every coin comes with it.');
+        }
         if (op.kind === 'lock' && !moving) {
           await lockAccount(op);
           await query('finishOperation', 'done', null, null, time, op.id);
@@ -678,7 +772,9 @@ export function createApp(options) {
         // Erasing happens when the owner's browser confirms it, so the key is cleared there too.
         : op.kind === 'reset' ? { txid: null }
         : ['recovery', 'account', 'attestation', 'signing'].includes(op.kind) ? { txid: null }
-        : await broadcastPlan(op);
+        // Withdrawals and locks are signed in the owner's browser and returned above. There is
+        // no remaining kind of operation that this server can sign for.
+        : { txid: null };
       await query('finishOperation', 'done', txid, null, time, op.id);
     } catch (error) {
       const known = error instanceof HttpError || error instanceof ChainError || error instanceof WalletError;
@@ -870,11 +966,11 @@ export function createApp(options) {
     if (!wallet) throw new HttpError(409, 'This account has no wallet.');
     if (op.kind === 'upgrade') {
       // The secret for the key this browser is about to make, not the one being retired.
-      if (wallet.custody === 'client') throw new HttpError(409, 'This vault already lives in your browser.');
+      if (wallet.custody === CUSTODY.BROWSER) throw new HttpError(409, 'This vault already lives in your browser.');
       const payload = JSON.parse(op.payload);
       return { unlock: openSealed(payload.unlockSealed, vault()).toString('base64'), salt: payload.salt };
     }
-    if (wallet.custody !== 'client') throw new HttpError(409, 'This wallet signs on the server.');
+    if (wallet.custody !== CUSTODY.BROWSER) throw new HttpError(409, 'This wallet signs on the server.');
     return {
       unlock: openSealed(wallet.unlock_sealed, vault()).toString('base64'),
       salt: wallet.salt,
@@ -920,7 +1016,7 @@ export function createApp(options) {
     }
 
     const mine = await one('walletOf', user.id);
-    if (mine?.custody !== 'client') throw new HttpError(409, 'Move your own vault into this browser first.');
+    if (mine?.custody !== CUSTODY.BROWSER) throw new HttpError(409, 'Move your own vault into this browser first.');
     const plan = JSON.parse(op.payload);
     return {
       unlock: openSealed(mine.unlock_sealed, vault()).toString('base64'),
@@ -990,20 +1086,32 @@ export function createApp(options) {
     const wallet = await one('walletOf', user.id);
     if (!wallet) throw new HttpError(409, 'This account has no wallet.');
 
+    const event = { operationId: op.id, userId: user.id, vaultId: wallet.address, kind: op.kind, network, chain: 'bitcoin', custody: wallet.custody };
+    security.signingAttempt(event);
+
     // 1. The plan on disk is still the transaction that was approved.
     const bound = bindPlan(wallet, plan);
     if (bound.digest !== plan.transactionHash || bound.digest !== JSON.parse(op.details).transaction_hash) {
+      security.digestMismatch({ ...event, digestExpected: JSON.parse(op.details).transaction_hash, digestOffered: bound.digest });
+      security.signingRejected({ ...event, reason: 'stored transaction no longer matches the approval' });
       throw new HttpError(409, 'The stored transaction no longer matches the one that was approved.');
     }
     // 2. The owner's own key attested to that approval, for this exact transaction.
     //    This server cannot produce this record: it holds only the public half of that key.
-    if (wallet.custody === 'client') {
+    if (wallet.custody === CUSTODY.BROWSER) {
       const expected = await expectedAuthorization(op, wallet);
       const authorization = body.authorization ?? authorizationOf(op);
       const lineage = attestationOf(wallet);
-      if (!lineage.ok) throw new HttpError(409, `This vault has no valid attestation key: ${lineage.reason}.`);
+      if (!lineage.ok) {
+        security.authorizationFailure({ ...event, reason: lineage.reason });
+        security.signingRejected({ ...event, reason: 'no valid attestation key' });
+        throw new HttpError(409, `This vault has no valid attestation key: ${lineage.reason}.`);
+      }
       const checkedAuthorization = verifyAuthorization(authorization, lineage.publicKey, expected);
       if (!checkedAuthorization.ok) {
+        // The reason is written by verifyAuthorization, not by the caller, so it is safe text.
+        security.authorizationFailure({ ...event, reason: checkedAuthorization.reason, keyEpoch: lineage.epoch });
+        security.signingRejected({ ...event, reason: 'authorisation did not verify' });
         throw new HttpError(409, `No valid human authorisation for this transaction: ${checkedAuthorization.reason}.`);
       }
       if (!op.human_authorization) await query('setAuthorization', JSON.stringify(authorization), op.id);
@@ -1013,7 +1121,10 @@ export function createApp(options) {
     try {
       checked = verifyAgainstPlan(String(body.hex ?? ''), plan);
     } catch (error) {
-      if (error instanceof WalletError) throw new HttpError(400, error.message);
+      if (error instanceof WalletError) {
+        security.signingRejected({ ...event, reason: 'signed bytes do not match the approved plan' });
+        throw new HttpError(400, error.message);
+      }
       throw error;
     }
     try {
@@ -1022,10 +1133,12 @@ export function createApp(options) {
       // so a lock that could not be sent leaves everything exactly as it was.
       if (op.kind === 'lock') await lockAccount(op);
       await query('finishOperation', 'done', txid, null, now(), op.id);
+      security.signingSuccess({ ...event, txid, transactionHash: bound.digest, isolation: 'none:browser-javascript' });
       return { txid };
     } catch (error) {
       if (!(error instanceof ChainError)) throw error;
       await query('finishOperation', 'failed', null, error.message, now(), op.id);
+      security.signingRejected({ ...event, reason: 'the network would not take the transaction' });
       throw new HttpError(502, error.message);
     }
   }
@@ -1107,6 +1220,29 @@ export function createApp(options) {
   }
 
   /** Market price for the dashboard chart. Never touches wallet state. */
+  /**
+   * What this deployment's palm-vein scanner can do.
+   *
+   * The honest answer is nothing: there is no scanner integrated with QuVault. The route
+   * exists so the answer is reportable rather than assumed, and so a page can say so plainly
+   * instead of implying hardware that is not there.
+   */
+  async function getScanner({ user }) {
+    const capabilities = scanner.getCapabilities();
+    recordScannerEvidence(null, { userId: user.id });
+    return {
+      provider: scanner.name,
+      available: capabilities.available,
+      presentationAttackDetection: capabilities.presentationAttackDetection,
+      biometricMatch: capabilities.biometricMatch,
+      deviceAttestation: capabilities.deviceAttestation,
+      scannerClass: capabilities.scannerClass,
+      reason: capabilities.reason,
+      // Authorisation records stay at version 1 until a provider can fill a version 2 in.
+      authorizationVersion: 1,
+    };
+  }
+
   async function getPrice() {
     try {
       return await prices.latest();
@@ -1173,7 +1309,7 @@ export function createApp(options) {
     requirePalmReady();
     const wallet = await one('walletOf', user.id);
     if (!wallet) throw new HttpError(409, 'Create the wallet first.');
-    if (wallet.custody !== 'client') {
+    if (wallet.custody !== CUSTODY.BROWSER) {
       throw new HttpError(409, 'This vault was made before keys lived in the browser, so it has no recovery phrase for other networks to come from. Move it into this browser first.');
     }
     const networkId = String(body.network ?? '');
@@ -1223,7 +1359,7 @@ export function createApp(options) {
     if (!mine) {
       throw new HttpError(409, 'Create your own vault first: the key you sign with comes from your own phrase.');
     }
-    if (mine.custody !== 'client') throw new HttpError(409, 'Move your vault into this browser first.');
+    if (mine.custody !== CUSTODY.BROWSER) throw new HttpError(409, 'Move your vault into this browser first.');
     if (member.public_key) throw new HttpError(409, 'You already have a signing key for that vault.');
 
     // One branch per vault this person signs for, never reused between them.
@@ -1279,7 +1415,7 @@ export function createApp(options) {
     requirePalmReady();
     const wallet = await one('walletOf', user.id);
     if (!wallet) throw new HttpError(409, 'Create the wallet first.');
-    if (wallet.custody !== 'client') throw new HttpError(409, 'Move this vault into your browser first.');
+    if (wallet.custody !== CUSTODY.BROWSER) throw new HttpError(409, 'Move this vault into your browser first.');
 
     const members = await all('membersOf', user.id);
     const account = await one('accountOn', user.id, 'bitcoin');
@@ -1433,7 +1569,7 @@ export function createApp(options) {
       address: wallet.address,
       accounts: accounts.map(a => NETWORKS[a.network]?.label ?? a.network).join(', '),
       holds: holding === null ? 'unknown' : `${toBtc(holding)} tBTC`,
-      warning: wallet.custody === 'client'
+      warning: wallet.custody === CUSTODY.BROWSER
         ? 'the key in this browser goes with it; only the twelve words could bring it back'
         : 'the key held for this vault is destroyed and cannot be brought back',
     };
@@ -1462,27 +1598,14 @@ export function createApp(options) {
     let sweptSats = 0;
     if (sweepTo) {
       if (!isValidAddress(sweepTo)) throw new HttpError(400, `That is not a valid ${network} address.`);
-      if (wallet.custody !== 'server') {
+      if (wallet.custody !== CUSTODY.LEGACY) {
         throw new HttpError(409, 'This vault signs in your browser: send the coins with Send funds first.');
       }
-      if (balance?.pending > 0) throw new HttpError(409, 'A payment here is still waiting for its first confirmation.');
-      try {
-        const utxos = await chain.spendableUtxos(wallet.address);
-        if (utxos.length) {
-          const oldPublicKey = Buffer.from(wallet.public_key, 'hex');
-          const plan = planSpend({ publicKey: oldPublicKey, utxos, toAddress: sweepTo, amountSats: 'max', feeRate: await chain.feeRate() });
-          const privateKey = openSealed(wallet.sealed_key, vault());
-          try {
-            txid = await chain.broadcast(signPlan({ privateKey, publicKey: oldPublicKey, plan }).hex);
-          } finally {
-            privateKey.fill(0);
-          }
-          sweptSats = plan.sentSats;
-        }
-      } catch (error) {
-        if (error instanceof ChainError || error instanceof WalletError) throw new HttpError(409, `The coins could not be moved: ${error.message}`);
-        throw error;
-      }
+      ({ txid, sweptSats } = await sweepLegacyVault(wallet, {
+        toAddress: sweepTo,
+        reason: 'vault erased',
+        pendingMessage: 'A payment here is still waiting for its first confirmation.',
+      }));
     }
 
     // Nothing of this vault is kept: not the key, not its accounts, signers or history.
@@ -1518,7 +1641,7 @@ export function createApp(options) {
     requirePalmReady();
     const wallet = await one('walletOf', user.id);
     if (!wallet) throw new HttpError(409, 'Create the wallet first.');
-    if (wallet.custody !== 'client') throw new HttpError(409, 'This vault signs on the server and has no attestation key of its own.');
+    if (wallet.custody !== CUSTODY.BROWSER) throw new HttpError(409, 'This vault signs on the server and has no attestation key of its own.');
     // A vault made before key lineages existed has no chain to continue, so it starts one.
     // A vault with a working chain continues it, and the key it has signs for the next.
     const current = attestationOf(wallet);
@@ -1703,7 +1826,7 @@ export function createApp(options) {
     vault();
     const wallet = await one('walletOf', user.id);
     if (!wallet) throw new HttpError(409, 'Create the wallet first.');
-    if (wallet.custody === 'client') throw new HttpError(409, 'This vault already lives in your browser.');
+    if (wallet.custody === CUSTODY.BROWSER) throw new HttpError(409, 'This vault already lives in your browser.');
     const statement = 'Move this vault into my browser and retire the key held on the server';
     const details = {
       action: 'move key to browser',
@@ -1728,7 +1851,7 @@ export function createApp(options) {
     }
     const wallet = await one('walletOf', user.id);
     if (!wallet) throw new HttpError(409, 'This account has no wallet.');
-    if (wallet.custody === 'client') return { wallet: walletView(wallet), txid: op.txid, sweptSats: 0 };
+    if (wallet.custody === CUSTODY.BROWSER) return { wallet: walletView(wallet), txid: op.txid, sweptSats: 0 };
 
     const address = String(body.address ?? '').trim();
     const publicKey = String(body.publicKey ?? '').trim();
@@ -1739,32 +1862,13 @@ export function createApp(options) {
     // The moved vault is a new key lineage, rooted at the key the new phrase derives.
     const registration = readRegistration(body, { vaultId: address });
 
-    let txid = null;
-    let sweptSats = 0;
-    try {
-      const [balance, utxos, feeRate] = await Promise.all([
-        chain.balance(wallet.address), chain.spendableUtxos(wallet.address), chain.feeRate(),
-      ]);
-      // An unconfirmed coin cannot be spent yet, and the old key is about to be destroyed.
-      if (balance.pending > 0) {
-        throw new HttpError(409, 'A payment here is still waiting for its first confirmation. Move the vault once it lands.');
-      }
-      if (utxos.length) {
-        const oldPublicKey = Buffer.from(wallet.public_key, 'hex');
-        const plan = planSpend({ publicKey: oldPublicKey, utxos, toAddress: address, amountSats: 'max', feeRate });
-        const privateKey = openSealed(wallet.sealed_key, vault());
-        try {
-          txid = await chain.broadcast(signPlan({ privateKey, publicKey: oldPublicKey, plan }).hex);
-        } finally {
-          privateKey.fill(0);
-        }
-        sweptSats = plan.sentSats;
-      }
-    } catch (error) {
-      if (error instanceof HttpError) throw error;
-      if (error instanceof ChainError || error instanceof WalletError) throw new HttpError(409, `The coins could not be moved: ${error.message}`);
-      throw error;
-    }
+    // This is the migration out of legacy custody: the coins go to the key the browser just
+    // made, and the row below stops holding a key at all.
+    const { txid, sweptSats } = await sweepLegacyVault(wallet, {
+      toAddress: address,
+      reason: 'moved into the owner’s browser',
+      pendingMessage: 'A payment here is still waiting for its first confirmation. Move the vault once it lands.',
+    });
 
     const payload = JSON.parse(op.payload);
     await transaction(async q => {
@@ -1844,7 +1948,7 @@ export function createApp(options) {
     requirePalmReady();
     const wallet = await one('walletOf', user.id);
     if (!wallet) throw new HttpError(409, 'Create the wallet first.');
-    if (wallet.custody !== 'client') {
+    if (wallet.custody !== CUSTODY.BROWSER) {
       throw new HttpError(409, 'This vault signs on the server and has no recovery phrase. Move it into this browser to get one.');
     }
     const statement = `Show the recovery phrase for my ${network} wallet`;
@@ -1863,6 +1967,18 @@ export function createApp(options) {
     requirePalmReady();
     const wallet = await one('walletOf', user.id);
     if (!wallet) throw new HttpError(409, 'Create the wallet first.');
+    // A legacy vault's key is on the server, so a spend from one would be a spend this server
+    // could make by itself. It is refused at the door rather than at the broadcast, so nobody
+    // collects palm approvals for a transaction that was never going to be signed.
+    if (wallet.custody !== CUSTODY.BROWSER) {
+      security.signingRejected({
+        userId: user.id, vaultId: wallet.address, custody: wallet.custody, kind: 'withdraw',
+        reason: 'legacy server custody cannot spend',
+      });
+      throw new HttpError(409, 'This vault was made before keys lived in the browser, so the server still '
+        + 'holds its key and spending from it is no longer allowed. Move the vault into your browser '
+        + 'first — it takes one palm scan and brings every coin with it.');
+    }
     const account = await one('accountOn', user.id, 'bitcoin');
     const lock = lockOfAccount(account, wallet);
 
@@ -2087,6 +2203,7 @@ export function createApp(options) {
     { method: 'POST', path: '/api/login/finish', handler: loginFinish },
     { method: 'POST', path: '/api/logout', handler: logout },
     { method: 'GET', path: '/api/price', handler: getPrice, auth: true },
+    { method: 'GET', path: '/api/scanner', handler: getScanner, auth: true },
     { method: 'GET', path: '/api/random', handler: getRandom, auth: true },
     { method: 'GET', path: '/api/wallet', handler: getWallet, auth: true },
     { method: 'POST', path: '/api/wallet/approval', handler: requestWallet, auth: true },
