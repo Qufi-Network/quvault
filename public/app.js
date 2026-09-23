@@ -503,11 +503,32 @@ const device = {
     return browserSigner(this.record, unlocked);
   },
 
+  /**
+   * The request the page puts to a signer.
+   *
+   * Every field is copied from the authorisation the server issued, and the signer then checks
+   * that the two agree before it signs anything. That may look circular, and it is not: the
+   * page cannot alter one side without the signer noticing, and the signer recomputes the
+   * digest from the plan afterwards regardless of what either side claims.
+   */
+  signingRequest(unlocked) {
+    return {
+      authorizationId: unlocked.authorizationId,
+      walletId: unlocked.walletId,
+      transactionDigest: unlocked.transactionHash,
+      network: unlocked.network,
+      chain: unlocked.chain,
+      policyVersion: unlocked.policyVersion,
+      authorizationVersion: unlocked.authorizationVersion,
+      bindingNonce: unlocked.bindingNonce,
+    };
+  },
+
   async send(operation) {
     const unlocked = await this.unlockFor(operation.id);
     // Signing and the authorisation record both happen behind the signer, against the digest
     // the palm approved; a mismatch throws there and nothing reaches this line.
-    const { hex, authorization } = await this.signerFor(unlocked).signTransaction({ network: state.config.network });
+    const { hex, authorization } = await this.signerFor(unlocked).signTransaction(this.signingRequest(unlocked));
     const sent = await api(`/api/operations/${operation.id}/broadcast`, { hex, authorization });
     return { ...sent, receipt: await readReceipt(operation.id) };
   },
@@ -531,7 +552,7 @@ const device = {
     const unlocked = await this.unlockFor(operation.id);
     // The same signer: it sees an approval carrying a PSBT and contributes one signature to
     // it rather than signing the whole spend. What comes back is a PSBT, never a key.
-    const { psbt } = await this.signerFor(unlocked).signTransaction({ network: state.config.network });
+    const { psbt } = await this.signerFor(unlocked).signTransaction(this.signingRequest(unlocked));
     return api(`/api/operations/${operation.id}/signature`, { psbt });
   },
 

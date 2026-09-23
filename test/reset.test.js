@@ -5,10 +5,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as btc from '@scure/btc-signer';
-import { DEST, start, ok, signedIn, palmApprove, walletFor, setRules, legacyWallet } from './harness.js';
+import { DEST, start, ok, signedIn, palmApprove, walletFor, setRules, legacyWallet , startWithMigration } from './harness.js';
 
 test('a vault holding coins is not erased until they are dealt with', async t => {
-  const env = await start(t);
+  const env = await startWithMigration(t);
   const alex = await signedIn(env, 'sub-alex');
   await legacyWallet(env, alex);
   env.world.chain.utxos = [{ txid: 'a'.repeat(64), vout: 0, value: 310_000 }];

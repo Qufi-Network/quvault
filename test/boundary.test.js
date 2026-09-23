@@ -26,7 +26,7 @@ import {
   createVaultKey, signApprovedSpend, cosignerPublicKeyFor, revealPhrase, restoreVaultKey,
   loadRecord, clearRecord, planDigest,
 } from '../client/wallet.js';
-import { DEST, start, ok, signedIn, palmApprove, legacyWallet } from './harness.js';
+import { DEST, start, ok, signedIn, palmApprove, legacyWallet , startWithMigration } from './harness.js';
 
 /* ------------------------------------------------------------ a browser, in Node */
 
@@ -211,7 +211,7 @@ test('a vault whose key is on the server cannot be spent from', async t => {
 });
 
 test('the way out of legacy custody still works, and retires the key', async t => {
-  const env = await start(t);
+  const env = await startWithMigration(t);
   const alex = await signedIn(env, 'sub-legacy');
   await legacyWallet(env, alex);
   env.world.chain.utxos = [{ txid: 'd'.repeat(64), vout: 0, value: 400_000 }];

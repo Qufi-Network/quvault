@@ -360,7 +360,7 @@ work; no console errors.
 7. **V1 remains acceptable for authorizing a spend.** `minVersion` exists but nothing sets it,
    correctly, since V2 cannot yet be produced.
 8. **Two NUL bytes were found in `src/authorization.js` source** — the `sameSet` separator was
-   written as a raw NUL rather than ` `, which made the file register as binary and be
+   written as a raw NUL rather than `U+0000`, which made the file register as binary and be
    silently skipped by `grep` during auditing. The separator semantics are correct (a NUL
    cannot collide with a value, a space could); only the encoding was wrong. Replaced with the
    escape, byte-identical at runtime, and the tests confirm it. **Worth noting as a process

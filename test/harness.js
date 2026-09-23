@@ -295,3 +295,13 @@ export function browserKey() {
   };
 }
 
+
+/**
+ * A deployment that has the legacy migration capability switched on.
+ *
+ * `legacySeed` is absent by default, and where it is absent nothing served by the app can open
+ * a legacy wallet's private key. Only a test that is exercising the migration itself supplies
+ * it, which is why this is a separate helper rather than a default in `start`: every call site
+ * that needs the capability says so.
+ */
+export const startWithMigration = (t, overrides = {}) => start(t, { legacySeed: SEED, ...overrides });

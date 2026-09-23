@@ -12,7 +12,9 @@
     "test": "node scripts/ids.js && node --test \"test/*.test.js\"",
     "keygen": "node scripts/keygen.js",
     "check": "node scripts/check.js",
-    "build:client": "esbuild client/wallet.js --bundle --format=esm --minify --target=es2022 --outfile=public/vendor/wallet.js"
+    "build:client": "esbuild client/wallet.js --bundle --format=esm --minify --target=es2022 --outfile=public/vendor/wallet.js",
+    "audit": "node scripts/audit.js",
+    "inventory": "node scripts/legacy-inventory.js"
   },
   "dependencies": {
     "@noble/curves": "^1.9.7",

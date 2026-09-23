@@ -10,7 +10,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import { ISOLATION, IMPLEMENTED_ISOLATION, assertSigner, sealResult, SignerError, describeIsolation } from '../src/signer.js';
+import {
+  ISOLATION, IMPLEMENTED_ISOLATION, BINDING, assertSigner, sealResult, SignerError,
+  describeIsolation, requestMatchesAuthorization, AUTHORIZATION_FIELDS,
+} from '../src/signer.js';
 import { EVENT, redact, createSecurityLog, ALLOWED_EVENT_FIELDS } from '../src/events.js';
 import { createNullScanner, assertProvider, SCANNER } from '../src/scanner.js';
 import { restoreVaultKey, browserSigner, loadRecord, clearRecord, revealPhrase, accountFrom } from '../client/wallet.js';
@@ -54,24 +57,42 @@ test('a signer exposes three questions and no way to ask for the key', async () 
   const { record, unlock, salt } = await restored();
   const signer = browserSigner(record, { unlock, salt });
 
-  assert.deepEqual(
-    Object.keys(signer).sort(),
-    ['getPublicKey', 'isolation', 'signMessage', 'signTransaction'],
-    'the signer has exactly this surface',
-  );
+  // Three questions, plus the capability description. Every other key on the object is a
+  // declaration about the signer, not a way to ask it for anything.
+  const methods = Object.keys(signer).filter(name => typeof signer[name] === 'function').sort();
+  assert.deepEqual(methods, ['capabilities', 'getPublicKey', 'signMessage', 'signTransaction']);
+
   assert.equal(signer.getPublicKey(), record.publicKey);
   assert.match(signer.getPublicKey(), /^0[23][0-9a-f]{64}$/, 'a public key, not a private one');
 
   // Nothing that could return key material exists, by any of its usual names.
-  for (const name of ['getPrivateKey', 'privateKey', 'exportKey', 'getMnemonic', 'mnemonic', 'getSeed', 'seed', 'reveal', 'unlock']) {
+  for (const name of ['getPrivateKey', 'privateKey', 'exportKey', 'exportSeed', 'getSecret',
+    'decryptWallet', 'getMnemonic', 'mnemonic', 'getSeed', 'seed', 'reveal', 'unlock']) {
     assert.equal(signer[name], undefined, name);
   }
-  assert.equal(signer.isolation, ISOLATION.BROWSER_JAVASCRIPT, 'it says where it runs');
+
+  // The capability description says what it is and carries nothing secret.
+  const said = signer.capabilities();
+  assert.equal(said.isolationLevel, ISOLATION.BROWSER_JAVASCRIPT, 'it says where it runs');
+  assert.equal(said.keyHandle, record.address, 'a handle, which is the public address');
+  assert.equal(said.transactionBinding, BINDING.RECOMPUTED_DIGEST);
+  assert.equal(said.humanAuthorizationRequired, true);
+  assert.deepEqual([...said.supportedNetworks], ['bitcoin:testnet4'], 'testnet4 only');
+  const described = JSON.stringify(said);
+  assert.ok(!described.includes(PHRASE) && !described.includes(record.blob), 'nothing secret in it');
 });
 
 test('a signer must declare an isolation level it actually has', () => {
-  const base = { isolation: ISOLATION.BROWSER_JAVASCRIPT, signTransaction() {}, signMessage() {}, getPublicKey() {} };
+  const base = {
+    isolation: ISOLATION.BROWSER_JAVASCRIPT,
+    transactionBinding: BINDING.RECOMPUTED_DIGEST,
+    signTransaction() {}, signMessage() {}, getPublicKey() {},
+  };
   assert.ok(assertSigner({ ...base }), 'the browser signer is accepted');
+
+  // A signer that takes the caller's word for what it is signing is not a boundary.
+  assert.throws(() => assertSigner({ ...base, transactionBinding: BINDING.NONE }), /recompute the transaction digest/);
+  assert.throws(() => assertSigner({ ...base, transactionBinding: undefined }), /recompute the transaction digest/);
 
   // Claiming hardware this build does not have is refused, not quietly believed.
   for (const claimed of [ISOLATION.SECURE_ELEMENT, ISOLATION.TEE, ISOLATION.HSM, ISOLATION.HARDWARE_WALLET, ISOLATION.OS_KEYSTORE]) {

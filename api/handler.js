@@ -32,6 +32,10 @@ const app = createApp({
   clientId: env.VEYNS_CLIENT_ID || '',
   backendSecret: env.VEYNS_BACKEND_SECRET || '',
   walletSeed: env.WALLET_SEED || '',
+  // Absent in a normal deployment: without it, no request can open a legacy wallet's private
+  // key at all. Setting it here puts that capability in the web process, which is the thing
+  // the migration document tells operators not to do.
+  legacySeed: env.QUVAULT_LEGACY_SEED || '',
   network: env.BITCOIN_NETWORK || 'testnet4',
   chainApi: env.CHAIN_API || 'https://mempool.space/testnet4/api',
   requirePalmSignin: env.REQUIRE_PALM_SIGNIN === 'true',

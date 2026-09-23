@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as btc from '@scure/btc-signer';
-import { start, ok, signedIn, palmApprove, legacyWallet, browserKey } from './harness.js';
+import { start, ok, signedIn, palmApprove, legacyWallet, browserKey , startWithMigration } from './harness.js';
 
 test('an older vault still shows its Bitcoin account, and says why it has no others', async t => {
   const env = await start(t);
@@ -25,7 +25,7 @@ test('an older vault still shows its Bitcoin account, and says why it has no oth
 });
 
 test('an older vault moves into the browser, sweeping its coins to the new address', async t => {
-  const env = await start(t);
+  const env = await startWithMigration(t);
   const alex = await signedIn(env, 'sub-move');
   const legacy = await legacyWallet(env, alex);
   env.world.chain.utxos = [{ txid: 'a'.repeat(64), vout: 0, value: 240_000 }];
@@ -68,7 +68,7 @@ test('an older vault moves into the browser, sweeping its coins to the new addre
 });
 
 test('a vault with an unconfirmed payment waits, and keeps its key until it is safe', async t => {
-  const env = await start(t);
+  const env = await startWithMigration(t);
   const alex = await signedIn(env, 'sub-pending');
   await legacyWallet(env, alex);
   env.world.chain.utxos = [{ txid: 'b'.repeat(64), vout: 0, value: 120_000 }];

@@ -4,7 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import QRCode from 'qrcode';
 import { openDb, describeDbError } from './db.js';
-import { createVeyns, actionDigest, isFresh, randomId, HttpError, canonicalTransaction, transactionDigest } from './veyns.js';
+import { createVeyns, actionDigest, isFresh, randomId, HttpError, canonicalTransaction, transactionDigest, sha256Base64Url } from './veyns.js';
 import { verifyAuthorization, verifyChain, keyIdOf } from './authorization.js';
 import { serverKeys, seal, open as openSealed, sealRoot, rootSealMatches } from './vault.js';
 import { createChain, createPrices, ChainError } from './chain.js';
@@ -196,6 +196,8 @@ export function createApp(options) {
     publicDir = null,
     backendSecret = '',
     walletSeed = '',
+    // Absent by default, and absent in an ordinary deployment. See `legacyVault()`.
+    legacySeed = '',
     network = 'testnet4',
     chainApi = 'https://mempool.space/testnet4/api',
     requirePalmSignin = false,
@@ -271,6 +273,38 @@ export function createApp(options) {
     return vaultKeys;
   };
 
+  /*
+   * The capability to open a legacy wallet's private key, which is a different thing from the
+   * capability to open an unlock secret even though the same bytes derive both.
+   *
+   * `legacySeed` is supplied separately — QUVAULT_LEGACY_SEED, not WALLET_SEED — and is absent
+   * from an ordinary deployment. Where it is absent, no request can reach a legacy private
+   * key at all, because there is nothing to open it with. Where it is present, a migration is
+   * possible and the honest description is below.
+   *
+   * WHAT THIS IS NOT: when the variable is set on the web process, the capability lives in the
+   * same process as every ordinary request handler. That is configuration, not isolation, and
+   * this comment exists so nobody later reads `legacyVault()` as a sandbox. Real isolation
+   * means running the migration from `scripts/migrate-legacy.js` with the variable set only
+   * for that process, and never setting it on the web deployment.
+   */
+  let legacyKeys = null;
+  const legacyVault = () => {
+    if (!legacySeed) {
+      throw new HttpError(409, 'Legacy custody migration is not enabled on this deployment. '
+        + 'A vault whose key is held on the server can only be migrated by an operator running the '
+        + 'migration command; nothing served here can open that key.');
+    }
+    if (!legacyKeys) {
+      try {
+        legacyKeys = serverKeys(legacySeed);
+      } catch (error) {
+        throw new HttpError(503, error.message);
+      }
+    }
+    return legacyKeys;
+  };
+
   /**
    * The exact movement of coins, and the hash of it. This digest is what the person reads,
    * what the palm decision covers, what the ML-DSA authorisation names, and what the browser
@@ -323,6 +357,41 @@ export function createApp(options) {
    * row has not been written yet, falls back to what the vault as a whole was set to.
    */
   const policyOfAccount = (account, wallet) => (account?.policy ? JSON.parse(account.policy) : policyOf(wallet));
+
+  /**
+   * A short, stable name for the rules that were in force.
+   *
+   * It is a digest of the sentence the approval screen shows — the approvers and the amount
+   * ladder — so a record made under one set of rules cannot be read as having been made under
+   * another. Changing who can approve, or how many palms a size needs, changes this value.
+   */
+  const policyVersionOf = (policy, members) => sha256Base64Url(describePolicy(policy, members)).slice(0, 22);
+
+  /**
+   * What the server says it authorised.
+   *
+   * The signer checks its request against this rather than against whatever the page happens
+   * to pass it, so a page that asked for the wrong thing is refused by the signer and not
+   * only by the server afterwards.
+   */
+  async function authorizationDescriptor(op, wallet, { accountId = 'bitcoin', transactionHash = null } = {}) {
+    const [members, account] = await Promise.all([
+      all('membersOf', op.wallet_user_id),
+      one('accountOn', op.wallet_user_id, accountId),
+    ]);
+    return {
+      authorizationId: op.id,
+      walletId: wallet.address,
+      accountId,
+      chain: 'bitcoin',
+      network,
+      policyVersion: policyVersionOf(policyOfAccount(account, wallet), members),
+      // Version 1: the palm decision is the evidence, and the transaction digest is what binds
+      // it. When a scanner exists, version 2's bindingNonce comes from the capture instead.
+      authorizationVersion: 1,
+      bindingNonce: transactionHash,
+    };
+  }
 
   /**
    * What an account's coins are locked to today: the owner's single key, or the quorum the
@@ -660,11 +729,73 @@ export function createApp(options) {
    * There is deliberately no path from a withdrawal to this function. A legacy vault that
    * wants to spend an amount has to move into a browser first.
    */
-  async function sweepLegacyVault(wallet, { toAddress, reason, pendingMessage }) {
+  /**
+   * Proves that a legacy sweep was really authorised, before anything opens a key.
+   *
+   * A row in the operations table is not evidence. Somebody who can write to this database can
+   * write `status = 'done'`, invent approvals and choose the statement — so none of those
+   * things is trusted here on its own:
+   *
+   *   1. The operation's digest is recomputed from its own statement and details. A row whose
+   *      statement was edited no longer hashes to its digest.
+   *   2. The quorum is recomputed from the policy, rather than read from `op.required`, so a
+   *      row claiming it needed one approval cannot lower the bar.
+   *   3. Every approval is re-checked against Veyns itself: the decision must exist there, be
+   *      approved, and name this exact action digest. Forging this means forging Veyns, not
+   *      forging a row.
+   *
+   * Together these mean a database writer cannot cause a legacy key to be opened. They would
+   * also need the palm decisions to exist upstream, for an action digest that covers the
+   * statement the owner actually read.
+   */
+  async function assertSweepAuthorization(op, wallet) {
+    if (!op || op.wallet_user_id !== wallet.user_id) throw new HttpError(409, 'That approval is for another vault.');
+    if (op.kind !== 'upgrade' && op.kind !== 'reset') throw new HttpError(409, 'That kind of request cannot move a legacy vault.');
+    if (op.status !== 'done') throw new HttpError(409, 'That request has not been approved.');
+
+    // 1. The row still hashes to what the palm was asked about.
+    let details;
+    try {
+      details = JSON.parse(op.details);
+    } catch {
+      throw new HttpError(409, 'That request is not readable.');
+    }
+    if (actionDigest(op.statement, details) !== op.digest) {
+      throw new HttpError(409, 'That request has been altered since it was approved.');
+    }
+
+    // 2. How many palms this actually needed, computed now from the rules.
+    const { required } = await changeQuorum(wallet.user_id, 'bitcoin');
+    const approvals = (await all('approvalsOf', op.id)).filter(a => a.status === 'approved');
+    if (approvals.length < required) {
+      throw new HttpError(409, `This needs ${required} palm approval${required === 1 ? '' : 's'} and has ${approvals.length}.`);
+    }
+
+    // 3. Veyns has to agree that each of those decisions happened, for this action.
+    for (const approval of approvals) {
+      if (!approval.request_id || !approval.decision_id) {
+        throw new HttpError(409, 'An approval on this request names no palm decision.');
+      }
+      let remote;
+      try {
+        remote = await veyns.backend(`/v1/approvals/${encodeURIComponent(approval.request_id)}`);
+      } catch (error) {
+        // Unreachable is not the same as refused: do not open a key on an unverified approval.
+        throw new HttpError(502, `The palm decisions could not be re-checked with Veyns (${error.message}).`);
+      }
+      if (remote?.status !== 'approved') throw new HttpError(409, 'Veyns does not record that approval as granted.');
+      if (remote?.action?.digest !== op.digest) throw new HttpError(409, 'That palm decision was for a different action.');
+    }
+    return { details, approvals: approvals.length, required };
+  }
+
+  async function sweepLegacyVault(wallet, { toAddress, reason, pendingMessage, operation }) {
     if (wallet?.custody !== CUSTODY.LEGACY || !wallet.sealed_key) {
       throw new HttpError(409, 'This vault signs in the owner’s browser. The server holds no key for it.');
     }
     if (!isValidAddress(toAddress)) throw new HttpError(400, `That is not a valid ${network} address.`);
+    // Nothing below this line runs on an unproven authorisation.
+    await assertSweepAuthorization(operation, wallet);
     try {
       const [balance, utxos, feeRate] = await Promise.all([
         chain.balance(wallet.address), chain.spendableUtxos(wallet.address), chain.feeRate(),
@@ -675,7 +806,7 @@ export function createApp(options) {
 
       const publicKey = Buffer.from(wallet.public_key, 'hex');
       const plan = planSpend({ publicKey, utxos, toAddress, amountSats: 'max', feeRate });
-      const privateKey = openSealed(wallet.sealed_key, vault());
+      const privateKey = openSealed(wallet.sealed_key, legacyVault());
       let hex;
       try {
         hex = signPlan({ privateKey, publicKey, plan }).hex;
@@ -1019,6 +1150,9 @@ export function createApp(options) {
     if (mine?.custody !== CUSTODY.BROWSER) throw new HttpError(409, 'Move your own vault into this browser first.');
     const plan = JSON.parse(op.payload);
     return {
+      // The signer for a quorum share checks against the same descriptor, but the wallet it
+      // names is the signer's own — this person signs with their key, not the owner's.
+      ...await authorizationDescriptor(op, mine, { transactionHash: plan.transactionHash }),
       unlock: openSealed(mine.unlock_sealed, vault()).toString('base64'),
       salt: mine.salt,
       keyIndex: member.key_index,
@@ -1036,6 +1170,7 @@ export function createApp(options) {
   async function withdrawalUnlock(op, wallet) {
     const expected = await expectedAuthorization(op, wallet);
     return {
+      ...await authorizationDescriptor(op, wallet, { transactionHash: expected.transactionHash }),
       plan: JSON.parse(op.payload),
       address: wallet.address,
       transactionHash: expected.transactionHash,
@@ -1605,6 +1740,7 @@ export function createApp(options) {
         toAddress: sweepTo,
         reason: 'vault erased',
         pendingMessage: 'A payment here is still waiting for its first confirmation.',
+        operation: op,
       }));
     }
 
@@ -1868,6 +2004,7 @@ export function createApp(options) {
       toAddress: address,
       reason: 'moved into the owner’s browser',
       pendingMessage: 'A payment here is still waiting for its first confirmation. Move the vault once it lands.',
+      operation: op,
     });
 
     const payload = JSON.parse(op.payload);

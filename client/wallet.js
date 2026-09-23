@@ -20,7 +20,10 @@ import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { base64urlnopad } from '@scure/base';
 import { canonicalTransaction, canonicalBytes } from '../src/canonical.js';
 import { deriveAttestationKeys, signAuthorization, signRegistration, verifyAuthorization, verifyChain } from '../src/authorization.js';
-import { ISOLATION, assertSigner, sealResult } from '../src/signer.js';
+import {
+  ISOLATION, BINDING, assertSigner, sealResult, describeCapabilities,
+  requestMatchesAuthorization, SignerError,
+} from '../src/signer.js';
 
 const NETWORK = btc.TEST_NETWORK;
 const PATH = "m/84'/1'/0'/0/0"; // BIP84 testnet: the phrase restores in any standard wallet
@@ -588,31 +591,64 @@ export async function pinAttestationRoot(keyId) {
  * and the interface exists so that when one of those does exist it replaces this object
  * rather than every call site in the page.
  */
-export function browserSigner(record, unlocked) {
+export function browserSigner(record, authorization) {
   return assertSigner({
     isolation: ISOLATION.BROWSER_JAVASCRIPT,
+    keyHandle: record?.address ?? null,
+    supportedAlgorithms: ['secp256k1-ecdsa', 'ML-DSA-65'],
+    supportedNetworks: ['bitcoin:testnet4'],
+    transactionBinding: BINDING.RECOMPUTED_DIGEST,
+    humanAuthorizationRequired: true,
 
     /** The public key of the vault this signer speaks for. Never anything else. */
     getPublicKey: () => held(record).publicKey,
 
+    /** What this signer is, in terms a caller can check without learning anything secret. */
+    capabilities: () => describeCapabilities({
+      isolation: ISOLATION.BROWSER_JAVASCRIPT,
+      keyHandle: record?.address ?? null,
+      supportedAlgorithms: ['secp256k1-ecdsa', 'ML-DSA-65'],
+      supportedNetworks: ['bitcoin:testnet4'],
+      transactionBinding: BINDING.RECOMPUTED_DIGEST,
+      humanAuthorizationRequired: true,
+    }),
+
     /**
-     * Signs whatever the palm approved: a whole spend, or one contribution to a quorum.
+     * Signs the transaction the request names, having checked it is the authorised one.
      *
-     * Which one it is comes from the approval itself rather than from the caller, so a page
-     * cannot ask for a full signature on an operation that was only approved for a share.
+     * Two checks, and the caller cannot satisfy the second by asserting anything:
+     *
+     *   1. Every field of the request must equal the same field of the authorisation the
+     *      server issued — id, wallet, digest, network, chain, policy version, authorisation
+     *      version and binding nonce. A page asking for a different spend is refused here.
+     *   2. The digest is then recomputed from the plan itself, inside `signApprovedSpend`,
+     *      and compared again. So even a request and an authorisation that agree with each
+     *      other are refused if the plan does not hash to what they both claim.
+     *
+     * Which kind of signature this is comes from the authorisation, not from the caller, so a
+     * page cannot ask for a whole spend on an approval that only covered a quorum share.
      */
-    async signTransaction({ network }) {
-      return sealResult(unlocked.psbt
-        ? await signApprovedQuorum(record, unlocked, { network })
-        : await signApprovedSpend(record, unlocked, { network }));
+    async signTransaction(request) {
+      const wrong = requestMatchesAuthorization(request, authorization);
+      if (wrong) throw new SignerError(`This signer will not sign that: ${wrong}.`);
+      const network = request.network;
+      return sealResult(authorization.psbt
+        ? await signApprovedQuorum(record, authorization, { network })
+        : await signApprovedSpend(record, authorization, { network }));
     },
 
     /**
      * Signs an attestation key registration — the only non-transaction message this product
      * signs. ML-DSA-65, under its own FIPS 204 context, with a key the server has never had.
+     *
+     * It is bound to the wallet rather than to a transaction: a registration names the vault
+     * it is for, and the signer refuses one naming a vault it does not hold.
      */
     async signMessage({ vaultId, epoch, previous = null }) {
-      return signKeyRegistration(record, unlocked, { vaultId, epoch, previous });
+      if (vaultId !== held(record).address) {
+        throw new SignerError('This signer does not hold the key for that vault.');
+      }
+      return signKeyRegistration(record, authorization, { vaultId, epoch, previous });
     },
   });
 }

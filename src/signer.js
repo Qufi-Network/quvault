@@ -61,6 +61,86 @@ export function describeIsolation(level) {
   }
 }
 
+/* ----------------------------------------------------------- the capability model */
+
+/**
+ * What a signer says about itself, without saying anything about the key.
+ *
+ * `keyHandle` is an opaque name for which key this signer speaks for — an address here, a slot
+ * or a device handle for a future one. It is a name, never material, and nothing should ever
+ * be derivable from it.
+ */
+export function describeCapabilities(signer) {
+  return Object.freeze({
+    isolationLevel: signer.isolation,
+    keyHandle: signer.keyHandle ?? null,
+    supportedAlgorithms: Object.freeze([...(signer.supportedAlgorithms ?? [])]),
+    supportedNetworks: Object.freeze([...(signer.supportedNetworks ?? [])]),
+    // Whether the signer re-derives the digest itself rather than believing the caller.
+    transactionBinding: signer.transactionBinding ?? 'none',
+    humanAuthorizationRequired: signer.humanAuthorizationRequired === true,
+  });
+}
+
+/** How a signer establishes that the transaction in front of it is the authorised one. */
+export const BINDING = {
+  /** The signer recomputes the canonical digest from the plan and refuses on mismatch. */
+  RECOMPUTED_DIGEST: 'recomputed-canonical-digest',
+  /** The signer believes what it was told. No signer here is allowed to be this. */
+  NONE: 'none',
+};
+
+/**
+ * The fields a signing request must carry, and which of them must match the authorisation.
+ *
+ * The request is what the page asks for; the authorisation is what the server said it had
+ * approved. Requiring them to agree, field by field, is what stops a page from asking a signer
+ * to sign something other than the thing a palm approved — without the signer having to trust
+ * the page's account of what that was.
+ */
+export const AUTHORIZATION_FIELDS = Object.freeze([
+  'authorizationId', 'walletId', 'transactionDigest', 'network', 'chain',
+  'policyVersion', 'authorizationVersion', 'bindingNonce',
+]);
+
+/**
+ * Checks a request against the authorisation it claims to be for.
+ *
+ * `transactionDigest` in the request is compared against `transactionHash` in the
+ * authorisation, because the two names describe the same value from either side of the
+ * boundary. Returns the reason it does not match, or null.
+ */
+export function requestMatchesAuthorization(request, authorization) {
+  if (!request || typeof request !== 'object') return 'there is no signing request';
+  if (!authorization || typeof authorization !== 'object') return 'there is no authorisation to check against';
+
+  const expected = {
+    authorizationId: authorization.authorizationId,
+    walletId: authorization.walletId,
+    transactionDigest: authorization.transactionHash,
+    network: authorization.network,
+    chain: authorization.chain,
+    policyVersion: authorization.policyVersion,
+    authorizationVersion: authorization.authorizationVersion,
+    bindingNonce: authorization.bindingNonce,
+  };
+  for (const field of AUTHORIZATION_FIELDS) {
+    if (expected[field] === undefined || expected[field] === null) {
+      return `the authorisation names no ${field}`;
+    }
+    if (request[field] === undefined || request[field] === null) {
+      return `the request names no ${field}`;
+    }
+    if (request[field] !== expected[field]) return `the request names a different ${field}`;
+  }
+  // The scanner's tie to the transaction, or in version 1 the digest itself. Either way the
+  // evidence and the transaction have to be about each other.
+  if (expected.bindingNonce !== expected.transactionDigest && authorization.authorizationVersion === 1) {
+    return 'the authorisation is not bound to its own transaction';
+  }
+  return null;
+}
+
 /* --------------------------------------------------------------- the interface */
 
 const REQUIRED = ['signTransaction', 'signMessage', 'getPublicKey'];
@@ -73,8 +153,9 @@ const REQUIRED = ['signTransaction', 'signMessage', 'getPublicKey'];
  * the call site that eventually uses it.
  */
 const FORBIDDEN = [
-  'getPrivateKey', 'privateKey', 'exportKey', 'exportPrivateKey', 'getSecretKey', 'secretKey',
-  'getMnemonic', 'mnemonic', 'getSeed', 'seed', 'unlock', 'reveal', 'dump',
+  'getPrivateKey', 'privateKey', 'exportKey', 'exportPrivateKey', 'exportSeed', 'getSecretKey',
+  'secretKey', 'getSecret', 'getMnemonic', 'mnemonic', 'getSeed', 'seed', 'decryptWallet',
+  'unlock', 'reveal', 'dump',
 ];
 
 export class SignerError extends Error {}
@@ -98,6 +179,10 @@ export function assertSigner(signer) {
     throw new SignerError(
       `This build has no ${signer.isolation} signer. Claiming that isolation without implementing it `
       + 'would misrepresent where the key is held.');
+  }
+  // A signer that takes the caller's word for what it is signing is not a boundary.
+  if (signer.transactionBinding !== BINDING.RECOMPUTED_DIGEST) {
+    throw new SignerError('A signer must recompute the transaction digest itself, not accept one.');
   }
   return signer;
 }
