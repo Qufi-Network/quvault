@@ -95,7 +95,7 @@ test('a signer must declare an isolation level it actually has', () => {
   assert.throws(() => assertSigner({ ...base, transactionBinding: undefined }), /recompute the transaction digest/);
 
   // Claiming hardware this build does not have is refused, not quietly believed.
-  for (const claimed of [ISOLATION.SECURE_ELEMENT, ISOLATION.TEE, ISOLATION.HSM, ISOLATION.HARDWARE_WALLET, ISOLATION.OS_KEYSTORE]) {
+  for (const claimed of [ISOLATION.SECURE_ELEMENT, ISOLATION.TEE, ISOLATION.HSM, ISOLATION.HARDWARE_SIGNER, ISOLATION.OS_KEYSTORE]) {
     assert.throws(() => assertSigner({ ...base, isolation: claimed }), SignerError, claimed);
     assert.ok(!IMPLEMENTED_ISOLATION.includes(claimed), `${claimed} is not implemented`);
   }

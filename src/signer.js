@@ -37,7 +37,7 @@ export const ISOLATION = {
   /** Key held inside a trusted execution environment. NOT IMPLEMENTED. */
   TEE: 'tee',
   /** Key held by a separate signing device the user confirms on. NOT IMPLEMENTED. */
-  HARDWARE_WALLET: 'hardware-wallet',
+  HARDWARE_SIGNER: 'hardware-signer',
   /** Key held in a hardware security module. NOT IMPLEMENTED. */
   HSM: 'hsm',
 };
@@ -55,7 +55,7 @@ export function describeIsolation(level) {
     case ISOLATION.OS_KEYSTORE: return 'Not implemented: an operating-system keystore signer.';
     case ISOLATION.SECURE_ELEMENT: return 'Not implemented: a secure-element signer.';
     case ISOLATION.TEE: return 'Not implemented: a trusted-execution-environment signer.';
-    case ISOLATION.HARDWARE_WALLET: return 'Not implemented: a separate signing device.';
+    case ISOLATION.HARDWARE_SIGNER: return 'Not implemented: a separate signing device.';
     case ISOLATION.HSM: return 'Not implemented: a hardware security module.';
     default: return 'Unknown isolation level; treat as no isolation.';
   }
