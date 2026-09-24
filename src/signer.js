@@ -188,6 +188,49 @@ export function assertSigner(signer) {
 }
 
 /**
+ * Checks that a signer's `transactionBinding` claim is true of its behaviour.
+ *
+ * `assertSigner` can only check the declaration — a caller can write
+ * `transactionBinding: RECOMPUTED_DIGEST` on an object that verifies nothing, and a structural
+ * check cannot tell the difference. This probe can: it asks the signer to sign a request that
+ * disagrees with its authorisation in one field, and requires a refusal.
+ *
+ * It is safe to run against a live signer. A conforming signer refuses before it derives
+ * anything, so nothing is signed and no key is touched; a non-conforming one reveals itself by
+ * producing a signature for a transaction nobody authorised, which is the defect being looked
+ * for. Returns null when the signer conforms, or the reason it does not.
+ *
+ * Async, and therefore not part of `assertSigner`, which is called on every construction. This
+ * is a conformance test to run once per signer implementation, not a per-call guard.
+ */
+export async function probeTransactionBinding(signer, authorization) {
+  if (signer?.transactionBinding !== BINDING.RECOMPUTED_DIGEST) {
+    return `this signer declares transactionBinding "${signer?.transactionBinding}"`;
+  }
+  const honest = {
+    authorizationId: authorization.authorizationId,
+    walletId: authorization.walletId,
+    transactionDigest: authorization.transactionHash,
+    network: authorization.network,
+    chain: authorization.chain,
+    policyVersion: authorization.policyVersion,
+    authorizationVersion: authorization.authorizationVersion,
+    bindingNonce: authorization.bindingNonce,
+  };
+  for (const field of AUTHORIZATION_FIELDS) {
+    const tampered = { ...honest, [field]: `${honest[field]}-tampered` };
+    let refused = false;
+    try {
+      await signer.signTransaction(tampered);
+    } catch {
+      refused = true;
+    }
+    if (!refused) return `it signed a request whose ${field} did not match the authorisation`;
+  }
+  return null;
+}
+
+/**
  * What a signer is allowed to hand back.
  *
  * Anything a caller receives passes through here, so a signer that returned key material by

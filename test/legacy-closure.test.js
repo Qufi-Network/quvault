@@ -13,7 +13,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { INVENTORY_SQL, summarise, walletId } from '../src/legacy-inventory.js';
-import { requestMatchesAuthorization, AUTHORIZATION_FIELDS, SignerError } from '../src/signer.js';
+import {
+  requestMatchesAuthorization, AUTHORIZATION_FIELDS, SignerError,
+  probeTransactionBinding, assertSigner, ISOLATION, BINDING,
+} from '../src/signer.js';
 import { EVENT } from '../src/events.js';
 import { actionDigest } from '../src/veyns.js';
 import { restoreVaultKey, browserSigner, loadRecord, clearRecord, accountFrom } from '../client/wallet.js';
@@ -369,4 +372,40 @@ test('no tracked source file contains a byte that makes grep skip it', () => {
     if (at !== -1) opaque.push(`${file} (byte ${bytes[at]} at ${at})`);
   }
   assert.deepEqual(opaque, [], 'every tracked text file is readable by a search tool');
+});
+
+/* ===================== a binding claim must be true of the behaviour, not just declared */
+
+test('a signer cannot claim recomputed-digest binding without actually verifying', async () => {
+  const { record, unlock, salt, address } = await deviceWithPhrase();
+  const authorization = {
+    unlock, salt,
+    authorizationId: 'op-probe', walletId: address, transactionHash: 'digest-probe',
+    network: 'testnet4', chain: 'bitcoin', policyVersion: 'policy-probe',
+    authorizationVersion: 1, bindingNonce: 'digest-probe',
+  };
+
+  // The real signer conforms: every tampered field is refused.
+  assert.equal(await probeTransactionBinding(browserSigner(record, authorization), authorization), null);
+
+  /*
+   * A signer that merely *declares* the binding. `assertSigner` accepts it, because a
+   * structural check cannot see inside a function — which is exactly why the probe exists.
+   */
+  const liar = assertSigner({
+    isolation: ISOLATION.BROWSER_JAVASCRIPT,
+    transactionBinding: BINDING.RECOMPUTED_DIGEST,
+    getPublicKey: () => record.publicKey,
+    signMessage: async () => ({}),
+    async signTransaction() { return { hex: 'deadbeef' }; }, // signs anything it is asked
+  });
+  const wrong = await probeTransactionBinding(liar, authorization);
+  assert.ok(wrong, 'the probe catches a signer that does not verify');
+  assert.match(wrong, /did not match the authorisation/);
+
+  // And a signer that admits it does not bind is caught on the declaration alone.
+  assert.match(
+    await probeTransactionBinding({ ...liar, transactionBinding: BINDING.NONE }, authorization),
+    /declares transactionBinding "none"/,
+  );
 });

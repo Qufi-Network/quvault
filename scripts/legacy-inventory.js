@@ -27,6 +27,46 @@ const url = process.env.QUVAULT_ADMIN_DATABASE_URL;
 const asJson = process.argv.includes('--json');
 const showAddresses = process.argv.includes('--addresses');
 
+/*
+ * `--help` answers without a database, so the command can be checked — and the counts it
+ * produces read — before anyone points it at production.
+ */
+if (process.argv.includes('--help') || process.argv.includes('-h')) {
+  console.log(`Counts the wallets whose key is still held on the server.
+
+  QUVAULT_ADMIN_DATABASE_URL="postgres://…" npm run inventory
+  QUVAULT_ADMIN_DATABASE_URL="postgres://…" npm run inventory -- --json
+  QUVAULT_ADMIN_DATABASE_URL="postgres://…" npm run inventory -- --addresses
+
+Read-only: one SELECT, no UPDATE, no DELETE, and no code path that opens a sealed key.
+It does not read WALLET_SEED or QUVAULT_LEGACY_SEED, and cannot print a private key, a
+mnemonic, an unlock secret or any seed — the query selects no column that holds one.
+
+Counts reported:
+  wallets                       every row
+  custodyClient                 key in the owner's browser
+  custodyServer                 legacy rows
+  serverActive                  legacy rows that still hold a sealed key
+  serverInactive                legacy rows with no sealed key (a halted migration)
+  serverWithPendingOperations   legacy rows with an operation collecting or running
+  migratableAutomatically       active legacy rows with somebody who can approve
+  requiringManualRecovery       active legacy rows with nobody who can approve
+  serverWithBalances            ALWAYS null — see below
+
+Balances cannot be established from the database. Coins live on the chain, and this
+command does not talk to it. To count them, take the addresses from an --addresses run
+and query the chain separately. The field is reported as null rather than guessed at.
+
+Wallets are named W- plus twelve characters of SHA-256 over the address: stable between
+runs, not reversible to an address. Full addresses appear only with --addresses.
+
+QUVAULT_ADMIN_DATABASE_URL, not DATABASE_URL: on a development machine that variable
+often belongs to another project, and this would then answer confidently about the wrong
+database. Put it in the environment, not on the command line, so it stays out of shell
+history.`);
+  process.exit(0);
+}
+
 if (!url) {
   console.error('Set QUVAULT_ADMIN_DATABASE_URL to the QuVault database you want to inventory.');
   console.error('Do not use DATABASE_URL: on a dev machine it often points at another project.');
