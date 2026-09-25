@@ -16,6 +16,7 @@ import { DEFAULT_POLICY, PolicyError, describePolicy, requiredFor, requiredToCha
 import { NETWORKS, createBalances, format, networkList } from './networks.js';
 import { createSecurityLog } from './events.js';
 import { createScanner, SCANNER } from './scanner.js';
+import { RATE, clientAddress, bucketFor, isOverLimit, refusalMessage } from './rate-limit.js';
 
 const SESSION_COOKIE = 'palmsafe_sid';
 const LOGIN_COOKIE = 'palmsafe_login';
@@ -49,6 +50,16 @@ const STATIC_TYPES = {
 };
 
 const SQL = {
+  /*
+   * One statement, atomic: insert the bucket or add one to it, and say what the count is now.
+   * `expires_at` is never updated, because the window start is part of the key — a new window
+   * is a different row, so there is no reset to get wrong under concurrency.
+   */
+  bumpRateLimit: `INSERT INTO rate_limits (bucket, hits, expires_at) VALUES ($1, 1, $2)
+                  ON CONFLICT (bucket) DO UPDATE SET hits = rate_limits.hits + 1
+                  RETURNING hits`,
+  clearExpiredLimits: 'DELETE FROM rate_limits WHERE expires_at < $1',
+
   userBySub: 'SELECT * FROM users WHERE sub = $1',
   userById: 'SELECT * FROM users WHERE id = $1',
   insertUser: 'INSERT INTO users (id, sub, created_at) VALUES ($1, $2, $3) ON CONFLICT (sub) DO NOTHING',
@@ -201,6 +212,12 @@ export function createApp(options) {
     network = 'testnet4',
     chainApi = 'https://mempool.space/testnet4/api',
     requirePalmSignin = false,
+    /*
+     * Whether `x-forwarded-for` can be believed. True is right behind Vercel, which overwrites
+     * the header; set it false for a deployment with no proxy in front, where the header is
+     * whatever the caller typed. It only affects address-keyed limits — see src/rate-limit.js.
+     */
+    trustProxy = true,
     now = () => Math.floor(Date.now() / 1000),
     fetchImpl = globalThis.fetch,
     log = console,
@@ -565,6 +582,53 @@ export function createApp(options) {
   }
 
   /** Ends operations whose quorum never arrived, or that were approved but never signed. */
+  /*
+   * Counting a request against its policy.
+   *
+   * FAILS OPEN, deliberately. If the count cannot be read, the request is allowed. A rate
+   * limiter is there to protect availability, and one that refuses every request when its own
+   * table is unreachable would be a new and worse outage than the one it prevents. It is not
+   * an authorisation control — nothing here decides whether a caller may do something, only how
+   * often — so failing open does not let anyone past a gate that was keeping them out.
+   *
+   * Throws HttpError 429 when the caller is over, carrying `retryAfter` so the response can say
+   * when to come back.
+   */
+  let sweptLimitsAt = 0;
+  async function enforceLimit(route, req, user) {
+    const policy = route.limit;
+    if (!policy) return;
+    const key = policy.by === 'user' ? user?.id : clientAddress(req, { trustProxy });
+    // A user-keyed policy on a route with no user must not silently count everyone together.
+    if (!key) return;
+
+    const time = now();
+    const { bucket, expiresAt, retryAfter } = bucketFor({ policy, key, now: time });
+    let hits;
+    try {
+      ({ hits } = (await query('bumpRateLimit', bucket, expiresAt)).rows[0]);
+      // Housekeeping, at most once a window: expired rows are dead weight rather than a
+      // correctness problem, so this is cheap and occasional instead of part of the hot path.
+      if (time - sweptLimitsAt > policy.seconds) {
+        sweptLimitsAt = time;
+        await query('clearExpiredLimits', time);
+      }
+    } catch (error) {
+      log.error(error);
+      return;
+    }
+    if (!isOverLimit(Number(hits), policy)) return;
+
+    // Recorded without the caller's address: an IP is personal data, and the policy name plus
+    // the user, where there is one, is enough to act on.
+    security.emit('request.rate_limited', {
+      kind: policy.name,
+      ...(policy.by === 'user' ? { userId: user.id } : {}),
+      reason: `over ${policy.limit} requests in ${policy.seconds}s`,
+    });
+    throw Object.assign(new HttpError(429, refusalMessage(retryAfter)), { retryAfter });
+  }
+
   async function expireOperations() {
     const time = now();
     const closed = await transaction(async q => {
@@ -2336,42 +2400,42 @@ export function createApp(options) {
 
   const routes = [
     { method: 'GET', path: '/api/config', handler: getConfig },
-    { method: 'POST', path: '/api/login/start', handler: loginStart },
-    { method: 'POST', path: '/api/login/finish', handler: loginFinish },
+    { method: 'POST', path: '/api/login/start', handler: loginStart, limit: RATE.login },
+    { method: 'POST', path: '/api/login/finish', handler: loginFinish, limit: RATE.login },
     { method: 'POST', path: '/api/logout', handler: logout },
-    { method: 'GET', path: '/api/price', handler: getPrice, auth: true },
+    { method: 'GET', path: '/api/price', handler: getPrice, auth: true, limit: RATE.upstream },
     { method: 'GET', path: '/api/scanner', handler: getScanner, auth: true },
-    { method: 'GET', path: '/api/random', handler: getRandom, auth: true },
+    { method: 'GET', path: '/api/random', handler: getRandom, auth: true, limit: RATE.upstream },
     { method: 'GET', path: '/api/wallet', handler: getWallet, auth: true },
-    { method: 'POST', path: '/api/wallet/approval', handler: requestWallet, auth: true },
-    { method: 'POST', path: '/api/wallet/register', handler: registerWallet, auth: true },
-    { method: 'POST', path: '/api/wallet/upgrade/approval', handler: requestUpgrade, auth: true },
-    { method: 'POST', path: '/api/wallet/upgrade', handler: completeUpgrade, auth: true },
-    { method: 'POST', path: '/api/invites/approval', handler: requestInvite, auth: true },
+    { method: 'POST', path: '/api/wallet/approval', handler: requestWallet, auth: true, limit: RATE.palm },
+    { method: 'POST', path: '/api/wallet/register', handler: registerWallet, auth: true, limit: RATE.write },
+    { method: 'POST', path: '/api/wallet/upgrade/approval', handler: requestUpgrade, auth: true, limit: RATE.palm },
+    { method: 'POST', path: '/api/wallet/upgrade', handler: completeUpgrade, auth: true, limit: RATE.unlock },
+    { method: 'POST', path: '/api/invites/approval', handler: requestInvite, auth: true, limit: RATE.palm },
     { method: 'GET', path: '/api/invites', handler: listInvites, auth: true },
-    { method: 'POST', path: '/api/invites/cancel', handler: cancelInvite, auth: true },
-    { method: 'POST', path: '/api/invites/join', handler: requestJoin, auth: true },
-    { method: 'POST', path: '/api/accounts/lock', handler: requestLock, auth: true },
-    { method: 'POST', path: '/api/signing-key/approval', handler: requestSigningKey, auth: true },
-    { method: 'POST', path: '/api/signing-key/register', handler: registerSigningKey, auth: true },
-    { method: 'POST', path: '/api/attestation/approval', handler: requestAttestationRotation, auth: true },
-    { method: 'POST', path: '/api/attestation/register', handler: registerAttestationKey, auth: true },
-    { method: 'POST', path: '/api/wallet/reset/approval', handler: requestReset, auth: true },
-    { method: 'POST', path: '/api/wallet/reset', handler: completeReset, auth: true },
-    { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/unlock$/, handler: unlockFor, auth: true },
-    { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/broadcast$/, handler: broadcastSigned, auth: true },
-    { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/signature$/, handler: addSignature, auth: true },
+    { method: 'POST', path: '/api/invites/cancel', handler: cancelInvite, auth: true, limit: RATE.write },
+    { method: 'POST', path: '/api/invites/join', handler: requestJoin, auth: true, limit: RATE.palm },
+    { method: 'POST', path: '/api/accounts/lock', handler: requestLock, auth: true, limit: RATE.spend },
+    { method: 'POST', path: '/api/signing-key/approval', handler: requestSigningKey, auth: true, limit: RATE.palm },
+    { method: 'POST', path: '/api/signing-key/register', handler: registerSigningKey, auth: true, limit: RATE.write },
+    { method: 'POST', path: '/api/attestation/approval', handler: requestAttestationRotation, auth: true, limit: RATE.palm },
+    { method: 'POST', path: '/api/attestation/register', handler: registerAttestationKey, auth: true, limit: RATE.write },
+    { method: 'POST', path: '/api/wallet/reset/approval', handler: requestReset, auth: true, limit: RATE.palm },
+    { method: 'POST', path: '/api/wallet/reset', handler: completeReset, auth: true, limit: RATE.unlock },
+    { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/unlock$/, handler: unlockFor, auth: true, limit: RATE.unlock },
+    { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/broadcast$/, handler: broadcastSigned, auth: true, limit: RATE.unlock },
+    { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/signature$/, handler: addSignature, auth: true, limit: RATE.unlock },
     { method: 'GET', path: /^\/api\/operations\/([\w-]{8,64})\/receipt$/, handler: getReceipt, auth: true },
-    { method: 'POST', path: '/api/policy', handler: requestPolicy, auth: true },
-    { method: 'POST', path: '/api/recovery', handler: requestRecovery, auth: true },
-    { method: 'POST', path: '/api/accounts/approval', handler: requestAccount, auth: true },
-    { method: 'POST', path: '/api/accounts/register', handler: registerAccount, auth: true },
-    { method: 'POST', path: '/api/withdrawals', handler: requestWithdrawal, auth: true },
-    { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/approval$/, handler: joinOperation, auth: true },
-    { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/cancel$/, handler: cancelOperation, auth: true },
+    { method: 'POST', path: '/api/policy', handler: requestPolicy, auth: true, limit: RATE.palm },
+    { method: 'POST', path: '/api/recovery', handler: requestRecovery, auth: true, limit: RATE.palm },
+    { method: 'POST', path: '/api/accounts/approval', handler: requestAccount, auth: true, limit: RATE.palm },
+    { method: 'POST', path: '/api/accounts/register', handler: registerAccount, auth: true, limit: RATE.write },
+    { method: 'POST', path: '/api/withdrawals', handler: requestWithdrawal, auth: true, limit: RATE.spend },
+    { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/approval$/, handler: joinOperation, auth: true, limit: RATE.palm },
+    { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/cancel$/, handler: cancelOperation, auth: true, limit: RATE.write },
     { method: 'GET', path: /^\/api\/approvals\/([\w-]{8,64})$/, handler: readApproval, auth: true },
-    { method: 'POST', path: /^\/api\/approvals\/([\w-]{8,64})\/palm$/, handler: startPalm, auth: true },
-    { method: 'POST', path: /^\/api\/approvals\/([\w-]{8,64})\/cancel$/, handler: cancelApproval, auth: true },
+    { method: 'POST', path: /^\/api\/approvals\/([\w-]{8,64})\/palm$/, handler: startPalm, auth: true, limit: RATE.palm },
+    { method: 'POST', path: /^\/api\/approvals\/([\w-]{8,64})\/cancel$/, handler: cancelApproval, auth: true, limit: RATE.write },
   ];
 
   function matchRoute(method, pathname) {
@@ -2390,12 +2454,13 @@ export function createApp(options) {
   const cookieString = (name, value, maxAge) =>
     `${name}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secureCookies ? '; Secure' : ''}`;
 
-  function sendJson(res, status, body, cookies = []) {
+  function sendJson(res, status, body, cookies = [], extra = {}) {
     res.writeHead(status, {
       'content-type': 'application/json; charset=utf-8',
       'cache-control': 'no-store',
       'x-content-type-options': 'nosniff',
       ...(cookies.length ? { 'set-cookie': cookies } : {}),
+      ...extra,
     });
     res.end(JSON.stringify(body));
   }
@@ -2446,18 +2511,23 @@ export function createApp(options) {
       }
       const cookies = parseCookies(req.headers.cookie);
       if (route.auth && cookies[SESSION_COOKIE]) await expireOperations();
+      const user = route.auth ? await requireUser(cookies) : null;
+      // After the session is resolved, so a user-keyed policy has a user to key on, and an
+      // unauthenticated caller is turned away by the cheaper check first.
+      await enforceLimit(route, req, user);
       const ctx = {
         params: route.params,
         cookies,
         body: req.method === 'POST' ? await readJson(req) : {},
         setCookie: (name, value, maxAge) => outCookies.push(cookieString(name, value, maxAge)),
-        user: route.auth ? await requireUser(cookies) : null,
+        user,
       };
       sendJson(res, 200, await route.handler(ctx), outCookies);
     } catch (error) {
       const status = error instanceof HttpError ? error.status : error instanceof ChainError ? 502 : 500;
       if (status === 500) log.error(error);
-      sendJson(res, status, { error: status === 500 ? 'Something went wrong on the server.' : error.message }, outCookies);
+      sendJson(res, status, { error: status === 500 ? 'Something went wrong on the server.' : error.message }, outCookies,
+        error.retryAfter ? { 'retry-after': String(error.retryAfter) } : {});
     }
   }
 

@@ -144,7 +144,7 @@ export async function start(t, overrides = {}) {
         }
         let data = '';
         res.on('data', chunk => { data += chunk; });
-        res.on('end', () => resolve({ status: res.statusCode, body: data ? JSON.parse(data) : null }));
+        res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: data ? JSON.parse(data) : null }));
       });
       req.on('error', reject);
       req.end(payload);

@@ -26,6 +26,7 @@ export const EVENT = {
   SIGNING_SUCCESS: 'signing.success',
   SIGNING_REJECTED: 'signing.rejected',
   MIGRATION: 'custody.migration',
+  RATE_LIMITED: 'request.rate_limited',
 };
 
 /**

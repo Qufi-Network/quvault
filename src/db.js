@@ -232,6 +232,23 @@ const SCHEMA = [
      DROP CONSTRAINT IF EXISTS operations_kind,
      ADD CONSTRAINT operations_kind
        CHECK (kind IN ('create', 'withdraw', 'policy', 'recovery', 'account', 'upgrade', 'reset', 'attestation', 'invite', 'join', 'signing', 'lock'))`,
+
+  /*
+   * v14: rate limiting. One row per (policy, caller, window), counting requests.
+   *
+   * It lives here rather than in memory because this runs as a serverless function, where each
+   * instance would keep its own count and a cold start would forget it — see src/rate-limit.js.
+   *
+   * The window start is part of the key, so a new window is a new row and an expired window is
+   * simply a row with a past `expires_at`. Nothing in this table is a secret: a bucket names a
+   * policy, a caller and a time, and holds an integer.
+   */
+  `CREATE TABLE IF NOT EXISTS rate_limits (
+    bucket     TEXT PRIMARY KEY,
+    hits       INTEGER NOT NULL,
+    expires_at BIGINT NOT NULL
+  )`,
+  'CREATE INDEX IF NOT EXISTS rate_limits_expiry ON rate_limits (expires_at)',
 ];
 
 const INT8 = 20; // Timestamps are BIGINT; read them back as numbers.
