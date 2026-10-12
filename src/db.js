@@ -249,6 +249,47 @@ const SCHEMA = [
     expires_at BIGINT NOT NULL
   )`,
   'CREATE INDEX IF NOT EXISTS rate_limits_expiry ON rate_limits (expires_at)',
+
+  /*
+   * v16: the evidence log. What happened, in an order nobody can quietly change.
+   *
+   * Append only, and enforced rather than asserted — the trigger below refuses UPDATE and
+   * DELETE. That holds against every connection this application makes. It does NOT hold
+   * against somebody privileged enough to drop the trigger, and `src/evidence.js` and
+   * EVIDENCE.md both say so; this comment is not the place that overclaims it.
+   *
+   * `prev_hash` is UNIQUE, which is what orders concurrent writers without a lock: two
+   * requests racing to append after the same entry both try to claim it as their predecessor,
+   * one wins, the other retries against the new head. `scope` is null today and exists so an
+   * organisation identifier can be recorded later without touching entries that predate
+   * organisations.
+   */
+  `CREATE TABLE IF NOT EXISTS evidence (
+    id              TEXT PRIMARY KEY,
+    seq             BIGSERIAL,
+    at              BIGINT NOT NULL,
+    kind            TEXT NOT NULL,
+    actor           TEXT,                       -- opaque user id, or null for the system
+    scope           TEXT,                       -- organisation, when there are organisations
+    subject_kind    TEXT,                       -- 'operation', 'wallet', …
+    subject_id      TEXT,
+    payload         TEXT NOT NULL,              -- canonical JSON, allowlisted and scrubbed
+    prev_hash       TEXT NOT NULL,
+    hash            TEXT NOT NULL UNIQUE,
+    idempotency_key TEXT NOT NULL UNIQUE        -- a retry writes nothing new
+  )`,
+  'CREATE UNIQUE INDEX IF NOT EXISTS evidence_prev ON evidence (prev_hash)',
+  'CREATE INDEX IF NOT EXISTS evidence_subject ON evidence (subject_id, seq)',
+  'CREATE INDEX IF NOT EXISTS evidence_seq ON evidence (seq)',
+  `CREATE OR REPLACE FUNCTION quvault_evidence_is_append_only() RETURNS trigger AS $quvault$
+    BEGIN
+      RAISE EXCEPTION 'the evidence log is append only: % is not permitted', TG_OP;
+    END
+  $quvault$ LANGUAGE plpgsql`,
+  'DROP TRIGGER IF EXISTS evidence_append_only ON evidence',
+  `CREATE TRIGGER evidence_append_only
+     BEFORE UPDATE OR DELETE ON evidence
+     FOR EACH ROW EXECUTE FUNCTION quvault_evidence_is_append_only()`,
 ];
 
 const INT8 = 20; // Timestamps are BIGINT; read them back as numbers.

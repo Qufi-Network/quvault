@@ -59,6 +59,23 @@ const ALLOWED = new Set([
   'sessionId',
   'isolation',      // which signing boundary was used
   'sats',           // an amount; already visible on the chain
+
+  /*
+   * Added for the evidence log. Every one of these is a digest, an integer, a fixed keyword or
+   * a list of opaque identifiers — nothing here is or can contain key material. An entry that
+   * could not carry them would record that a payment was authorised without recording under
+   * what rules, which is the gap the evidence phase existed to close.
+   */
+  'policyVersion',  // a digest of the rules in force
+  'threshold',      // integer: approvals the rules required
+  'approvalCount',  // integer: distinct approvers who gave one
+  'receiptVersion', // 1 or 2
+  'approvedBy',     // opaque per-application user ids
+  'decisionIds',    // opaque Veyns decision references
+  'sensorEvidence', // 'none' or 'measured' — never an inference
+  'verification',   // the outcome of checking the receipt
+  'expiresAt',      // when the authorisation stopped being usable
+  'subjectId',      // the proposal a fact is about, when it is in the payload too
 ]);
 
 const MAX_VALUE = 120;
@@ -75,9 +92,18 @@ const KEY_SHAPED = /[0-9a-fA-F]{96,}|[A-Za-z0-9+/_-]{120,}/;
  * is a secret that reached here by mistake", then truncated. Anything else becomes its type
  * name, because an object in a log line is an object whose fields nobody vetted.
  */
+const MAX_ITEMS = 32;
+
 function scrub(value) {
   if (typeof value === 'number' || typeof value === 'boolean') return value;
   if (value === null || value === undefined) return null;
+  /*
+   * A short list of short strings, each scrubbed on its own. Needed because the evidence log
+   * records who approved something, and an approver list collapsed to "[object]" would record
+   * that a quorum happened without recording who was in it. Capped in both directions so a
+   * long list cannot be used to push volume into the log.
+   */
+  if (Array.isArray(value)) return value.slice(0, MAX_ITEMS).map(scrub);
   if (typeof value !== 'string') return `[${typeof value}]`;
   if (PHRASE.test(value)) return '[redacted: phrase-shaped]';
   if (KEY_SHAPED.test(value)) return '[redacted: key-shaped]';

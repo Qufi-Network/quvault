@@ -175,6 +175,29 @@ amounts; and changing signers or the threshold means a new address and another s
 the vault owner holds an attestation key. Per-signer attestation keys are the next step. See
 [ON-CHAIN-MULTISIG.md](ON-CHAIN-MULTISIG.md).
 
+## The evidence log
+
+Every meaningful fact is appended to an `evidence` table: the proposal, the authorisation
+attempt, the grant, the signature, the broadcast, a refusal, a digest mismatch, a custody
+migration. **Six separate facts, and none is inferred from another** — a payment with a
+signature and no recorded broadcast reads as *"signed, outcome unrecorded"*, which is the
+truth, rather than being guessed at.
+
+Each entry commits to its predecessor, so editing one invalidates every entry after it.
+Append-only is **enforced by a database trigger**, not by the application declining to write.
+
+```bash
+curl -s --cookie "$COOKIE" https://host/api/evidence > bundle.json
+npm run verify:evidence -- bundle.json      # no database, no running app
+```
+
+The verifier recomputes every hash from each entry's own contents and takes nothing on trust
+from the exporting system. **A pass means the bundle is internally consistent — not that the
+log is complete.** Someone who can write the whole database can rewrite it and recompute the
+chain. Defending against that means holding dated exports outside their control and comparing.
+[EVIDENCE.md](EVIDENCE.md) has the threat model, including what a database administrator can
+do and the one configuration change that would narrow it.
+
 ## Rate limiting
 
 Counts live in Postgres, not in memory — this runs as a serverless function, where each
@@ -232,4 +255,6 @@ zero. That happened once here, and the check exists so it cannot happen again.
 | [PORTABLE-WALLET-INVARIANT.md](PORTABLE-WALLET-INVARIANT.md) | The palm must not become the key; the wallet must survive a new scanner |
 | [PHASE-2-ENTRY-GATE.md](PHASE-2-ENTRY-GATE.md) | What must be known before scanner integration begins |
 | [ON-CHAIN-MULTISIG.md](ON-CHAIN-MULTISIG.md) | The P2WSH design and what Bitcoin forces |
+| [EVIDENCE.md](EVIDENCE.md) | The evidence log: what is recorded, the integrity construction, and who can still rewrite it |
+| [PHASE-A-BASELINE-FINDINGS.md](PHASE-A-BASELINE-FINDINGS.md) | The institutional baseline audit and the corrections that followed |
 | [HUMAN-VERIFIED.md](HUMAN-VERIFIED.md) | What a palm approval does and does not prove |

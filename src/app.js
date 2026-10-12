@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import QRCode from 'qrcode';
 import { openDb, describeDbError } from './db.js';
 import { createVeyns, actionDigest, isFresh, randomId, HttpError, canonicalTransaction, transactionDigest, sha256Base64Url } from './veyns.js';
+import { canonicalJson } from './canonical.js';
 import { verifyAuthorization, verifyChain, keyIdOf } from './authorization.js';
 import { serverKeys, seal, open as openSealed, sealRoot, rootSealMatches } from './vault.js';
 import { createChain, createPrices, ChainError } from './chain.js';
@@ -14,7 +15,10 @@ import {
 } from './bitcoin.js';
 import { DEFAULT_POLICY, PolicyError, describePolicy, requiredFor, requiredToChange, validatePolicy } from './policy.js';
 import { NETWORKS, createBalances, format, networkList } from './networks.js';
-import { createSecurityLog } from './events.js';
+import { createSecurityLog, redact } from './events.js';
+import {
+  EVIDENCE, GENESIS, sealEntry, buildBundle, verifyBundle, summarisePayment,
+} from './evidence.js';
 import { createScanner, SCANNER } from './scanner.js';
 import { RATE, clientAddress, bucketFor, isOverLimit, refusalMessage } from './rate-limit.js';
 
@@ -59,6 +63,15 @@ const SQL = {
                   ON CONFLICT (bucket) DO UPDATE SET hits = rate_limits.hits + 1
                   RETURNING hits`,
   clearExpiredLimits: 'DELETE FROM rate_limits WHERE expires_at < $1',
+
+  /* The evidence log. Append only; there is deliberately no UPDATE or DELETE here. */
+  evidenceHead: 'SELECT hash FROM evidence ORDER BY seq DESC LIMIT 1',
+  evidenceByKey: 'SELECT * FROM evidence WHERE idempotency_key = $1',
+  appendEvidence: `INSERT INTO evidence
+      (id, at, kind, actor, scope, subject_kind, subject_id, payload, prev_hash, hash, idempotency_key)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+  evidenceAll: 'SELECT * FROM evidence ORDER BY seq',
+  evidenceForSubject: 'SELECT * FROM evidence WHERE subject_id = $1 ORDER BY seq',
 
   userBySub: 'SELECT * FROM users WHERE sub = $1',
   userById: 'SELECT * FROM users WHERE id = $1',
@@ -171,6 +184,27 @@ const palmId = sub => `PALM-${sha256(`palm:${sub}`).replace(/[-_]/g, '').slice(0
  */
 const subjectOf = sub => (sub ? sha256Base64Url(`subject:${sub}`).slice(0, 22) : null);
 
+/**
+ * A database row as the entry its hash was taken over.
+ *
+ * The column names and the hashed field names differ, and this is the one place that knows
+ * both — so a row read back hashes to exactly what was stored, which is what the verifier
+ * relies on.
+ */
+const toEvidenceEntry = row => ({
+  id: row.id,
+  seq: Number(row.seq),
+  at: Number(row.at),
+  kind: row.kind,
+  actor: row.actor ?? null,
+  scope: row.scope ?? null,
+  subjectKind: row.subject_kind ?? null,
+  subjectId: row.subject_id ?? null,
+  payload: JSON.parse(row.payload),
+  prev: row.prev_hash,
+  hash: row.hash,
+});
+
 function parseCookies(header = '') {
   const cookies = {};
   for (const part of header.split(';')) {
@@ -233,6 +267,7 @@ export function createApp(options) {
   } = options;
 
   const clientId = options.clientId || '';
+  let closed = false;
   let dbPromise = null;
   const database = () => {
     if (!databaseUrl && options.requireDatabaseUrl) {
@@ -250,6 +285,60 @@ export function createApp(options) {
       });
     return dbPromise;
   };
+
+  /*
+   * The evidence log.
+   *
+   * IDEMPOTENCY. The key is the kind, the subject and a digest of the payload. The same
+   * logical fact written twice — a retried request, a serverless invocation that ran the same
+   * path again — lands once. A genuinely different fact about the same subject differs in its
+   * payload and so lands separately.
+   *
+   * ORDERING. `prev_hash` is unique, so two concurrent appends cannot both claim the same
+   * predecessor. The loser retries against the new head. No lock, no ambiguity about order.
+   *
+   * FAILURE. An append is awaited, and a failure is logged and swallowed rather than failing
+   * the request. That is a deliberate trade and it has a visible consequence: a missing entry
+   * leaves a gap a reader can see, because the taxonomy never lets a later fact imply an
+   * earlier one. A payment with `signature.produced` and no `broadcast.accepted` reads as
+   * "signed, outcome unrecorded" — which is the truth. The alternative, refusing to broadcast
+   * because the log is unavailable, would make the audit trail an availability dependency for
+   * spending; and for `broadcast.accepted` it would be useless anyway, since the transaction
+   * is already on the network by then and cannot be taken back.
+   */
+  async function appendEvidence(kind, {
+    actor = null, scope = null, subjectKind = null, subjectId = null, idempotencyKey = null, ...fields
+  } = {}, q = null) {
+    const run = q ?? query;
+    const payload = redact(fields);
+    const key = idempotencyKey
+      ?? `${kind}:${subjectId ?? '-'}:${sha256Base64Url(canonicalJson(payload)).slice(0, 22)}`;
+
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        const already = (await run('evidenceByKey', key)).rows[0];
+        if (already) return { appended: false, hash: already.hash };
+
+        const prev = (await run('evidenceHead')).rows[0]?.hash ?? GENESIS;
+        const sealed = sealEntry({
+          id: randomId(12), at: now(), kind, actor, scope, subjectKind, subjectId, payload, prev,
+        });
+        await run('appendEvidence', sealed.id, sealed.at, sealed.kind, sealed.actor, sealed.scope,
+          sealed.subjectKind, sealed.subjectId, canonicalJson(sealed.payload), sealed.prev,
+          sealed.hash, key);
+        return { appended: true, hash: sealed.hash };
+      } catch (error) {
+        // A uniqueness conflict means somebody else appended first: read the new head and
+        // try again. Anything else is not retryable.
+        const conflict = /duplicate key|unique/i.test(String(error?.message ?? ''));
+        if (!conflict || attempt === 3) {
+          log.error(error);
+          return { appended: false, hash: null, error: 'the evidence log could not be written' };
+        }
+      }
+    }
+    return { appended: false, hash: null, error: 'the evidence log is contended' };
+  }
 
   // Security events. Field names are filtered against an allowlist in src/events.js, so a
   // secret cannot be written into one by mistake and an event cannot fail a request.
@@ -891,6 +980,11 @@ export function createApp(options) {
         vaultId: wallet.address, address: toAddress, txid, sats: plan.sentSats,
         custody: CUSTODY.LEGACY, reason, outcome: 'swept',
       });
+      await appendEvidence(EVIDENCE.CUSTODY_MIGRATION, {
+        subjectKind: 'wallet', subjectId: wallet.address,
+        vaultId: wallet.address, address: toAddress, txid, sats: plan.sentSats,
+        custody: CUSTODY.LEGACY, reason, outcome: 'swept', network, chain: 'bitcoin',
+      });
       log.log(`legacy vault ${wallet.address} swept to ${toAddress} (${reason}) in ${txid}`);
       return { txid, sweptSats: plan.sentSats };
     } catch (error) {
@@ -1323,12 +1417,21 @@ export function createApp(options) {
 
     const event = { operationId: op.id, userId: user.id, vaultId: wallet.address, kind: op.kind, network, chain: 'bitcoin', custody: wallet.custody };
     security.signingAttempt(event);
+    const asEvidence = { actor: user.id, subjectKind: 'operation', subjectId: op.id };
+    await appendEvidence(EVIDENCE.AUTHORIZATION_ATTEMPTED, { ...asEvidence, ...event });
 
     // 1. The plan on disk is still the transaction that was approved.
     const bound = bindPlan(wallet, plan);
     if (bound.digest !== plan.transactionHash || bound.digest !== JSON.parse(op.details).transaction_hash) {
       security.digestMismatch({ ...event, digestExpected: JSON.parse(op.details).transaction_hash, digestOffered: bound.digest });
       security.signingRejected({ ...event, reason: 'stored transaction no longer matches the approval' });
+      await appendEvidence(EVIDENCE.DIGEST_MISMATCH, {
+        ...asEvidence, ...event,
+        digestExpected: JSON.parse(op.details).transaction_hash, digestOffered: bound.digest,
+      });
+      await appendEvidence(EVIDENCE.AUTHORIZATION_REJECTED, {
+        ...asEvidence, ...event, reason: 'stored transaction no longer matches the approval',
+      });
       throw new HttpError(409, 'The stored transaction no longer matches the one that was approved.');
     }
     // 2. The owner's own key attested to that approval, for this exact transaction.
@@ -1340,6 +1443,9 @@ export function createApp(options) {
       if (!lineage.ok) {
         security.authorizationFailure({ ...event, reason: lineage.reason });
         security.signingRejected({ ...event, reason: 'no valid attestation key' });
+        await appendEvidence(EVIDENCE.AUTHORIZATION_REJECTED, {
+          ...asEvidence, ...event, reason: 'no valid attestation key',
+        });
         throw new HttpError(409, `This vault has no valid attestation key: ${lineage.reason}.`);
       }
       const checkedAuthorization = verifyAuthorization(authorization, lineage.publicKey, expected);
@@ -1347,9 +1453,32 @@ export function createApp(options) {
         // The reason is written by verifyAuthorization, not by the caller, so it is safe text.
         security.authorizationFailure({ ...event, reason: checkedAuthorization.reason, keyEpoch: lineage.epoch });
         security.signingRejected({ ...event, reason: 'authorisation did not verify' });
+        await appendEvidence(EVIDENCE.AUTHORIZATION_REJECTED, {
+          ...asEvidence, ...event, reason: checkedAuthorization.reason, keyEpoch: lineage.epoch,
+        });
         throw new HttpError(409, `No valid human authorisation for this transaction: ${checkedAuthorization.reason}.`);
       }
       if (!op.human_authorization) await query('setAuthorization', JSON.stringify(authorization), op.id);
+      /*
+       * Granted is its own fact, recorded before anything is sent. What the record claims
+       * about a sensor is carried verbatim — 'none' in this build — so a reader is never left
+       * to assume a palm was measured. See requirement 5 of the evidence phase.
+       */
+      await appendEvidence(EVIDENCE.AUTHORIZATION_GRANTED, {
+        ...asEvidence, ...event,
+        transactionHash: bound.digest,
+        receiptVersion: authorization?.record?.v ?? null,
+        policyVersion: authorization?.record?.policyVersion ?? null,
+        threshold: authorization?.record?.threshold ?? null,
+        approvalCount: authorization?.record?.approvalCount ?? null,
+        keyEpoch: lineage.epoch,
+        // Who approved, and which palm decisions settled it — opaque identifiers, so the log
+        // records that a quorum happened AND who was in it, which is what makes it auditable.
+        approvedBy: expected.approvedBy,
+        decisionIds: expected.decisionIds,
+        sensorEvidence: authorization?.record?.verification?.sensorEvidence ?? 'none',
+        verification: 'verified',
+      });
     }
     // 3. The signed bytes spend the approved coins, pay the approved outputs, at the approved fee.
     let checked;
@@ -1358,22 +1487,39 @@ export function createApp(options) {
     } catch (error) {
       if (error instanceof WalletError) {
         security.signingRejected({ ...event, reason: 'signed bytes do not match the approved plan' });
+        await appendEvidence(EVIDENCE.AUTHORIZATION_REJECTED, {
+          ...asEvidence, ...event, reason: 'signed bytes do not match the approved plan',
+        });
         throw new HttpError(400, error.message);
       }
       throw error;
     }
     try {
+      /*
+       * A signature exists at this point and a broadcast does not. They are recorded
+       * separately so that a crash between them leaves "signed, outcome unrecorded" rather
+       * than a false claim either way.
+       */
+      await appendEvidence(EVIDENCE.SIGNATURE_PRODUCED, {
+        ...asEvidence, ...event, transactionHash: bound.digest, isolation: 'none:browser-javascript',
+      });
       const txid = await chain.broadcast(String(body.hex).trim());
       // The account only becomes a quorum once its coins are actually on their way to one,
       // so a lock that could not be sent leaves everything exactly as it was.
       if (op.kind === 'lock') await lockAccount(op);
       await query('finishOperation', 'done', txid, null, now(), op.id);
       security.signingSuccess({ ...event, txid, transactionHash: bound.digest, isolation: 'none:browser-javascript' });
+      await appendEvidence(EVIDENCE.BROADCAST_ACCEPTED, {
+        ...asEvidence, ...event, txid, transactionHash: bound.digest,
+      });
       return { txid };
     } catch (error) {
       if (!(error instanceof ChainError)) throw error;
       await query('finishOperation', 'failed', null, error.message, now(), op.id);
       security.signingRejected({ ...event, reason: 'the network would not take the transaction' });
+      await appendEvidence(EVIDENCE.BROADCAST_REFUSED, {
+        ...asEvidence, ...event, reason: 'the network would not take the transaction',
+      });
       throw new HttpError(502, error.message);
     }
   }
@@ -1476,6 +1622,40 @@ export function createApp(options) {
       // Authorisation records stay at version 1 until a provider can fill a version 2 in.
       authorizationVersion: 1,
     };
+  }
+
+  /**
+   * The evidence for one payment, as a bundle an outsider can check.
+   *
+   * Everything a verifier needs travels in the bundle: the format, the genesis constant, the
+   * entries and the head. `scripts/verify-evidence.js` checks one with no database and no
+   * application, which is the whole point — evidence that only the system that produced it can
+   * validate is not evidence.
+   *
+   * A slice of the chain cannot be checked back to the genesis, so the bundle says
+   * `complete: false` and the verifier adjusts rather than reporting a false break.
+   */
+  async function exportEvidence({ user, params: [id] }) {
+    const op = await ownOperation(id, user);
+    const rows = await all('evidenceForSubject', op.id);
+    const entries = rows.map(toEvidenceEntry);
+    const bundle = buildBundle({ entries, exportedAt: now(), subjectId: op.id, complete: false });
+    return {
+      bundle,
+      // The server's own reading. A verifier who does not trust it runs the script instead.
+      verified: verifyBundle(bundle),
+      // Each fact present or absent, never inferred from another.
+      summary: summarisePayment(entries, op.id),
+    };
+  }
+
+  /** The whole log, for an investigation. Chain-complete, so it checks back to the genesis. */
+  async function exportAllEvidence({ user }) {
+    const wallet = await one('walletOf', user.id);
+    if (!wallet) throw new HttpError(409, 'This account has no wallet.');
+    const entries = (await all('evidenceAll')).map(toEvidenceEntry);
+    const bundle = buildBundle({ entries, exportedAt: now(), complete: true });
+    return { bundle, verified: verifyBundle(bundle) };
   }
 
   async function getPrice() {
@@ -2274,6 +2454,11 @@ export function createApp(options) {
       walletOwnerId: user.id, user, kind: 'withdraw', statement, details,
       payload: { ...plan, transactionHash: bound.digest }, required, networkId: 'bitcoin',
     });
+    await appendEvidence(EVIDENCE.PROPOSAL_CREATED, {
+      actor: user.id, subjectKind: 'operation', subjectId: op.id,
+      userId: user.id, vaultId: lock.address, kind: 'withdraw', network, chain: 'bitcoin',
+      transactionHash: bound.digest, threshold: required, sats: plan.sentSats, address: to,
+    });
     // A quorum starts collecting signatures from the unsigned transaction itself.
     if (lock.required) await query('setPsbt', psbtForPlan(lock, plan), op.id);
     return { operation: operationView(op, [], user), plan, rule, transactionHash: bound.digest };
@@ -2455,6 +2640,8 @@ export function createApp(options) {
     { method: 'POST', path: '/api/logout', handler: logout },
     { method: 'GET', path: '/api/price', handler: getPrice, auth: true, limit: RATE.upstream },
     { method: 'GET', path: '/api/scanner', handler: getScanner, auth: true },
+    { method: 'GET', path: '/api/evidence', handler: exportAllEvidence, auth: true, limit: RATE.upstream },
+    { method: 'GET', path: /^\/api\/operations\/([\w-]{8,64})\/evidence$/, handler: exportEvidence, auth: true, limit: RATE.upstream },
     { method: 'GET', path: '/api/random', handler: getRandom, auth: true, limit: RATE.upstream },
     { method: 'GET', path: '/api/wallet', handler: getWallet, auth: true },
     { method: 'POST', path: '/api/wallet/approval', handler: requestWallet, auth: true, limit: RATE.palm },
@@ -2597,7 +2784,11 @@ export function createApp(options) {
     handle: safeHandle,
     // For tests and maintenance scripts; nothing in a request path reaches for this.
     db: database,
+    // Idempotent: a test that closes an app explicitly, and a harness that closes it again on
+    // teardown, must not between them turn a passing test into a double-close failure.
     async close() {
+      if (closed) return;
+      closed = true;
       await new Promise(resolve => {
         server.close(resolve);
         server.closeAllConnections();
