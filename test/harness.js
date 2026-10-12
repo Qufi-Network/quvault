@@ -12,7 +12,7 @@ import { actionDigest } from '../src/veyns.js';
 import { serverKeys, seal, open as openSealed } from '../src/vault.js';
 import { createKey, publicKeyOf, addressOf, planSpend, signPlan } from '../src/bitcoin.js';
 import { DEFAULT_POLICY } from '../src/policy.js';
-import { deriveAttestationKeys, signAuthorization, signRegistration } from '../src/authorization.js';
+import { deriveAttestationKeys, signAuthorization, signAuthorizationV2, signRegistration } from '../src/authorization.js';
 import { accountsFrom } from '../client/wallet.js';
 
 export const ISSUER = 'https://issuer.test';
@@ -305,3 +305,44 @@ export function browserKey() {
  * that needs the capability says so.
  */
 export const startWithMigration = (t, overrides = {}) => start(t, { legacySeed: SEED, ...overrides });
+
+/**
+ * The version 2 record a browser would sign, with the vault's own attestation key.
+ *
+ * Mirrors `attestFor` above, which builds version 1. The field list is the same one
+ * `signApprovedSpend` in client/wallet.js uses, taken from the unlock the server released —
+ * so a test built on this exercises the real chain rather than a parallel construction.
+ * `evidence` is null because there is no scanner in this build; the record records that.
+ */
+export function attestInstitutionalFor(env, c, unlocked, tweak = {}) {
+  const { keys = c.attestation, ...fields } = tweak;
+  return signAuthorizationV2({
+    vaultId: unlocked.walletId ?? unlocked.address,
+    accountId: unlocked.accountId ?? 'bitcoin',
+    subject: unlocked.subject,
+    proposalId: unlocked.proposalId,
+    transactionHash: unlocked.transactionHash,
+    statementDigest: unlocked.statementDigest,
+    chain: unlocked.chain,
+    network: unlocked.network,
+    policyVersion: unlocked.policyVersion,
+    threshold: unlocked.threshold,
+    approvalMethod: 'veyns:palm',
+    nonce: unlocked.authorizationId,
+    approvedBy: unlocked.approvedBy,
+    decisionIds: unlocked.decisionIds,
+    approvedAt: env.now(),
+    expiresAt: unlocked.expiresAt,
+    ...fields,
+  }, keys, null);
+}
+
+/** Signs an approved plan and sends it with a version 2 authorisation. */
+export async function signAndSendV2(env, c, operationId, tweak = {}) {
+  const unlocked = ok(await c.post(`/api/operations/${operationId}/unlock`, {}));
+  const signed = signPlan({ privateKey: c.key, publicKey: c.publicKey, plan: unlocked.plan });
+  return ok(await c.post(`/api/operations/${operationId}/broadcast`, {
+    hex: signed.hex,
+    authorization: attestInstitutionalFor(env, c, unlocked, tweak),
+  }));
+}

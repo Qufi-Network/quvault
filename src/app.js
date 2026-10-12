@@ -162,6 +162,15 @@ const fmtSats = n => Number(n).toLocaleString('en-US');
 // A short, stable name for one person's palm inside this vault, from their pairwise subject.
 const palmId = sub => `PALM-${sha256(`palm:${sub}`).replace(/[-_]/g, '').slice(0, 12).toUpperCase()}`;
 
+/**
+ * The opaque identity that goes into an authorisation record.
+ *
+ * A digest of the pairwise Veyns subject, not the subject itself: a receipt may be exported
+ * and read by someone who should learn which vault and which rules, and not who. One function
+ * so the record and the check against it cannot compute it differently.
+ */
+const subjectOf = sub => (sub ? sha256Base64Url(`subject:${sub}`).slice(0, 22) : null);
+
 function parseCookies(header = '') {
   const cookies = {};
   for (const part of header.split(';')) {
@@ -917,6 +926,20 @@ export function createApp(options) {
       approvedBy: approved.map(a => a.user_id),
       decisionIds: approved.map(a => a.decision_id).filter(Boolean),
       keyEpoch: attestationOf(wallet).epoch ?? 0,
+      /*
+       * Checked only when the record carries them, so a version 1 receipt still verifies
+       * exactly as it did. A version 2 record that names a different proposal, policy, chain
+       * or network — or claims a threshold the rules did not ask for — is refused here rather
+       * than merely read back later.
+       *
+       * These come from `authorizationDescriptor`, the same function that tells the browser
+       * what it is signing, so the statement and the check cannot drift apart.
+       */
+      ...(({ walletId, authorizationVersion, bindingNonce, authorizationId, ...rest }) => rest)(
+        await authorizationDescriptor(op, wallet, { transactionHash: bound.digest })),
+      proposalId: op.id,
+      threshold: op.required,
+      subject: subjectOf((await one('userById', op.wallet_user_id))?.sub),
       // The record cannot predate the approvals it claims, nor be dated in the future.
       notBefore: Math.min(...approved.map(a => a.closed_at ?? a.created_at)) - 60,
       notAfter: now() + 60,
@@ -1233,6 +1256,7 @@ export function createApp(options) {
   /** What the owner's device needs to sign the transaction and to attest to the approval. */
   async function withdrawalUnlock(op, wallet) {
     const expected = await expectedAuthorization(op, wallet);
+    const owner = await one('userById', op.wallet_user_id);
     return {
       ...await authorizationDescriptor(op, wallet, { transactionHash: expected.transactionHash }),
       plan: JSON.parse(op.payload),
@@ -1243,6 +1267,18 @@ export function createApp(options) {
       approvedBy: expected.approvedBy,
       decisionIds: expected.decisionIds,
       attestationEpoch: expected.keyEpoch,
+      /*
+       * The institutional fields a version 2 receipt needs. Sent so the browser signs a record
+       * that can establish its own policy and threshold; a version 1 record cannot, which is
+       * finding F1 of the Phase A report.
+       *
+       * `threshold` is what the rules asked for, as an integer. `subject` is the opaque
+       * per-application identity of the vault owner — never a name or an email.
+       */
+      proposalId: op.id,
+      threshold: op.required,
+      subject: subjectOf(owner?.sub),
+      expiresAt: op.expires_at,
     };
   }
 
@@ -1747,8 +1783,22 @@ export function createApp(options) {
       status: op.status,
       txid: op.txid,
       explorer: op.txid ? chain.explorerTx(op.txid) : null,
-      // The server's own verdict; a client that verifies for itself need not believe it.
-      verified: verifyAuthorization(authorization, publicKey, { transactionHash: authorization.record.transactionHash }),
+      /*
+       * The server's own verdict; a client that verifies for itself need not believe it.
+       *
+       * The expected digest comes from the OPERATION, never from the record being verified.
+       * It used to read `authorization.record.transactionHash`, which made the check circular:
+       * it proved the signature was valid over the record, not that the record was about this
+       * payment, so any internally consistent record was reported as verified. That was
+       * finding F2 of the Phase A report.
+       */
+      verified: verifyAuthorization(authorization, publicKey, {
+        transactionHash: JSON.parse(op.details).transaction_hash,
+        statementDigest: op.digest,
+        vaultId: wallet?.address,
+        proposalId: op.id,
+        threshold: op.required,
+      }),
     };
   }
 

@@ -75,6 +75,15 @@ domain-separated context, by a key derived from your recovery phrase. The server
 public half, so a QuVault operator cannot manufacture a receipt claiming you approved something.
 That is what makes an approval evidence rather than a log line.
 
+A receipt comes in two versions and says which it is. **Version 2** — what the browser signs
+today — carries the transaction digest, the policy version, the required threshold, the chain,
+the network, the proposal and an explicit statement of what a sensor measured, which in this
+build is *nothing*, recorded as `NOT_AVAILABLE` rather than omitted. **Version 1** is what
+wallets produced before this and is still verified, but it establishes only that the key
+approved a digest — not the policy, the threshold or the chain. Every verification returns a
+`proves` block saying which of those a given record can and cannot answer, so a version 1
+receipt is never read as stronger than it is.
+
 **What it does not do:** Bitcoin signs with secp256k1, which a quantum computer breaks
 **on-chain**, whatever this wallet does. That is Bitcoin's problem, not this wallet's.
 
@@ -140,10 +149,11 @@ Three things keep the rules honest:
   details, so approvals of different transactions can never add up to a quorum. A request that
   never gathers its quorum expires after 30 minutes, and palm requests still waiting at Veyns
   are cancelled.
-- **The rules in force are named in the signing request**, as a `policyVersion` digest, and your
-  browser refuses to sign if it disagrees with what the server authorised. Note the limit: the
-  V1 receipt that gets stored does *not* carry that digest — only the dormant V2 record does —
-  so today the policy is checked at signing time and is not part of the permanent evidence.
+- **The rules in force are part of the permanent evidence.** The receipt your browser signs is
+  a version 2 record carrying the `policyVersion` digest, the required threshold as an integer,
+  the chain, the network and the proposal it belongs to — so a reader can check afterwards that
+  the requirement was met, without trusting a database row. The server refuses a record that
+  names a different policy, proposal or threshold than the one it authorised.
 
 Larger amounts can never need fewer approvals than smaller ones, and no rule can ask for more
 approvals than there are approvers.

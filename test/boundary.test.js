@@ -70,11 +70,14 @@ const ELSEWHERE = 'tb1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3q0sl5k
 
 /** Everything a version 2 record has to name about what is being authorised. */
 const V2_PARTS = {
-  vaultId: 'tb1qvault', accountId: 'bitcoin', subject: 'user-alex',
+  vaultId: 'tb1qvault', accountId: 'bitcoin', subject: 'user-alex', proposalId: 'proposal-1',
   transactionHash: 'digest-1', statementDigest: 'statement-1',
   chain: 'bitcoin', network: 'testnet4', policyVersion: 'policy-v1', nonce: 'nonce-1',
-  approvalMethod: 'veyns:palm', approvals: '1 of 1',
+  // An integer a verifier can check, not the display string version 1 carried.
+  threshold: 1,
+  approvalMethod: 'veyns:palm',
   approvedBy: ['alex'], decisionIds: ['d1'], approvedAt: 1_800_000_000,
+  expiresAt: 1_800_001_800,
 };
 
 /** Evidence shaped the way a real provider would return it, for testing refusals against. */
@@ -126,6 +129,17 @@ async function browserVault() {
     approvedBy: ['alex'],
     decisionIds: ['decision-1'],
     attestationEpoch: 1,
+    // The institutional fields the server sends, so the receipt can establish its own policy.
+    // `withdrawalUnlock` in src/app.js is where these come from in the real flow.
+    authorizationId: 'op-fixture',
+    proposalId: 'op-fixture',
+    accountId: 'bitcoin',
+    subject: 'subject-fixture',
+    chain: 'bitcoin',
+    network: 'testnet4',
+    policyVersion: 'policy-fixture',
+    threshold: 1,
+    expiresAt: 1_800_001_800,
   };
   return { made, record, plan, unlocked };
 }
@@ -290,91 +304,185 @@ test('evidence is only usable when every check was performed and passed', () => 
   }
 });
 
-test('a version 2 authorisation cannot be made, because nothing can measure one', () => {
+test('a version 2 authorisation can be made without a scanner, and records that plainly', () => {
+  /*
+   * This test replaces one asserting that V2 could NOT be made. That property was deliberately
+   * removed: gating the institutional fields on scanner evidence meant V1 could not prove the
+   * policy, V2 could but nothing could emit it, and therefore no receipt could prove the
+   * policy at all. Phase A finding F1. The property that survives — and is tested below and in
+   * the forgery test that follows — is that a record may never CLAIM a measurement it does not
+   * have.
+   */
   const keys = deriveAttestationKeys(new Uint8Array(crypto.randomBytes(64)), 1);
   const parts = { ...V2_PARTS };
-  const scanner = createNullScanner();
 
-  // What the only provider in this build can actually offer.
-  const fromTheNullScanner = {
+  // No scanner at all: it signs, and the absence is a recorded value rather than a gap.
+  const plain = signAuthorizationV2(parts, keys, null);
+  assert.equal(plain.record.v, AUTHORIZATION_VERSIONS.V2);
+  assert.equal(plain.record.verification.sensorEvidence, 'none');
+  assert.equal(plain.record.verification.padResult, SCANNER.NOT_AVAILABLE);
+  assert.equal(plain.record.verification.biometricVerification, SCANNER.NOT_AVAILABLE);
+  assert.notEqual(plain.record.verification.padResult, SCANNER.PASSED);
+  assert.equal(plain.record.verification.scannerAttestation, null);
+  assert.ok(!('biometricVerified' in plain.record), 'and never V1s unconditional assertion');
+
+  // What it is for is in the record, which is the whole point of the version.
+  assert.equal(plain.record.policyVersion, 'policy-v1');
+  assert.equal(plain.record.threshold, 1);
+  assert.equal(plain.record.approvalCount, 1);
+  assert.equal(plain.record.proposalId, 'proposal-1');
+  assert.equal(plain.record.chain, 'bitcoin');
+  assert.equal(plain.record.network, 'testnet4');
+  assert.equal(verifyAuthorization(plain, keys.publicKeyBase64, { transactionHash: 'digest-1' }).ok, true);
+
+  // What the only provider in this build can offer produces the same honest 'none'.
+  const scanner = createNullScanner();
+  const fromNull = signAuthorizationV2(parts, keys, {
     provider: scanner.name,
     pad: scanner.getPADResult(),
     biometric: scanner.getBiometricResult(),
     attestation: scanner.getAttestation(),
-    scannerClass: null,
-    captureReference: null,
-    bindingNonce: parts.transactionHash,
-  };
-  assert.throws(() => signAuthorizationV2(parts, keys, fromTheNullScanner), AuthorizationUnavailable);
-  assert.throws(() => signAuthorizationV2(parts, keys, undefined), AuthorizationUnavailable);
+    scannerClass: null, captureReference: null, bindingNonce: parts.transactionHash,
+  });
+  assert.equal(fromNull.record.verification.sensorEvidence, 'none');
 
-  // Evidence for a different transaction is refused even when every check passed.
-  assert.throws(() => signAuthorizationV2(parts, keys, completeEvidence('another-digest')), /bound to a different transaction/);
-
-  // A record that does not say what it is about is refused before the evidence is looked at.
-  for (const name of ['vaultId', 'subject', 'chain', 'network', 'policyVersion', 'nonce', 'accountId']) {
+  // A record that does not say what it is about is refused before anything is signed.
+  for (const name of ['vaultId', 'subject', 'proposalId', 'chain', 'network', 'policyVersion', 'nonce', 'accountId']) {
     assert.throws(
-      () => signAuthorizationV2({ ...parts, [name]: undefined }, keys, completeEvidence()),
+      () => signAuthorizationV2({ ...parts, [name]: undefined }, keys, null),
       new RegExp(`must name: .*${name}`),
       name,
     );
   }
+  // The threshold has to be a number a verifier can check, not a label.
+  for (const bad of [undefined, 0, -1, '2', 1.5]) {
+    assert.throws(() => signAuthorizationV2({ ...parts, threshold: bad }, keys, null), /integer threshold/, String(bad));
+  }
+  // And it may never claim a requirement it did not reach.
+  assert.throws(
+    () => signAuthorizationV2({ ...parts, threshold: 3, approvedBy: ['alex', 'sam'] }, keys, null),
+    /cannot claim a threshold of 3 with 2 distinct approvers/,
+  );
+  // Counting one approver twice does not reach a threshold either.
+  assert.throws(
+    () => signAuthorizationV2({ ...parts, threshold: 2, approvedBy: ['alex', 'alex'] }, keys, null),
+    /with 1 distinct approvers/,
+  );
 
-  // With complete, correctly bound evidence it signs — which is what makes the refusals above
-  // a statement about the evidence rather than about the function being unfinished.
-  const signed = signAuthorizationV2(parts, keys, completeEvidence());
-  assert.equal(signed.record.v, AUTHORIZATION_VERSIONS.V2);
-  assert.equal(signed.record.padResult, SCANNER.PASSED);
-  assert.equal(signed.record.subject, 'user-alex');
-  assert.equal(signed.record.policyVersion, 'policy-v1');
-  assert.equal(signed.record.chain, 'bitcoin');
-  assert.equal(signed.record.network, 'testnet4');
-  assert.ok(!('biometricVerified' in signed.record), 'V2 does not assert what it did not measure');
-  assert.equal(verifyAuthorization(signed, keys.publicKeyBase64, { transactionHash: 'digest-1' }).ok, true);
+  // With real evidence it says so, and evidence about another transaction is refused.
+  const measured = signAuthorizationV2(parts, keys, completeEvidence());
+  assert.equal(measured.record.verification.sensorEvidence, 'measured');
+  assert.equal(measured.record.verification.padResult, SCANNER.PASSED);
+  assert.throws(
+    () => signAuthorizationV2(parts, keys, completeEvidence('another-digest')),
+    /bound to a different transaction/,
+  );
 
-  // And it cannot be moved onto another wallet, account, chain, network, person or ruleset.
+  // And a finished record cannot be moved onto another wallet, proposal, ruleset or threshold.
   for (const [field, value] of [
     ['vaultId', 'tb1qsomeoneelse'], ['accountId', 'ethereum'], ['chain', 'ethereum'],
-    ['network', 'mainnet'], ['policyVersion', 'policy-v2'], ['subject', 'user-sam'], ['nonce', 'nonce-2'],
+    ['network', 'mainnet'], ['policyVersion', 'policy-v2'], ['subject', 'user-sam'],
+    ['nonce', 'nonce-2'], ['proposalId', 'proposal-2'], ['threshold', 2],
   ]) {
-    const moved = verifyAuthorization(signed, keys.publicKeyBase64, { [field]: value });
-    assert.equal(moved.ok, false, field);
+    assert.equal(verifyAuthorization(plain, keys.publicKeyBase64, { [field]: value }).ok, false, field);
   }
 });
 
-test('a version 2 record with placeholders instead of measurements is refused', () => {
+test('a version 2 record that claims more than it measured is refused', () => {
   const keys = deriveAttestationKeys(new Uint8Array(crypto.randomBytes(64)), 1);
   const good = signAuthorizationV2({ ...V2_PARTS }, keys, completeEvidence());
 
-  // The whole point of this test is that the record is refused on its CONTENTS, so each
-  // forgery is signed properly with the real key over the tampered record. A signature that
-  // did not verify would make every assertion below pass for the wrong reason, so the control
-  // at the end re-signs the untouched record the same way and requires it to verify.
+  /*
+   * Every forgery is signed properly with the real key over the tampered record, so each
+   * refusal below is about the record's CONTENTS and not about a signature that failed. The
+   * control re-signs the untouched record the same way and requires it to verify — without it,
+   * every assertion here could pass for the wrong reason.
+   */
   const forge = change => {
     const record = { ...good.record, ...change };
     return { ...good, record, signature: rawSign(record, keys) };
   };
+  const forgeVerification = change => forge({ verification: { ...good.record.verification, ...change } });
+
   assert.equal(
     verifyAuthorization(forge({}), keys.publicKeyBase64).ok, true,
     'control: re-signing an untouched record still verifies, so the refusals below are about contents',
   );
 
-  const attacks = {
+  // Claiming a measurement it does not have. This is the Phase 1 property, preserved.
+  const claims = {
     'pad asserted rather than measured': { padResult: true },
     'match asserted rather than measured': { biometricVerification: true },
     'no attestation': { scannerAttestation: '' },
     'no scanner class': { scannerClass: null },
+    'no capture': { captureReference: null },
     'evidence from another transaction': { bindingNonce: 'another-digest' },
+    'no biometric policy version': { biometricPolicyVersion: null },
+    'an unknown evidence state': { sensorEvidence: 'probably' },
+  };
+  for (const [what, change] of Object.entries(claims)) {
+    assert.equal(verifyAuthorization(forgeVerification(change), keys.publicKeyBase64).ok, false, what);
+  }
+
+  // The opposite direction: saying nothing was measured while carrying evidence of one.
+  // A complete 'none': the verdicts have to come back to NOT_AVAILABLE too. Leaving PASSED in
+  // place while claiming nothing was measured is itself one of the refusals, tested below.
+  const nothing = {
+    sensorEvidence: 'none',
+    padResult: SCANNER.NOT_AVAILABLE,
+    biometricVerification: SCANNER.NOT_AVAILABLE,
+    scannerAttestation: null, scannerClass: null, captureReference: null, bindingNonce: null,
+  };
+  assert.equal(verifyAuthorization(forgeVerification(nothing), keys.publicKeyBase64).ok, true, 'an honest none verifies');
+  for (const [what, change] of Object.entries({
+    'none, but carrying an attestation': { ...nothing, scannerAttestation: 'sig' },
+    'none, but naming a scanner': { ...nothing, scannerClass: 'class-1' },
+    'none, but reporting a pass': { ...nothing, padResult: SCANNER.PASSED },
+  })) {
+    assert.equal(verifyAuthorization(forgeVerification(change), keys.publicKeyBase64).ok, false, what);
+  }
+
+  // And claims about the payment itself.
+  for (const [what, change] of Object.entries({
+    'a threshold it did not reach': { threshold: 5 },
+    'an approver counted twice': { approvedBy: ['alex', 'alex'], approvalCount: 2 },
+    'a miscounted approver list': { approvalCount: 9 },
     'the version 1 assertion smuggled in': { biometricVerified: true },
     'no policy version': { policyVersion: null },
-    'no subject': { subject: null },
-    'no chain': { chain: null },
-    'no network': { network: null },
-    'no nonce': { nonce: null },
-  };
-  for (const [what, change] of Object.entries(attacks)) {
+    'no proposal': { proposalId: null },
+  })) {
     assert.equal(verifyAuthorization(forge(change), keys.publicKeyBase64).ok, false, what);
   }
+});
+
+test('a verdict says what the record it verified can and cannot establish', () => {
+  const keys = deriveAttestationKeys(new Uint8Array(crypto.randomBytes(64)), 1);
+
+  // Version 1 is the receipt this product produced until now. It proves a key approved a
+  // digest, and genuinely nothing about the rules that governed the payment.
+  const v1 = signAuthorization({
+    vaultId: 'tb1qvault', accountId: 'bitcoin', transactionHash: 'digest-1',
+    statementDigest: 'statement-1', approvalMethod: 'veyns:palm', approvals: '1 of 1',
+    approvedBy: ['alex'], decisionIds: ['d1'], approvedAt: 1_800_000_000,
+  }, keys);
+  const onV1 = verifyAuthorization(v1, keys.publicKeyBase64);
+  assert.equal(onV1.ok, true, 'it still verifies');
+  assert.equal(onV1.proves.transaction, true);
+  assert.equal(onV1.proves.policy, false, 'and establishes no policy');
+  assert.equal(onV1.proves.threshold, false);
+  assert.equal(onV1.proves.chain, false);
+  assert.equal(onV1.proves.proposal, false);
+  assert.equal(onV1.proves.sensorMeasurement, false);
+  assert.match(onV1.proves.notes, /does NOT establish the policy/);
+
+  // Version 2 establishes the policy and threshold, and still claims no measurement.
+  const onV2 = verifyAuthorization(signAuthorizationV2({ ...V2_PARTS }, keys, null), keys.publicKeyBase64);
+  assert.equal(onV2.ok, true);
+  assert.equal(onV2.proves.policy, true);
+  assert.equal(onV2.proves.threshold, true);
+  assert.equal(onV2.proves.chain, true);
+  assert.equal(onV2.proves.proposal, true);
+  assert.equal(onV2.proves.sensorMeasurement, false, 'because there is no scanner in this build');
 });
 
 test('version 1 still verifies, and a caller can require version 2 without changing that', () => {

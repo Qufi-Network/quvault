@@ -19,7 +19,10 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { base64urlnopad } from '@scure/base';
 import { canonicalTransaction, canonicalBytes } from '../src/canonical.js';
-import { deriveAttestationKeys, signAuthorization, signRegistration, verifyAuthorization, verifyChain } from '../src/authorization.js';
+import {
+  deriveAttestationKeys, signAuthorization, signAuthorizationV2, signRegistration,
+  verifyAuthorization, verifyChain,
+} from '../src/authorization.js';
 import {
   ISOLATION, BINDING, assertSigner, sealResult, describeCapabilities,
   requestMatchesAuthorization, SignerError,
@@ -279,6 +282,28 @@ export function attest(mnemonic, parts, epoch = 1) {
 }
 
 /**
+ * Signs the institutional receipt: version 2, which can establish its own policy.
+ *
+ * A version 1 record proves that the owner's key approved a transaction digest and nothing
+ * more — not the rules in force, not the threshold those rules required, not the chain. This
+ * one carries all of that, so a reader can check the requirement was met without trusting a
+ * database row. `evidence` is what a scanner measured, which in this build is nothing; the
+ * record states that explicitly rather than leaving it out.
+ *
+ * It throws rather than quietly falling back to version 1 if the server did not send the
+ * institutional fields. A silent downgrade would turn a missing field into weaker evidence
+ * that still looks valid.
+ */
+export function attestInstitutional(mnemonic, parts, epoch = 1, evidence = null) {
+  const keys = attestationKeys(mnemonic, epoch);
+  try {
+    return signAuthorizationV2(parts, keys, evidence);
+  } finally {
+    keys.secretKey.fill(0);
+  }
+}
+
+/**
  * Signs exactly the plan the palm approved: same coins, same outputs, same fee.
  *
  * Three refusals, all before a signature exists: the phrase must belong to this wallet, the
@@ -478,16 +503,28 @@ export async function signApprovedSpend(record, unlocked, { network }) {
       transactionHash: unlocked.transactionHash,
       network,
     });
-    const authorization = attest(mnemonic, {
+    /*
+     * Version 2, carrying the policy and threshold the payment was authorised under. No
+     * scanner evidence is passed because there is no scanner in this build — the record says
+     * so in a signed field rather than omitting it.
+     */
+    const authorization = attestInstitutional(mnemonic, {
       vaultId: record.address,
-      accountId: 'bitcoin',
+      accountId: unlocked.accountId ?? 'bitcoin',
+      subject: unlocked.subject,
+      proposalId: unlocked.proposalId,
       transactionHash: unlocked.transactionHash,
       statementDigest: unlocked.statementDigest,
+      chain: unlocked.chain,
+      network: unlocked.network,
+      policyVersion: unlocked.policyVersion,
+      threshold: unlocked.threshold,
       approvalMethod: 'veyns:palm',
-      approvals: unlocked.approvals,
+      nonce: unlocked.authorizationId,
       approvedBy: unlocked.approvedBy,
       decisionIds: unlocked.decisionIds,
       approvedAt: Math.floor(Date.now() / 1000),
+      expiresAt: unlocked.expiresAt,
     }, unlocked.attestationEpoch ?? 1);
     return { hex: signed.hex, txid: signed.txid, authorization };
   });
