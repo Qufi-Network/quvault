@@ -95,20 +95,69 @@ against partial edits, not tamper **proof** against the operator.
 |---|---|
 | An application bug, or any code path in this app | **No.** The trigger refuses UPDATE and DELETE. |
 | A compromised application server, with the app's database credentials | **Depends on the grant.** With `UPDATE`/`DELETE` privileges on `evidence` they can drop the trigger and rewrite. **Mitigation available today and not yet configured: grant the application role `INSERT` and `SELECT` on `evidence` and nothing else.** See §5. |
-| A database administrator or anyone with superuser | **Yes.** They can rewrite history and recompute the chain. Nothing inside the database stops this. |
+| A database administrator or anyone with superuser | **Yes, but not undetectably.** They can rewrite history and recompute the chain; they cannot produce a checkpoint matching the new head. See Claim 4. Without checkpoints, undetectable. |
 | Anyone, against an exported bundle held elsewhere | **No.** They would have to alter the copy they do not hold. |
 
 **So what actually defends against the operator?** Holding dated exports somewhere the operator
 does not control, and comparing. An earlier export that disagrees with the live log is the
 proof — not the chain. That is why the export format exists and why §4 is not optional.
 
-### What would make this stronger, and is not implemented
+### Claim 4 — a FULL rewrite is detectable, by a key the server has never held. IMPLEMENTED.
 
-The owner's browser signs ML-DSA-65 receipts with a key the server has never held. If a receipt
-also committed to the evidence head at signing time, the log would be anchored to a key the
-operator cannot forge, and rewriting history would require forging a signature instead of
-recomputing a hash. **This is not implemented**: it changes the receipt format, and this phase
-was explicitly scoped to leave signing behaviour unchanged. It is the natural next strengthening.
+A **checkpoint** is a signed commitment to a head the log passed through:
+
+```
+{ v: 1, context: 'QUVAULT-EVIDENCE-CHECKPOINT-V1', vaultId, head, count, at, nonce }
+```
+
+signed in the owner's browser with the same ML-DSA-65 attestation key that signs authorisation
+receipts — derived from the recovery phrase, never sent anywhere. **The server cannot make one.**
+
+So the privileged operator of the table above can still rewrite every entry and recompute the
+chain — and the result will fail against any checkpoint, because producing a matching one would
+mean forging a post-quantum signature under a key they do not have. There is a test that
+performs exactly that attack, resealing every entry so the chain verifies perfectly, and
+requires the checkpoint to catch it.
+
+```bash
+GET  /api/evidence/checkpoint     # the head to commit to
+POST /api/evidence/checkpoint     # the signed commitment
+```
+
+A checkpoint naming a head this log does not hold is refused, as is one signed by a key the
+vault has not registered. One checkpoint per head; a repeat is the same commitment, not an
+error.
+
+**No circularity.** A checkpoint commits to a head that already exists. The entry recording that
+a checkpoint was signed is covered by the *next* checkpoint, never the one just made, so the two
+structures never depend on each other.
+
+**It is not an authorisation.** Separate signing context, separate verification function, and no
+field in it says anything about a palm. Keeping it apart from the receipt is what stops anyone
+reading a checkpoint as evidence that a human or a sensor did anything.
+
+### Claim 5 — a rewrite is detectable even if the checkpoints are deleted too. IMPLEMENTED.
+
+Claim 4 has a hole, and it is the word *externally*. Checkpoints live in the same database the
+operator controls. An operator who rewrites the log can also drop the checkpoint trigger and
+delete every row — and then there is nothing left to contradict them.
+
+So the browser keeps its own note of what it committed to: `{ head, count, at }`, in IndexedDB,
+in storage the operator does not control. `GET /api/evidence/checkpoint` reports the heads the
+server *now* claims at each committed count — recomputed from the live log, never read back from
+the checkpoint rows, so a rewrite shows up — and `checkpointDisagreement` compares.
+
+An operator who rewrites the log and destroys every checkpoint still has to face a browser that
+remembers the log had head H at N entries. There is a test that performs the complete attack —
+reseal every entry, perfect the chain, delete the checkpoints — and requires the browser to
+notice.
+
+A log that merely **grew** is not a disagreement. Only a different history at a count already
+committed to is.
+
+**What this still needs from the operator:** checkpoints have to actually be signed, and
+regularly. A log with no checkpoints is back to Claim 3, and the verifier says so in those
+words. Nothing signs one automatically.
 
 ---
 
@@ -133,22 +182,44 @@ written twice — a retried request, a serverless invocation replaying the same 
 A genuinely different fact about the same subject differs in its payload and lands separately.
 There is a test that replays a completed broadcast and requires the row count not to move.
 
-### Failure behaviour, and the trade it makes
+### Failure behaviour: fail closed, except where that is impossible
 
-An append is awaited. A failure is logged and **swallowed**: the request proceeds.
+The three gates follow from one question — **is this step still reversible?** If it is, refusing
+costs a retry and nothing else, so the evidence is required. If it is not, no refusal can undo
+it, so the evidence is best-effort and the outcome is reconciled afterwards.
 
-This is deliberate, and it has a cost worth naming. Refusing to broadcast because the audit log
-is unavailable would make the log an availability dependency for spending. For
-`broadcast.accepted` it would be pointless anyway — the transaction is on the network before the
-entry is written and cannot be recalled.
+| Fact | Reversible when written? | Behaviour if it cannot be written |
+|---|---|---|
+| `authorization.granted` | yes — nothing has left the building | **refuse (503)**. No grant is acted on without a durable record of it. |
+| `signature.produced` | yes — an unsent signature is inert | **refuse (503)**. The caller retries and signs again. |
+| `broadcast.attempted` | yes — the last moment before the network | **refuse (503)**. Carries the txid, which is known here. |
+| `broadcast.accepted` | **no** — already on the network | record best-effort, then reconcile. §3a |
 
-What this buys instead: because no fact is ever inferred from another, a missing entry leaves a
-**visible gap** rather than a false claim. "Signed, outcome unrecorded" is what a reader gets,
-and that is the honest reading. There is a test that drops the `evidence` table mid-payment and
-requires the payment to complete.
+So **a transaction cannot reach the network without durable evidence of the authorisation and
+the policy that permitted it.** The 503 says explicitly that nothing has changed and the caller
+should try again; it is not a 409, because the request was never the problem.
 
-An operator who needs fail-closed semantics does not have them today. That is a limitation, not
-a feature, and it is listed in §6.
+### 3a. Reconciling an uncertain outcome
+
+The one state a crash can still leave: `broadcast.attempted` with no acceptance or refusal
+after it. `summarisePayment` reports this as `outcomeUnknown` — not a guess about what happened,
+a statement that nobody knows.
+
+The attempt carries the txid, so the question has an authority that is not this application:
+
+```bash
+curl -X POST --cookie "$COOKIE" https://host/api/operations/$ID/reconcile
+```
+
+| What the chain says | What is recorded |
+|---|---|
+| it has the transaction | `broadcast.accepted`, marked `outcome: reconciled` |
+| it has never seen it | `broadcast.refused`, marked `outcome: reconciled` |
+| **could not ask** | **nothing.** The outcome stays open, which is the truth. |
+
+The third row is the one that matters. "We could not reach the chain" is not "it did not
+happen", and writing either outcome there would be a guess recorded permanently in an
+append-only log. Reconciliation is idempotent and safe to run on a schedule.
 
 ---
 
@@ -204,10 +275,17 @@ configuration, not code.
 
 - **A privileged operator can rewrite the log.** §2. Mitigated only by external exports.
 - **The application role is not yet restricted** to insert-and-select. §5.
-- **Failure is fail-open.** A payment completes even if its evidence cannot be written. §3.
-- **`transaction.confirmed` is never written.** Confirmation tracking is not implemented.
-- **Receipts do not commit to the evidence head**, so the log is not anchored to a key the
-  operator lacks. §2.
+- **`broadcast.accepted` is still best-effort**, necessarily — the transaction is on the network
+  before it can be written. Mitigated by reconciliation, which needs running. §3a.
+- **Checkpoints must actually be signed.** Nothing signs one automatically; an unvisited vault
+  accumulates uncommitted history, and a rewrite of that tail would not be detectable.
+- **The browser's retained head is per browser.** Clear site data and that tripwire is gone —
+  which is why exports held outside the operator's control remain the durable answer, and the
+  browser copy is a second line rather than the only one.
+- **`transaction.confirmed` is never written.** Confirmation tracking is not implemented, so a
+  reconciled acceptance reports whether the chain has it, not how deeply.
+- **Receipts do not yet carry an evidence anchor**, so a receipt cannot be associated with a
+  position in the log independently. Designed in `AUTHORIZATION-V3-DESIGN.md`, not built.
 - **No organisation scope yet.** The `scope` column exists and is always null. It is there so an
   organisation identifier can be recorded later without rewriting entries that predate
   organisations — which is the forward-compatibility this phase was asked to leave room for,

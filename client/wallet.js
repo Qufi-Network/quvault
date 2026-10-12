@@ -21,7 +21,7 @@ import { base64urlnopad } from '@scure/base';
 import { canonicalTransaction, canonicalBytes } from '../src/canonical.js';
 import {
   deriveAttestationKeys, signAuthorization, signAuthorizationV2, signRegistration,
-  verifyAuthorization, verifyChain,
+  signCheckpoint, verifyAuthorization, verifyChain,
 } from '../src/authorization.js';
 import {
   ISOLATION, BINDING, assertSigner, sealResult, describeCapabilities,
@@ -589,6 +589,28 @@ export async function restoreVaultKey(mnemonic, { unlock, salt }, expectedAddres
 }
 
 /**
+ * Signs a commitment to the evidence log, with the key only this browser holds.
+ *
+ * The server cannot make one of these. That is the entire point: an operator who rewrites the
+ * evidence log can recompute its hash chain, but cannot produce a checkpoint matching the new
+ * head without forging an ML-DSA-65 signature under a key derived from the recovery phrase.
+ *
+ * It takes a head the server supplied and says "this is the log I saw". It does not verify the
+ * log — a browser cannot read the whole log cheaply — so a checkpoint attests to what the
+ * server presented at that moment, which is exactly what makes a later disagreement visible.
+ */
+export async function signEvidenceCheckpoint(record, unlocked, { vaultId, head, count, at, nonce }) {
+  return withPhrase(record, unlocked.unlock, mnemonic => {
+    const keys = attestationKeys(mnemonic, unlocked.attestationEpoch ?? 1);
+    try {
+      return signCheckpoint({ vaultId, head, count, at, nonce }, keys);
+    } finally {
+      keys.secretKey.fill(0);
+    }
+  });
+}
+
+/**
  * The recovery words, to show the person who owns them.
  *
  * The only export in this module that returns a secret. Its caller must put the words on the
@@ -610,6 +632,50 @@ export async function pinAttestationRoot(keyId) {
   if (!record) return null;
   await saveRecord({ ...record, attestationRootKeyId: keyId });
   return loadRecord();
+}
+
+/**
+ * Keeps this browser's own copy of the last evidence head it committed to.
+ *
+ * A checkpoint stored only on the server is a commitment the server can delete. Keeping the
+ * head here — in storage the operator does not control — is what makes it externally retained:
+ * an operator who rewrites the evidence log AND drops every checkpoint still has to face a
+ * browser that remembers the log had head H at N entries.
+ *
+ * Tiny on purpose: a head, a count, a time. No signature, because the point is not to prove
+ * anything cryptographically from here — it is to hold a second, independent record of what
+ * the server said, so a later disagreement is visible at all.
+ */
+export async function pinCheckpoint({ head, count, at }) {
+  const record = await loadRecord();
+  if (!record) return null;
+  const history = [...(record.checkpoints ?? []), { head, count, at }]
+    // Only the recent ones: this is a tamper tripwire, not an archive.
+    .slice(-16);
+  await saveRecord({ ...record, checkpoints: history });
+  return loadRecord();
+}
+
+/**
+ * Compares what the server says its log is now against what this browser last committed to.
+ *
+ * Returns the disagreement, or null. A log that has grown is expected — a log whose history at
+ * a count this browser has already seen no longer matches is not, and that is the signal.
+ */
+export function checkpointDisagreement(record, serverHeads) {
+  for (const mine of record?.checkpoints ?? []) {
+    const theirs = serverHeads.find(h => h.count === mine.count);
+    if (!theirs) continue;        // the server no longer offers that point; not proof by itself
+    if (theirs.head !== mine.head) {
+      return {
+        count: mine.count,
+        expected: mine.head,
+        found: theirs.head,
+        reason: 'the server reports a different history at a point this browser already committed to',
+      };
+    }
+  }
+  return null;
 }
 
 /* ======================================================= the signing boundary ==== */

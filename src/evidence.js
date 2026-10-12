@@ -55,6 +55,13 @@ export const EVIDENCE = {
   AUTHORIZATION_GRANTED: 'authorization.granted',
   AUTHORIZATION_REJECTED: 'authorization.rejected',
   SIGNATURE_PRODUCED: 'signature.produced',
+  /*
+   * Written durably BEFORE the network call, carrying the txid — which is known at that point,
+   * because verifying the signed bytes against the plan yields it. This is what makes an
+   * uncertain broadcast reconcilable: an attempt with no outcome names the transaction to go
+   * and ask the chain about.
+   */
+  BROADCAST_ATTEMPTED: 'broadcast.attempted',
   BROADCAST_ACCEPTED: 'broadcast.accepted',
   BROADCAST_REFUSED: 'broadcast.refused',
   TRANSACTION_CONFIRMED: 'transaction.confirmed',
@@ -64,6 +71,12 @@ export const EVIDENCE = {
   BIOMETRIC_FAILURE: 'scanner.biometric_failure',
   CUSTODY_MIGRATION: 'custody.migration',
   RATE_LIMITED: 'request.rate_limited',
+  /*
+   * A checkpoint was signed. Recorded so the log says when it was committed to; this entry is
+   * covered by the NEXT checkpoint, never by the one just made, so the two structures never
+   * depend on each other.
+   */
+  CHECKPOINT_SIGNED: 'evidence.checkpoint_signed',
 };
 
 const KNOWN_KINDS = new Set(Object.values(EVIDENCE));
@@ -161,7 +174,7 @@ export function verifyChainOfEvidence(entries, { expectGenesis = true } = {}) {
 /* ---------------------------------------------------------------------- export */
 
 /** The bundle an independent verifier is given. Everything needed, nothing live. */
-export function buildBundle({ entries, exportedAt, subjectId = null, complete = true }) {
+export function buildBundle({ entries, exportedAt, subjectId = null, complete = true, checkpoints = [] }) {
   return {
     format: EVIDENCE_FORMAT,
     exportedAt,
@@ -172,6 +185,13 @@ export function buildBundle({ entries, exportedAt, subjectId = null, complete = 
     count: entries.length,
     head: entries.length ? entries.at(-1).hash : null,
     entries,
+    /*
+     * Signed commitments to heads this log passed through, made by a key the server never
+     * held. The chain proves nothing was edited in the middle; these are what make a full
+     * rewrite detectable. Verifying them needs the vault's public attestation key, which is
+     * included so the bundle stands alone.
+     */
+    checkpoints,
   };
 }
 
@@ -194,6 +214,47 @@ export function verifyBundle(bundle) {
 }
 
 /**
+ * Checks the bundle's checkpoints against the chain it carries.
+ *
+ * A checkpoint names a head and a count. The question is whether the log in this bundle
+ * actually passed through that head at that count — if the log was rewritten, it did not, and
+ * no amount of recomputing the chain fixes that.
+ *
+ * Signature verification is the caller's job, because it needs ML-DSA and this module stays
+ * free of crypto dependencies beyond a hash. `verifySignature` is passed in.
+ */
+export function checkpointsAgree(bundle, verifySignature = null) {
+  const entries = bundle?.entries ?? [];
+  const checkpoints = bundle?.checkpoints ?? [];
+  const results = [];
+
+  for (const checkpoint of checkpoints) {
+    const record = checkpoint?.record ?? {};
+    const problems = [];
+    // The head a checkpoint names has to be the hash of the entry at that count.
+    const covered = entries.slice(0, record.count);
+    const headThere = covered.length ? covered.at(-1).hash : GENESIS;
+    if (covered.length !== record.count) {
+      problems.push(`the bundle has ${entries.length} entries, fewer than the ${record.count} this checkpoint covers`);
+    } else if (headThere !== record.head) {
+      problems.push('the log did not pass through the head this checkpoint commits to — it has been rewritten');
+    }
+    if (verifySignature) {
+      const signature = verifySignature(checkpoint);
+      if (!signature?.ok) problems.push(`the signature does not hold: ${signature?.reason ?? 'unknown'}`);
+    }
+    results.push({ head: record.head, count: record.count, at: record.at, ok: problems.length === 0, problems });
+  }
+  return {
+    // No checkpoints is not a pass and not a failure: it is an absence, and the caller is told.
+    checked: results.length,
+    ok: results.length > 0 && results.every(r => r.ok),
+    anyPresent: results.length > 0,
+    results,
+  };
+}
+
+/**
  * What a bundle establishes about one payment, without inferring anything.
  *
  * Each fact is present or it is not. A payment that was signed and whose broadcast is not
@@ -211,9 +272,17 @@ export function summarisePayment(entries, subjectId) {
     authorizationGranted: has(EVIDENCE.AUTHORIZATION_GRANTED),
     authorizationRejected: has(EVIDENCE.AUTHORIZATION_REJECTED),
     signatureProduced: has(EVIDENCE.SIGNATURE_PRODUCED),
+    broadcastAttempted: has(EVIDENCE.BROADCAST_ATTEMPTED),
     broadcastAccepted: has(EVIDENCE.BROADCAST_ACCEPTED),
     broadcastRefused: has(EVIDENCE.BROADCAST_REFUSED),
     confirmed: has(EVIDENCE.TRANSACTION_CONFIRMED),
+    /*
+     * The one state that needs acting on: the network was asked and the answer was never
+     * recorded. Not an inference about the outcome — a statement that the outcome is unknown
+     * and that this payment is what reconciliation exists for.
+     */
+    outcomeUnknown: has(EVIDENCE.BROADCAST_ATTEMPTED)
+      && !has(EVIDENCE.BROADCAST_ACCEPTED) && !has(EVIDENCE.BROADCAST_REFUSED),
     // Stated so a reader is never left to assume a sensor was involved. There is no scanner
     // in this build; where one exists the granting entry carries what it measured.
     sensorMeasurement: mine.some(e => e.payload?.sensorEvidence === 'measured'),

@@ -186,6 +186,21 @@ truth, rather than being guessed at.
 Each entry commits to its predecessor, so editing one invalidates every entry after it.
 Append-only is **enforced by a database trigger**, not by the application declining to write.
 
+**Nothing irreversible happens without a durable record of it.** The authorisation, the
+signature and the broadcast attempt are each required before the network is touched — if the
+log cannot be written, the payment is refused with a 503 saying nothing has changed. Only the
+acceptance is best-effort, because by then the transaction is already on the network; an
+outcome lost that way is resolved by asking the chain:
+
+```bash
+curl -X POST --cookie "$COOKIE" https://host/api/operations/$ID/reconcile
+```
+
+**A full rewrite is detectable.** Your browser can sign a *checkpoint* — a commitment to the
+log's head, under the same ML-DSA key that signs receipts, which the server has never held. An
+operator who rewrites every entry and recomputes the chain cannot produce a matching checkpoint
+without forging a post-quantum signature.
+
 ```bash
 curl -s --cookie "$COOKIE" https://host/api/evidence > bundle.json
 npm run verify:evidence -- bundle.json      # no database, no running app
@@ -256,5 +271,7 @@ zero. That happened once here, and the check exists so it cannot happen again.
 | [PHASE-2-ENTRY-GATE.md](PHASE-2-ENTRY-GATE.md) | What must be known before scanner integration begins |
 | [ON-CHAIN-MULTISIG.md](ON-CHAIN-MULTISIG.md) | The P2WSH design and what Bitcoin forces |
 | [EVIDENCE.md](EVIDENCE.md) | The evidence log: what is recorded, the integrity construction, and who can still rewrite it |
+| [AUTHORIZATION-V3-DESIGN.md](AUTHORIZATION-V3-DESIGN.md) | Design: separating transaction intent from the transaction, and anchoring a receipt to the log |
+| [TENANT-ISOLATION-DESIGN.md](TENANT-ISOLATION-DESIGN.md) | Design: the organisation model Phase C has to implement, and the rules that get broken |
 | [PHASE-A-BASELINE-FINDINGS.md](PHASE-A-BASELINE-FINDINGS.md) | The institutional baseline audit and the corrections that followed |
 | [HUMAN-VERIFIED.md](HUMAN-VERIFIED.md) | What a palm approval does and does not prove |

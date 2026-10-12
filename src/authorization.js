@@ -451,3 +451,81 @@ export function verifyAuthorization(authorization, publicKeyBase64, expected = {
 const sameSet = (a, b) => Array.isArray(a) && a.length === b.length && [...a].sort().join('\u0000') === [...b].sort().join('\u0000');
 
 export const AUTHORIZATION_CONTEXT = CONTEXT;
+
+/* ------------------------------------------------- evidence checkpoints */
+
+/*
+ * A signed commitment to the evidence log, made by a key the server has never held.
+ *
+ * The problem this solves: a hash chain detects a partial edit, but an operator who can write
+ * the whole database can rewrite every entry and recompute the chain from the genesis. Nothing
+ * inside the database stops that.
+ *
+ * A checkpoint is signed in the owner's browser with the same ML-DSA-65 attestation key that
+ * signs authorisation receipts — derived from the recovery phrase, and never sent anywhere. So
+ * an operator who rewrites the log cannot produce a checkpoint that matches the new head: they
+ * would have to forge a post-quantum signature under a key they do not have. Rewriting history
+ * becomes detectable by anyone holding an older checkpoint, including the server itself.
+ *
+ * NO CIRCULARITY. A checkpoint commits to an evidence head that already exists. It is not
+ * itself an evidence entry, and no evidence entry commits to a checkpoint — so there is no
+ * cycle between the two structures. Signing a checkpoint does append an entry recording that
+ * it happened, and that entry is covered by the NEXT checkpoint, never by the one being made.
+ *
+ * It says nothing about a palm. A checkpoint is a statement about a log, and keeping it
+ * separate from the authorisation receipt is what stops anyone reading it as biometric
+ * evidence.
+ */
+const CHECKPOINT_CONTEXT = 'QUVAULT-EVIDENCE-CHECKPOINT-V1';
+const checkpointContext = utf8(CHECKPOINT_CONTEXT);
+const CHECKPOINT_VERSION = 1;
+
+export function signCheckpoint({ vaultId, head, count, at, nonce }, keys) {
+  if (!vaultId || !head || !nonce) throw new Error('A checkpoint must name a vault, a head and a nonce.');
+  if (!Number.isInteger(count) || count < 0) throw new Error('A checkpoint must count the entries it covers.');
+  const record = { v: CHECKPOINT_VERSION, context: CHECKPOINT_CONTEXT, vaultId, head, count, at, nonce };
+  return {
+    record,
+    algorithm: 'ML-DSA-65',
+    context: CHECKPOINT_CONTEXT,
+    keyId: keys.keyId ?? keyIdOf(keys.publicKey),
+    signature: base64.encode(ml_dsa65.sign(utf8(canonicalJson(record)), keys.secretKey, { context: checkpointContext })),
+  };
+}
+
+/**
+ * Checks a checkpoint against a public key and, when given, the head it should be about.
+ *
+ * Never throws. `expected.head` is how a verifier asks the question that matters: does this
+ * checkpoint describe the log I am holding, or a different one?
+ */
+export function verifyCheckpoint(checkpoint, publicKeyBase64, expected = {}) {
+  try {
+    const record = checkpoint?.record;
+    if (!record || checkpoint.algorithm !== 'ML-DSA-65') return { ok: false, reason: 'not an ML-DSA-65 checkpoint' };
+    if (checkpoint.context !== CHECKPOINT_CONTEXT) return { ok: false, reason: 'signed for a different purpose' };
+    if (record.v !== CHECKPOINT_VERSION || record.context !== CHECKPOINT_CONTEXT) {
+      return { ok: false, reason: 'not a checkpoint record' };
+    }
+    if (!publicKeyBase64) return { ok: false, reason: 'this vault has no registered attestation key' };
+    const publicKey = base64.decode(publicKeyBase64);
+    if (checkpoint.keyId && checkpoint.keyId !== keyIdOf(publicKey)) {
+      return { ok: false, reason: 'signed by a key this vault has not registered' };
+    }
+    if (!ml_dsa65.verify(base64.decode(checkpoint.signature), utf8(canonicalJson(record)), publicKey, { context: checkpointContext })) {
+      return { ok: false, reason: 'signature does not verify' };
+    }
+    if (expected.vaultId && record.vaultId !== expected.vaultId) return { ok: false, reason: 'checkpoint is for a different vault' };
+    if (expected.head && record.head !== expected.head) {
+      return { ok: false, reason: 'the log does not match this checkpoint: it has been rewritten, or this is a different log' };
+    }
+    if (expected.count !== undefined && record.count !== expected.count) {
+      return { ok: false, reason: 'the log does not have the number of entries this checkpoint covers' };
+    }
+    return { ok: true, record };
+  } catch {
+    return { ok: false, reason: 'malformed checkpoint' };
+  }
+}
+
+export const CHECKPOINT = Object.freeze({ CONTEXT: CHECKPOINT_CONTEXT, VERSION: CHECKPOINT_VERSION });

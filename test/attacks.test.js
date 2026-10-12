@@ -306,16 +306,34 @@ test('ATTACK 17 — no server path can sign an authorisation', () => {
     // The module that defines signing is allowed to define it; nothing under src/ may call it.
     if (name === 'authorization.js') continue;
     const text = readFileSync(path.join(src, name), 'utf8');
-    for (const forbidden of ['signAuthorization', 'signRegistration', 'deriveAttestationKeys']) {
+    /*
+     * Every signing function in the module, not a subset. `signAuthorizationV2` and
+     * `signCheckpoint` were added after this test was written and were not covered by it —
+     * a guard that only knows the signing functions that existed when it was written stops
+     * being a guard the moment a new one is added.
+     */
+    for (const forbidden of [
+      'signAuthorization', 'signAuthorizationV2', 'signRegistration', 'signCheckpoint',
+      'deriveAttestationKeys',
+    ]) {
       if (text.includes(forbidden)) offenders.push(`${name} mentions ${forbidden}`);
     }
   }
   assert.deepEqual(offenders, [], 'server code must not be able to sign');
 
-  // And the server file imports only the verifying half.
+  /*
+   * And the server imports only the verifying half. `verifyCheckpoint` belongs here for the
+   * same reason the other three do: the server checks a commitment the browser signed, and
+   * holds no key that could make one.
+   */
   const app = readFileSync(path.join(src, 'app.js'), 'utf8');
   const imported = app.match(/import \{([^}]*)\} from '\.\/authorization\.js'/)[1];
-  assert.deepEqual(imported.split(',').map(name => name.trim()).sort(), ['keyIdOf', 'verifyAuthorization', 'verifyChain']);
+  assert.deepEqual(
+    imported.split(',').map(name => name.trim()).sort(),
+    ['keyIdOf', 'verifyAuthorization', 'verifyChain', 'verifyCheckpoint'],
+  );
+  // Nothing in that list may be a signer, whatever it is called.
+  assert.ok(!imported.includes('sign'), 'the server imports no signing function');
 });
 
 test('ATTACK 18 — no secret material is persisted server-side', async t => {

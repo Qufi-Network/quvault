@@ -290,6 +290,31 @@ const SCHEMA = [
   `CREATE TRIGGER evidence_append_only
      BEFORE UPDATE OR DELETE ON evidence
      FOR EACH ROW EXECUTE FUNCTION quvault_evidence_is_append_only()`,
+
+  /*
+   * v17: evidence checkpoints. A signed commitment to the log, made by a key the server has
+   * never held — the owner's ML-DSA attestation key, derived from their recovery phrase.
+   *
+   * This is what the hash chain alone cannot do. An operator who rewrites every entry and
+   * recomputes the chain still cannot produce a checkpoint matching the new head, because that
+   * needs a post-quantum signature under a key they do not have. Append only, for the same
+   * reason the evidence is: a checkpoint that can be replaced is not a commitment.
+   */
+  `CREATE TABLE IF NOT EXISTS evidence_checkpoints (
+    id          TEXT PRIMARY KEY,
+    wallet_user_id TEXT NOT NULL REFERENCES users(id),
+    head        TEXT NOT NULL,              -- the evidence chain head it commits to
+    entry_count INTEGER NOT NULL,
+    at          BIGINT NOT NULL,
+    key_id      TEXT NOT NULL,              -- which attestation key signed it
+    checkpoint  TEXT NOT NULL,              -- the signed record, verbatim
+    UNIQUE (wallet_user_id, head)
+  )`,
+  'CREATE INDEX IF NOT EXISTS evidence_checkpoints_wallet ON evidence_checkpoints (wallet_user_id, at)',
+  'DROP TRIGGER IF EXISTS evidence_checkpoints_append_only ON evidence_checkpoints',
+  `CREATE TRIGGER evidence_checkpoints_append_only
+     BEFORE UPDATE OR DELETE ON evidence_checkpoints
+     FOR EACH ROW EXECUTE FUNCTION quvault_evidence_is_append_only()`,
 ];
 
 const INT8 = 20; // Timestamps are BIGINT; read them back as numbers.

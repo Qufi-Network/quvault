@@ -20,7 +20,8 @@
  * live log is the proof. See EVIDENCE.md.
  */
 import fs from 'node:fs';
-import { verifyBundle, summarisePayment, EVIDENCE } from '../src/evidence.js';
+import { verifyBundle, summarisePayment, checkpointsAgree, EVIDENCE } from '../src/evidence.js';
+import { verifyCheckpoint } from '../src/authorization.js';
 
 const args = process.argv.slice(2);
 const asJson = args.includes('--json');
@@ -40,22 +41,37 @@ try {
 }
 
 let bundle;
+let vaultPublicKey = null;
 try {
-  bundle = JSON.parse(raw);
+  const parsed = JSON.parse(raw);
   // The API wraps the bundle alongside its own verdict; accept either shape and ignore theirs.
-  if (bundle.bundle) bundle = bundle.bundle;
+  bundle = parsed.bundle ?? parsed;
+  // The vault's PUBLIC attestation key, for checking the checkpoint signatures. Public by
+  // definition, and carried so this script needs nothing from the server that produced it.
+  vaultPublicKey = parsed.vaultPublicKey ?? null;
 } catch (error) {
   console.error(`That is not JSON: ${error.message}`);
   process.exit(2);
 }
 
 const result = verifyBundle(bundle);
+
+/*
+ * The checkpoints: signed commitments to heads this log passed through, made by a key the
+ * server never held. The chain shows nothing was edited in the middle; these are what make a
+ * full rewrite detectable, because an operator cannot forge one.
+ */
+const commitments = checkpointsAgree(bundle, vaultPublicKey
+  ? checkpoint => verifyCheckpoint(checkpoint, vaultPublicKey, { vaultId: checkpoint?.record?.vaultId })
+  : null);
+
 const subjects = [...new Set((bundle.entries ?? []).map(e => e.subjectId).filter(Boolean))];
 const payments = subjects.map(id => summarisePayment(bundle.entries, id));
+const passed = result.ok && (!commitments.anyPresent || commitments.ok);
 
 if (asJson) {
-  console.log(JSON.stringify({ result, payments }, null, 2));
-  process.exit(result.ok ? 0 : 1);
+  console.log(JSON.stringify({ result, commitments, payments }, null, 2));
+  process.exit(passed ? 0 : 1);
 }
 
 console.log(`format      ${bundle.format}`);
@@ -64,6 +80,16 @@ console.log(`entries     ${result.length}`);
 console.log(`complete    ${bundle.complete === false ? 'no — a slice, not checked back to the genesis' : 'yes'}`);
 console.log(`head        ${result.head ?? 'none'}`);
 console.log(`chain       ${result.ok ? 'intact' : 'BROKEN'}`);
+console.log(`checkpoints ${commitments.anyPresent
+  ? `${commitments.checked} present, ${commitments.ok ? 'all agree' : 'DISAGREE'}`
+  : 'none — a full rewrite of this log would not be detectable'}`);
+if (commitments.anyPresent && !vaultPublicKey) {
+  console.log('            signatures NOT checked: this bundle carries no vault public key');
+}
+for (const c of commitments.results.filter(r => !r.ok)) {
+  console.log(`\ncheckpoint covering ${c.count} entries (head ${String(c.head).slice(0, 12)}…):`);
+  for (const problem of c.problems) console.log(`  ${problem}`);
+}
 
 if (!result.ok) {
   console.log('\nproblems:');
@@ -92,9 +118,19 @@ for (const e of bundle.entries ?? []) kinds[e.kind] = (kinds[e.kind] ?? 0) + 1;
 const unknown = Object.keys(kinds).filter(k => !Object.values(EVIDENCE).includes(k));
 if (unknown.length) console.log(`\nunknown entry kinds: ${unknown.join(', ')}`);
 
-console.log('\nA pass means the bundle is internally consistent: nothing was edited or removed');
-console.log('from the middle. It does NOT mean the log is complete — an operator who can write');
-console.log('the whole database can rewrite it and recompute the chain. Compare against an');
-console.log('earlier export held outside their control. See EVIDENCE.md.');
+console.log('');
+if (commitments.anyPresent && commitments.ok && vaultPublicKey) {
+  console.log('The chain is intact AND the log passed through every head committed to by a key');
+  console.log('this server has never held. Rewriting this history would mean forging an');
+  console.log('ML-DSA-65 signature, not recomputing a hash. That is the strong reading.');
+} else if (commitments.anyPresent && !vaultPublicKey) {
+  console.log('Checkpoints are present but unverified: this bundle carries no vault public key.');
+  console.log('Export from /api/evidence, which includes it, to check their signatures.');
+} else {
+  console.log('A pass means the bundle is internally consistent: nothing was edited or removed');
+  console.log('from the middle. With no checkpoints it does NOT mean the log is complete — an');
+  console.log('operator who can write the whole database can rewrite it and recompute the');
+  console.log('chain. Sign a checkpoint, and keep exports outside their control. See EVIDENCE.md.');
+}
 
-process.exit(result.ok ? 0 : 1);
+process.exit(passed ? 0 : 1);

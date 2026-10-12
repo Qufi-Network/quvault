@@ -30,7 +30,7 @@ export function mockWorld(clock) {
   const jwk = { ...publicKey.export({ format: 'jwk' }), kid: 'k1', alg: 'ES256', use: 'sig' };
   const requests = new Map();
   const log = { created: [], acks: [], cancelled: [], broadcast: [] };
-  const chain = { utxos: [], feeRate: 2, broadcastError: null, pending: 0 };
+  const chain = { utxos: [], feeRate: 2, broadcastError: null, pending: 0, unreachable: false, confirmBroadcasts: true };
   const b64 = value => Buffer.from(JSON.stringify(value)).toString('base64url');
   const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
@@ -51,8 +51,25 @@ export function mockWorld(clock) {
 
     if (String(url).startsWith(CHAIN)) {
       const rest = String(url).slice(CHAIN.length);
+      /*
+       * The chain service being unreachable, as distinct from answering "not found". A test
+       * that needs "we could not ask" has to be able to produce it, because the code treats
+       * that differently from a negative answer — and must.
+       */
+      if (chain.unreachable) throw new TypeError('fetch failed');
       if (rest.endsWith('/utxo')) return json(200, chain.utxos.map(u => ({ ...u, status: { confirmed: true, block_height: 100 } })));
       if (rest.endsWith('/txs')) return json(200, []);
+      /*
+       * Transaction status, for reconciling an uncertain broadcast. The mock answers from what
+       * was actually broadcast through it, so a reconciliation test is checking real behaviour
+       * rather than a fixture that agrees with it by construction.
+       */
+      let status;
+      if ((status = rest.match(/^\/tx\/([0-9a-f]{64})\/status$/))) {
+        const sent = log.broadcast.find(b => b.txid === status[1]);
+        if (!sent) return json(404, { error: 'not_found' });
+        return json(200, { confirmed: chain.confirmBroadcasts !== false, block_height: 100 });
+      }
       if (rest === '/v1/fees/recommended') return json(200, { halfHourFee: chain.feeRate, hourFee: chain.feeRate });
       if (rest.startsWith('/address/')) {
         const funded = chain.utxos.reduce((sum, u) => sum + u.value, 0);

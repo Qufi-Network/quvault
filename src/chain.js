@@ -19,7 +19,14 @@ export function createChain({ apiUrl, fetchImpl = globalThis.fetch }) {
       throw new ChainError('The Bitcoin network service is not reachable right now.');
     }
     const text = await response.text();
-    if (!response.ok) throw new ChainError(text.trim().slice(0, 200) || `Bitcoin service returned ${response.status}.`);
+    if (!response.ok) {
+      // The status travels with the error. A caller that needs to distinguish "not found" from
+      // "something went wrong" must not have to pattern-match an error message to do it.
+      throw Object.assign(
+        new ChainError(text.trim().slice(0, 200) || `Bitcoin service returned ${response.status}.`),
+        { status: response.status },
+      );
+    }
     if (asText) return text.trim();
     try {
       return JSON.parse(text);
@@ -72,6 +79,31 @@ export function createChain({ apiUrl, fetchImpl = globalThis.fetch }) {
     },
 
     broadcast: rawHex => call('/tx', { method: 'POST', body: rawHex, asText: true }),
+
+    /*
+     * Whether the network has a transaction, for reconciling an uncertain broadcast.
+     *
+     * A broadcast whose outcome was never recorded leaves the evidence log saying "attempted,
+     * outcome unknown". The chain is the authority on what actually happened, so this asks it.
+     * A 404 is an answer — not known — rather than a failure, because "the network has never
+     * seen this" is exactly what reconciliation needs to distinguish from "we could not ask".
+     */
+    async transactionStatus(txid) {
+      try {
+        const status = await call(`/tx/${txid}/status`);
+        return { known: true, confirmed: Boolean(status?.confirmed), blockHeight: status?.block_height ?? null };
+      } catch (error) {
+        if (error instanceof ChainError && error.status === 404) {
+          return { known: false, confirmed: false, blockHeight: null };
+        }
+        /*
+         * Could not find out. `null` rather than `false`, and the difference is the whole
+         * point: "the network has never seen this" licenses recording a refusal, while "we
+         * could not ask" licenses nothing at all and must leave the outcome open.
+         */
+        return { known: null, confirmed: false, blockHeight: null };
+      }
+    },
   };
 }
 

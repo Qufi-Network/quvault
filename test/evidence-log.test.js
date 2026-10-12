@@ -267,7 +267,21 @@ test('concurrent payments produce one unbroken chain, not a fork', async t => {
   assert.equal(verifyChainOfEvidence(entries).ok, true, 'and it verifies end to end');
 });
 
-test('a failed evidence write does not fail the payment, and leaves a visible gap', async t => {
+test('an unwritable log blocks the payment, and the payment survives to be retried', async t => {
+  /*
+   * THIS TEST'S PREMISE WAS DELIBERATELY REVERSED.
+   *
+   * It used to assert that a payment completed even when its evidence could not be written —
+   * the fail-open behaviour of the first evidence phase. That was identified as the priority-one
+   * defect of the F4 closure: a high-value transaction must not reach the network without a
+   * durable record of the authorisation and the policy that permitted it. So the payment is now
+   * refused, which `test/evidence-closure.test.js` covers directly.
+   *
+   * What is tested here instead is the property that makes refusing acceptable: the refusal is
+   * not destructive. The operation is not marked failed, so once the log is writable again the
+   * same payment goes through. Without that, fail-closed would turn a transient database
+   * problem into a dead proposal and somebody would turn it off.
+   */
   const env = await start(t);
   const alex = await signedIn(env, 'sub-alex');
   await walletFor(env, alex);
@@ -275,18 +289,28 @@ test('a failed evidence write does not fail the payment, and leaves a visible ga
   const { operation } = ok(await alex.post('/api/withdrawals', { to: DEST, amount: 100_000 }));
   await palmApprove(env, alex, operation.id);
 
-  // The log goes away underneath the payment.
+  // The log becomes unwritable. Renamed rather than dropped, so it can come back without this
+  // test having to restate the schema.
   const db = await env.app.db();
-  await db.query('DROP TABLE evidence');
+  await db.query('ALTER TABLE evidence RENAME TO evidence_unavailable');
 
-  /*
-   * The payment still completes. That is the deliberate trade: refusing to broadcast because
-   * the audit log is unavailable would make the log an availability dependency for spending,
-   * and for the broadcast fact it would be pointless anyway — the transaction is on the
-   * network before the entry is written and cannot be recalled.
-   */
+  await assert.rejects(() => signAndSendV2(env, alex, operation.id), /./, 'refused while unwritable');
+  assert.equal(env.world.log.broadcast.length, 0, 'and nothing reached the network');
+
+  // The proposal is still alive: refusing to record is not the same as refusing the request.
+  const waiting = ok(await alex.get('/api/wallet'));
+  const still = [...(waiting.pending ?? []), ...(waiting.history ?? [])].find(o => o.id === operation.id);
+  assert.ok(still, 'the proposal still exists');
+  assert.notEqual(still.status, 'failed', 'and was not failed by the log being unavailable');
+
+  // The log comes back, and the same payment completes.
+  await db.query('ALTER TABLE evidence_unavailable RENAME TO evidence');
   const sent = await signAndSendV2(env, alex, operation.id);
-  assert.ok(sent.txid, 'the payment was not blocked by the log being unavailable');
+  assert.ok(sent.txid, 'the retry succeeds');
+
+  const { summary } = ok(await alex.get(`/api/operations/${operation.id}/evidence`));
+  assert.equal(summary.authorizationGranted, true, 'and the evidence is there this time');
+  assert.equal(summary.broadcastAccepted, true);
 });
 
 /* ========================================================= secrets never reach the log */

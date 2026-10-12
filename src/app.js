@@ -6,7 +6,7 @@ import QRCode from 'qrcode';
 import { openDb, describeDbError } from './db.js';
 import { createVeyns, actionDigest, isFresh, randomId, HttpError, canonicalTransaction, transactionDigest, sha256Base64Url } from './veyns.js';
 import { canonicalJson } from './canonical.js';
-import { verifyAuthorization, verifyChain, keyIdOf } from './authorization.js';
+import { verifyAuthorization, verifyChain, keyIdOf, verifyCheckpoint } from './authorization.js';
 import { serverKeys, seal, open as openSealed, sealRoot, rootSealMatches } from './vault.js';
 import { createChain, createPrices, ChainError } from './chain.js';
 import {
@@ -17,7 +17,7 @@ import { DEFAULT_POLICY, PolicyError, describePolicy, requiredFor, requiredToCha
 import { NETWORKS, createBalances, format, networkList } from './networks.js';
 import { createSecurityLog, redact } from './events.js';
 import {
-  EVIDENCE, GENESIS, sealEntry, buildBundle, verifyBundle, summarisePayment,
+  EVIDENCE, GENESIS, sealEntry, buildBundle, verifyBundle, summarisePayment, checkpointsAgree,
 } from './evidence.js';
 import { createScanner, SCANNER } from './scanner.js';
 import { RATE, clientAddress, bucketFor, isOverLimit, refusalMessage } from './rate-limit.js';
@@ -72,6 +72,12 @@ const SQL = {
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
   evidenceAll: 'SELECT * FROM evidence ORDER BY seq',
   evidenceForSubject: 'SELECT * FROM evidence WHERE subject_id = $1 ORDER BY seq',
+  evidenceCount: 'SELECT count(*)::int AS n FROM evidence',
+  insertCheckpoint: `INSERT INTO evidence_checkpoints
+      (id, wallet_user_id, head, entry_count, at, key_id, checkpoint)
+    VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+  checkpointsOf: 'SELECT * FROM evidence_checkpoints WHERE wallet_user_id = $1 ORDER BY at',
+  latestCheckpoint: 'SELECT * FROM evidence_checkpoints WHERE wallet_user_id = $1 ORDER BY at DESC LIMIT 1',
 
   userBySub: 'SELECT * FROM users WHERE sub = $1',
   userById: 'SELECT * FROM users WHERE id = $1',
@@ -183,6 +189,15 @@ const palmId = sub => `PALM-${sha256(`palm:${sub}`).replace(/[-_]/g, '').slice(0
  * so the record and the check against it cannot compute it differently.
  */
 const subjectOf = sub => (sub ? sha256Base64Url(`subject:${sub}`).slice(0, 22) : null);
+
+/*
+ * What a caller is told when a fact that must be durable could not be written.
+ *
+ * Deliberately a 503 and not a 409: nothing is wrong with the request, the system cannot
+ * currently record what it would be doing, and the right response is to try again later.
+ */
+const UNRECORDABLE = 'This cannot proceed right now: the evidence log is unavailable, and an '
+  + 'authorisation that cannot be recorded will not be acted on. Nothing has changed. Try again.';
 
 /**
  * A database row as the entry its hash was taken over.
@@ -307,7 +322,8 @@ export function createApp(options) {
    * is already on the network by then and cannot be taken back.
    */
   async function appendEvidence(kind, {
-    actor = null, scope = null, subjectKind = null, subjectId = null, idempotencyKey = null, ...fields
+    actor = null, scope = null, subjectKind = null, subjectId = null, idempotencyKey = null,
+    required = false, ...fields
   } = {}, q = null) {
     const run = q ?? query;
     const payload = redact(fields);
@@ -333,10 +349,12 @@ export function createApp(options) {
         const conflict = /duplicate key|unique/i.test(String(error?.message ?? ''));
         if (!conflict || attempt === 3) {
           log.error(error);
+          if (required) throw new HttpError(503, UNRECORDABLE);
           return { appended: false, hash: null, error: 'the evidence log could not be written' };
         }
       }
     }
+    if (required) throw new HttpError(503, UNRECORDABLE);
     return { appended: false, hash: null, error: 'the evidence log is contended' };
   }
 
@@ -1464,8 +1482,14 @@ export function createApp(options) {
        * about a sensor is carried verbatim — 'none' in this build — so a reader is never left
        * to assume a palm was measured. See requirement 5 of the evidence phase.
        */
+      /*
+       * REQUIRED. Nothing irreversible has happened yet, so if this cannot be recorded the
+       * right answer is to refuse and let the caller retry. A high-value transaction must
+       * never be broadcast without durable evidence of the authorisation and the policy that
+       * permitted it, and this is the first of the three gates that guarantees it.
+       */
       await appendEvidence(EVIDENCE.AUTHORIZATION_GRANTED, {
-        ...asEvidence, ...event,
+        ...asEvidence, ...event, required: true,
         transactionHash: bound.digest,
         receiptVersion: authorization?.record?.v ?? null,
         policyVersion: authorization?.record?.policyVersion ?? null,
@@ -1496,12 +1520,22 @@ export function createApp(options) {
     }
     try {
       /*
-       * A signature exists at this point and a broadcast does not. They are recorded
-       * separately so that a crash between them leaves "signed, outcome unrecorded" rather
-       * than a false claim either way.
+       * REQUIRED. A signature that has not been sent is inert, so refusing here loses nothing
+       * — the caller retries and signs again. Once the network has it, that stops being true,
+       * which is why both of these are written before the broadcast and not after.
        */
       await appendEvidence(EVIDENCE.SIGNATURE_PRODUCED, {
-        ...asEvidence, ...event, transactionHash: bound.digest, isolation: 'none:browser-javascript',
+        ...asEvidence, ...event, required: true,
+        transactionHash: bound.digest, isolation: 'none:browser-javascript',
+      });
+      /*
+       * REQUIRED, and the last durable fact before the irreversible step. It carries the txid,
+       * which is known here because verifying the signed bytes against the plan yields it —
+       * that is what makes an uncertain outcome reconcilable rather than merely unknown.
+       */
+      await appendEvidence(EVIDENCE.BROADCAST_ATTEMPTED, {
+        ...asEvidence, ...event, required: true,
+        txid: checked.txid, transactionHash: bound.digest,
       });
       const txid = await chain.broadcast(String(body.hex).trim());
       // The account only becomes a quorum once its coins are actually on their way to one,
@@ -1509,6 +1543,12 @@ export function createApp(options) {
       if (op.kind === 'lock') await lockAccount(op);
       await query('finishOperation', 'done', txid, null, now(), op.id);
       security.signingSuccess({ ...event, txid, transactionHash: bound.digest, isolation: 'none:browser-javascript' });
+      /*
+       * NOT required, and it cannot be: by the time this runs the transaction is on the
+       * network and no refusal here can recall it. If the write fails the log shows an attempt
+       * with no outcome, which `reconcileBroadcast` resolves by asking the chain — see
+       * EVIDENCE.md. That is the honest handling of an irreversible step.
+       */
       await appendEvidence(EVIDENCE.BROADCAST_ACCEPTED, {
         ...asEvidence, ...event, txid, transactionHash: bound.digest,
       });
@@ -1649,13 +1689,158 @@ export function createApp(options) {
     };
   }
 
+  /**
+   * Resolves a broadcast whose outcome was never recorded, by asking the chain.
+   *
+   * The one state the evidence log can be left in by a crash at the wrong moment:
+   * `broadcast.attempted` with neither an acceptance nor a refusal after it. The attempt
+   * carries the txid, so the question "did this reach the network?" has an authority that is
+   * not this application — Bitcoin itself.
+   *
+   * Three answers, and only two of them licence writing anything:
+   *
+   *   the chain has it          → `broadcast.accepted`, marked reconciled
+   *   the chain has never seen it → `broadcast.refused`, marked reconciled
+   *   we could not ask          → nothing. The outcome stays open, which is the truth.
+   *
+   * Idempotent: the appended fact uses the ordinary key, so running this twice over the same
+   * payment writes once. Safe to run on a schedule.
+   */
+  async function reconcileBroadcast(op, { actor = null } = {}) {
+    const entries = (await all('evidenceForSubject', op.id)).map(toEvidenceEntry);
+    const state = summarisePayment(entries, op.id);
+    if (!state.outcomeUnknown) return { reconciled: false, reason: 'the outcome is already recorded' };
+
+    const attempt = entries.find(e => e.kind === EVIDENCE.BROADCAST_ATTEMPTED);
+    const txid = attempt?.payload?.txid;
+    if (!txid) return { reconciled: false, reason: 'the attempt names no transaction to ask about' };
+
+    const status = await chain.transactionStatus(txid);
+    if (status.known === null) {
+      // Could not ask. Writing either outcome here would be a guess, so nothing is written.
+      return { reconciled: false, reason: 'the Bitcoin service could not be reached', txid };
+    }
+
+    const fact = { actor, subjectKind: 'operation', subjectId: op.id, txid, outcome: 'reconciled' };
+    if (status.known) {
+      await appendEvidence(EVIDENCE.BROADCAST_ACCEPTED, {
+        ...fact, network, chain: 'bitcoin', reason: 'reconciled against the chain',
+      });
+      // The operation itself may also have been left mid-flight by the same crash.
+      if (op.status !== 'done') await query('finishOperation', 'done', txid, null, now(), op.id);
+      return { reconciled: true, outcome: 'accepted', txid, confirmed: status.confirmed };
+    }
+    await appendEvidence(EVIDENCE.BROADCAST_REFUSED, {
+      ...fact, network, chain: 'bitcoin', reason: 'the chain has never seen this transaction',
+    });
+    return { reconciled: true, outcome: 'refused', txid };
+  }
+
+  /**
+   * What the browser needs in order to sign a checkpoint: the head, and how many entries it
+   * covers. Read-only, and it commits to nothing — the signature is the commitment.
+   */
+  async function checkpointTarget({ user }) {
+    const wallet = await one('walletOf', user.id);
+    if (!wallet) throw new HttpError(409, 'This account has no wallet.');
+    const head = (await one('evidenceHead'))?.hash ?? GENESIS;
+    const count = (await one('evidenceCount')).n;
+    const latest = await one('latestCheckpoint', user.id);
+    /*
+     * Every point this server claims its log passed through, so a browser holding its own
+     * record of an earlier commitment can compare and notice a disagreement. The heads are
+     * recomputed from the live log rather than read from the checkpoint rows — otherwise an
+     * operator who rewrote the log and kept the rows would be reporting the old heads back.
+     */
+    const entries = (await all('evidenceAll')).map(toEvidenceEntry);
+    const claimed = (await all('checkpointsOf', user.id)).map(row => ({
+      count: row.entry_count,
+      head: entries[row.entry_count - 1]?.hash ?? (row.entry_count === 0 ? GENESIS : null),
+    }));
+    return {
+      vaultId: wallet.address,
+      head,
+      count: Number(count),
+      nonce: randomId(12),
+      at: now(),
+      // So a page can say whether anything has happened since the last commitment.
+      lastCheckpoint: latest ? { head: latest.head, count: latest.entry_count, at: Number(latest.at) } : null,
+      // What this server says its history was at each committed point. A browser compares.
+      claimedHeads: claimed,
+    };
+  }
+
+  /**
+   * Records a checkpoint the browser signed.
+   *
+   * Verified before it is stored, against the vault's registered attestation key and against
+   * the head the server actually has — a checkpoint for a head this log does not hold is
+   * refused, because storing it would create a commitment to a log nobody has.
+   */
+  async function registerCheckpoint({ user, body }) {
+    const wallet = await one('walletOf', user.id);
+    if (!wallet) throw new HttpError(409, 'This account has no wallet.');
+    const lineage = attestationOf(wallet);
+    if (!lineage.ok) throw new HttpError(409, `This vault has no valid attestation key: ${lineage.reason}.`);
+
+    const head = (await one('evidenceHead'))?.hash ?? GENESIS;
+    const count = Number((await one('evidenceCount')).n);
+    const checked = verifyCheckpoint(body.checkpoint, lineage.publicKey, {
+      vaultId: wallet.address, head, count,
+    });
+    if (!checked.ok) throw new HttpError(409, `That checkpoint cannot be accepted: ${checked.reason}.`);
+
+    try {
+      await query('insertCheckpoint', randomId(12), user.id, head, count,
+        checked.record.at, lineage.keyId, JSON.stringify(body.checkpoint));
+    } catch (error) {
+      // One checkpoint per head: a repeat is not an error, it is the same commitment.
+      if (!/duplicate key|unique/i.test(String(error?.message ?? ''))) throw error;
+      return { checkpoint: { head, count }, appended: false };
+    }
+    /*
+     * Recorded as a fact too, so the log says when it was committed to. This entry is covered
+     * by the NEXT checkpoint, never by the one just made — which is what keeps the two
+     * structures acyclic.
+     */
+    await appendEvidence(EVIDENCE.CHECKPOINT_SIGNED, {
+      actor: user.id, subjectKind: 'wallet', subjectId: wallet.address,
+      vaultId: wallet.address, keyEpoch: lineage.epoch, outcome: 'committed',
+    });
+    return { checkpoint: { head, count, at: checked.record.at }, appended: true };
+  }
+
+  /** Reconciles one payment on request. Read-mostly: it writes only a settled outcome. */
+  async function reconcileOne({ user, params: [id] }) {
+    const op = await ownOperation(id, user);
+    if (op.wallet_user_id !== user.id) throw new HttpError(403, 'Only the account owner can reconcile this.');
+    return reconcileBroadcast(op, { actor: user.id });
+  }
+
   /** The whole log, for an investigation. Chain-complete, so it checks back to the genesis. */
   async function exportAllEvidence({ user }) {
     const wallet = await one('walletOf', user.id);
     if (!wallet) throw new HttpError(409, 'This account has no wallet.');
     const entries = (await all('evidenceAll')).map(toEvidenceEntry);
-    const bundle = buildBundle({ entries, exportedAt: now(), complete: true });
-    return { bundle, verified: verifyBundle(bundle) };
+    const checkpoints = (await all('checkpointsOf', user.id)).map(row => JSON.parse(row.checkpoint));
+    const bundle = buildBundle({ entries, exportedAt: now(), complete: true, checkpoints });
+    const lineage = attestationOf(wallet);
+
+    /*
+     * The public attestation key travels with the bundle so a verifier can check the
+     * checkpoint signatures without asking this server for anything. A bundle that needed the
+     * server to validate it would not be independent evidence.
+     */
+    const publicKey = lineage.ok ? lineage.publicKey : null;
+    return {
+      bundle,
+      vaultPublicKey: publicKey,
+      vaultKeyId: lineage.ok ? lineage.keyId : null,
+      verified: verifyBundle(bundle),
+      checkpoints: checkpointsAgree(bundle, publicKey
+        ? checkpoint => verifyCheckpoint(checkpoint, publicKey, { vaultId: wallet.address })
+        : null),
+    };
   }
 
   async function getPrice() {
@@ -2641,6 +2826,9 @@ export function createApp(options) {
     { method: 'GET', path: '/api/price', handler: getPrice, auth: true, limit: RATE.upstream },
     { method: 'GET', path: '/api/scanner', handler: getScanner, auth: true },
     { method: 'GET', path: '/api/evidence', handler: exportAllEvidence, auth: true, limit: RATE.upstream },
+    { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/reconcile$/, handler: reconcileOne, auth: true, limit: RATE.unlock },
+    { method: 'GET', path: '/api/evidence/checkpoint', handler: checkpointTarget, auth: true, limit: RATE.upstream },
+    { method: 'POST', path: '/api/evidence/checkpoint', handler: registerCheckpoint, auth: true, limit: RATE.write },
     { method: 'GET', path: /^\/api\/operations\/([\w-]{8,64})\/evidence$/, handler: exportEvidence, auth: true, limit: RATE.upstream },
     { method: 'GET', path: '/api/random', handler: getRandom, auth: true, limit: RATE.upstream },
     { method: 'GET', path: '/api/wallet', handler: getWallet, auth: true },
