@@ -7,8 +7,54 @@ general, and the migration requirements each one imposes.
 Read with `TENANT-ISOLATION-DESIGN.md` and `AUTHORIZATION-V3-DESIGN.md`. Those say what to
 build. This says what it will cost and what can go wrong.
 
-**Nothing here is a recommendation to begin.** §5 states the entry conditions, two of which are
-not met.
+**The four decisions this document asked for are made** — recorded in §0 and applied throughout.
+The schema and migration sequence they imply is `PHASE-C-SCHEMA-AND-MIGRATION.md`; the route
+inventory and isolation matrix is `PHASE-C-ROUTE-ISOLATION-MATRIX.md`. No Phase C code is
+written.
+
+---
+
+## 0. The decisions, as made
+
+Recorded verbatim in effect, because three of them changed what gets built and one of them
+changed what does not.
+
+### E3 — Separation of duties: **maker-checker by default**
+
+Institutional treasury accounts default to maker-checker. **A proposer cannot approve their own
+transaction.** Higher-risk transactions require configurable additional approvers and stronger
+quorum policies. Single-owner exceptions must be explicit and must not silently weaken
+institutional policies. Policy changes must not allow a single actor to reduce their own
+controls.
+
+→ T3 below is resolved. Schema and the `weakens()` rule: `PHASE-C-SCHEMA-AND-MIGRATION.md` §4.
+
+### E4 — Fee flexibility: **not in the initial institutional release**
+
+Approval binds the **exact** transaction — inputs, outputs, amounts, fees and change. Any
+material change requires fresh approval. Fee flexibility stays a documented future capability.
+
+→ V1 below drops from HIGH to not-applicable. `intentBinding` is always `strict`.
+
+### E7 — Tenant isolation: **all 40 authenticated routes, both directions**
+
+A route inventory and reusable test harness covering reads, writes, exports, nested resources,
+approvals and administrative actions. A user from organisation B must never access or modify
+organisation A's data by changing an identifier, request parameter or resource relationship.
+Both positive authorisation and negative isolation cases.
+
+→ M3 becomes a hard requirement. `PHASE-C-ROUTE-ISOLATION-MATRIX.md`.
+
+### E8 — Removed approver: **revocation is immediate**
+
+Immediate effect for new and pending authorisation. Invalidate that member's outstanding
+approvals on pending proposals and recalculate the valid quorum. **Never lower a threshold
+silently to preserve a proposal.** If valid quorum is lost, require fresh approval. Preserve
+historical evidence of earlier approvals but distinguish their historical validity from current
+authority to sign.
+
+→ T5 below is resolved, and it is the decision with the sharpest constraint: the evidence is
+append-only, so "invalidate" cannot mean "amend". `PHASE-C-SCHEMA-AND-MIGRATION.md` §5.
 
 ---
 
@@ -21,7 +67,7 @@ not met.
 | Changes custody | **no** | **no** |
 | Reversible after deployment | partly — see R4 | **no** — see R9 |
 | Blocks the other | **yes** — V3 may need an organisation id | no |
-| Size | large: every query, every route | small, except `fee-flexible` |
+| Size | large: every query, every route | **small**, now that `fee-flexible` is deferred (E4) |
 
 The ordering follows from one row: **V3's record shape depends on whether an organisation
 identifier has to be in it.** Build V3 first and the answer gets guessed. Build tenancy first
@@ -63,14 +109,29 @@ migration, which makes it the most expensive cheap step in the plan.
 **What reduces it:** doing it last, and a test asserting that a scoped write cannot happen while
 any route still reads unscoped.
 
-### T3 — Separation of duties has no safe default — MEDIUM, and a product decision
+### T3 — Separation of duties — **DECIDED (E3)**, and the residual risk moved
 
-Today a proposer can always approve their own proposal. For a one-person treasury that is
-correct and necessary; for an institution it voids the control entirely. R6 makes it a policy
-field precisely because **neither value is safe to hardcode**, and that means someone has to
-decide the default for each tier of customer.
+Maker-checker is the institutional default: a proposer cannot approve their own transaction.
+That settles what to build. What it does **not** settle, and where the risk now lives, is the
+two places a default like this gets undone in practice:
 
-That decision is not a code decision and should not be made by whoever writes the migration.
+**The permissive value must never be reachable by omission.** A descriptor missing
+`selfApproval` must be *rejected*, not defaulted — a field that falls back to `'permitted'` when
+absent is a maker-checker control that disappears whenever somebody forgets it. The structural
+check enforces presence.
+
+**The single-owner exception must not become a route to weakening an institutional policy.**
+Existing one-person vaults are migrated with `selfApproval: 'permitted'` because otherwise they
+could never spend their own money — correct, and required to be explicit. The risk is that the
+exception travels: an organisation that starts `single_owner` and later becomes institutional
+must not carry the permission with it. `PHASE-C-SCHEMA-AND-MIGRATION.md` §4 answers this by
+exempting policy *weakening* from the self-approval permission entirely, whatever the policy
+says.
+
+The third part of E3 — a policy change must not let one actor reduce their own controls —
+required making "weaken" a decidable function rather than a judgement. Seven conditions, §4 of
+the schema document. W7 is the non-obvious one: removing approvers until the pool is smaller
+than a rule's threshold does not lower the threshold, it makes that tier unspendable.
 
 ### T4 — Backfilling one organisation per user is the irreversible part — MEDIUM
 
@@ -81,29 +142,35 @@ deployment, not the schema.
 **What reduces it:** steps 1–3 deployed and left running for a release before step 4 begins, so
 the backfill is proven under real traffic while nothing depends on it.
 
-### T5 — A removed member's pending approval — MEDIUM, and currently undecided
+### T5 — A removed member's pending approval — **DECIDED (E8)**, and harder than it reads
 
-§7.8. A user removed mid-proposal must stop counting toward its quorum — or must not, and right
-now the system has not decided.
+The decision is that revocation takes effect immediately, outstanding approvals are invalidated,
+the quorum is recalculated, the threshold is never lowered to preserve a proposal, and historical
+evidence is kept but distinguished from current authority to sign.
 
-What it does today: `operations.required` is a snapshot column written when the proposal is
-raised, `approvalsOf` joins `approvals` to `users` and not to `members`, and `applyPolicy` prunes
-the roster without touching proposals in flight. So a proposal is judged against the threshold
-that was in force when it was raised, by the people who approved it at the time, even if one of
-them is no longer a signer when it completes.
+What the system does *today*, for contrast: `operations.required` is a snapshot column,
+`approvalsOf` joins `approvals` to `users` and not to `members`, and `applyPolicy` prunes the
+roster without touching proposals in flight. So a stale approval currently keeps counting. That
+was defensible — removing a signer is itself palm-approved, and the approval was granted by a
+then-current member — but nobody chose it, and E8 now chooses otherwise.
 
-**That is defensible and it is not a bypass.** Removing a signer is itself a palm-approved policy
-change at the current quorum, and the approval it invalidates was genuinely granted by a
-then-current member. "Approvals stand under the policy in force when the proposal was raised" is
-a coherent rule. The problem is that nobody chose it — it is what the snapshot column happens to
-produce.
+**The constraint that makes this the hardest of the four: the evidence log is append-only, so
+"invalidate" cannot mean "amend".** The entry saying a person approved something is permanent and
+remains true. What changes is whether it counts. So the two facts are stored in different places
+with different mutability:
 
-Tenancy makes the choice urgent rather than academic. Today a signer leaves only through a whole
-policy replacement, which is rare. With roles, revoking someone's Approver role will be a routine
-administrative act, and the question "does their pending approval still count?" will be asked by
-a customer rather than by a test.
+| | Where | Can change? |
+|---|---|---|
+| **Historical validity** — they did approve, then | `evidence` entry | **never** |
+| **Current authority** — it counts now | `approvals.invalidated_at` + live role | yes |
 
-**What this needs:** a decision, then §7.8 pinning it down in both directions.
+`historicallyValid` is never false. If a thing is in the evidence log it happened, and the log
+does not acquire a way to say otherwise.
+
+The residual risks: a cached quorum on any route that computed one before the revocation landed
+(matrix case N7), and the temptation to lower `required` to rescue a proposal that can no longer
+reach it. `operations.required` is therefore **never written to** after the proposal is raised —
+§5 of the schema document states it as an invariant rather than a convention.
 
 ### T6 — Scoped evidence exports are slices, and a slice proves less — LOW, but must be stated
 
@@ -128,41 +195,62 @@ convenience with no security value.
 
 What must exist before step 1, and what each step requires to be called done.
 
-| | Requirement | Status today |
-|---|---|---|
-| M1 | The eight steps of §5 run in order, each deployable alone | design complete |
-| M2 | Steps 1–3 run one full release before step 4 | not started |
-| M3 | A per-route cross-tenant refusal test for all 40 authenticated routes | not started |
-| M4 | `organisation_id` NOT NULL only after nothing writes null (step 5) | not started |
-| M5 | Every existing user becomes a one-person organisation whose behaviour is **unchanged** | not started |
-| M6 | Existing evidence entries keep `scope = null` and are **never** backfilled | enforced by the append-only trigger |
-| M7 | Roles default to Owner + Approver, then narrow deliberately | not started |
-| M8 | Migration is idempotent and versioned under the existing advisory lock | pattern established, v18 |
-| M9 | The 208-test suite stays green at every step, with no test weakened | baseline established |
-| M10 | Testnet4 only; no network gains the ability to send | holds today, must be re-asserted |
+Now finalised as nine schema versions and four code phases in
+`PHASE-C-SCHEMA-AND-MIGRATION.md` §7. What each one requires to be called done:
 
-**M3 is the one that determines whether this is finished or merely working.** Forty routes × one
-test is the bulk of the work, and skipping it means the isolation is untested on exactly the
-paths where it matters.
+| | Requirement | Status |
+|---|---|---|
+| M1 | v19–v27 and code phases 1–4 run in order, each deployable alone | **design complete** |
+| M2 | v19–v24 run one full release before code phase 2 begins | not started |
+| M3 | Both directions per route, all 40 authenticated routes; negative test written **first** and observed to fail | **matrix complete**, tests not written |
+| M4 | `organisation_id` NOT NULL only after nothing writes null (v25) | not started |
+| M5 | Every existing vault becomes a one-person organisation whose behaviour is **unchanged** | not started |
+| M6 | Existing evidence entries keep `scope = null` and are **never** backfilled | enforced by the append-only trigger |
+| M7 | Roles backfill to `owner` + `approver`, then narrow deliberately | not started |
+| M8 | Migration idempotent and versioned under the existing advisory lock | pattern established, at v18 |
+| M9 | The 211-test suite stays green at every step, with no test weakened | baseline established |
+| M10 | Testnet4 only; no network gains the ability to send | holds today, re-asserted in §11 |
+| **M11** | `organisation_id` denormalised **and** guarded by a composite FK, so a child cannot claim another tenant | **VERIFIED in PGlite** |
+| **M12** | The two append-only tables derive their organisation; no column, because backfilling one is impossible | **VERIFIED in PGlite** |
+| **M13** | Isolation matrix run on a **migrated v18 database with existing rows**, not only a fresh one | not started |
+| **M14** | Rollback rehearsed: migrate forward, roll back to v18 with old code, matrix still passes | not started |
+| **M15** | `ctx.org` derived at the single choke point; ATTACK 21 forbids a handler reading a tenant from a request | not started |
+
+**M3 and M13 are the two that decide whether this is finished or merely working.** Forty routes
+× two directions is the bulk of the work; M13 is the half-page that proves it holds for data that
+existed before the migration, which a fresh-database test cannot show because every row in it was
+created afterwards.
+
+M11 and M12 were promoted from "approach" to "requirement" because both were tested against the
+engine rather than assumed — see §2 and §2's last subsection of the schema document. M11 in
+particular converts cross-tenant *corruption* from a discipline problem into a database-level
+impossibility.
 
 ---
 
 ## 4. Authorization V3 — implementation risks
 
-### V1 — `fee-flexible` changes what a signature authorises — HIGH
+### V1 — `fee-flexible` — **NOT BEING BUILT (E4)**, and the risk goes with it
 
-Everything else in V3 adds fields. `intentBinding: 'fee-flexible'` changes the meaning of the
-signature: the server becomes free to construct a transaction the approver never saw, within a
-ceiling.
+`intentBinding: 'fee-flexible'` was the only part of V3 that changed what a signature
+*authorises*: the server would become free to construct a transaction the approver never saw,
+within a fee ceiling. The ceiling was what made it safe, and the ceiling was the whole risk — a
+missing, defaulted, unbounded or server-chosen one turns "flexible on the fee" into "authorised
+to send an unbounded amount to miners".
 
-The ceiling is what makes it safe, and the ceiling is the whole risk. A missing, defaulted,
-unbounded or server-chosen ceiling turns "flexible on the fee" into "authorised to send an
-unbounded amount to miners". It must be chosen by the approver, shown in the statement they
-approve, and covered by the signature.
+E4 defers it. **Approval binds the exact transaction: inputs, outputs, amounts, fee and change.
+Any material change requires fresh approval.** `intentBinding` is always `strict`, which is V2's
+existing behaviour, so V3 reduces to V2 plus two readable fields and carries essentially none of
+this risk.
 
-**The design's own §6.1 says not to build this until a treasury needs it**, and that is the
-right call. Until then `intentBinding` is always `strict` and V3 is V2 plus two readable
-fields — which carries almost none of this risk.
+Two consequences worth being honest about, since this is a deferral rather than a rejection:
+
+- **A stuck transaction cannot be fee-bumped without a fresh palm.** That is the cost of the
+  decision, it is a real operational cost for a treasury, and it is the right trade for a first
+  institutional release.
+- **The field stays in the design, unimplemented.** `intentBinding` is written and validated as
+  `'strict'` only; a record carrying any other value is refused rather than ignored. A field that
+  silently accepted an unimplemented mode would be worse than no field.
 
 ### V2 — `policyDigest` fixes a serialisation forever — HIGH, and silent
 
@@ -217,11 +305,21 @@ damaging thing this system could produce, because it would be cryptographically 
 | N3 | `expected.minVersion` default stays unset | holds |
 | N4 | The policy descriptor's canonical form is frozen and round-trip tested **before** the first V3 signature | **not done** |
 | N5 | `quvault-evidence-1` is named in the anchor, and a future format changes the name | design complete |
-| N6 | `intentBinding` is `strict` until a fee-adjustment requirement exists | **decision outstanding** |
+| N6 | `intentBinding` is `strict`, and any other value is **refused** rather than ignored | **DECIDED (E4)** — fee-flexible deferred |
 | N7 | V3 is not signed until the organisation identifier question is answered (T/§6) | **blocked on Phase C** |
 | N8 | No V3 record may assert `biometricVerified` or a measurement without attestation | structural check exists for V2, extends to V3 |
+| **N9** | The policy descriptor is the one in `PHASE-C-SCHEMA-AND-MIGRATION.md` §4, and `policies.digest` is taken over exactly those bytes | design complete |
 
-**N4 and N7 are the two that block.** N7 is the reason this document puts tenancy first.
+**N4 and N7 are the two that still block.** N7 is the reason this document puts tenancy first.
+
+N4 gained a deadline from the schema work rather than from the V3 work: `policies.digest` is
+written from v22, which is **before** any V3 record is signed. So the descriptor's canonical form
+is frozen by the first migrated policy row, not by the first receipt. If the serialisation is
+wrong at v22, every digest written between then and the discovery is wrong, and the rows are
+immutable. The round-trip test N4 asks for therefore has to land with v22.
+
+That is not a hypothetical class of bug here: the previous phase fixed a `canonicalJson` defect
+in which an absent field hashed one way when signed and another after a database round trip.
 
 ---
 
@@ -234,8 +332,16 @@ Stated explicitly because a large migration is where invariants quietly go.
 - **Testnet4 only.** No network gains the ability to send.
 - **One phrase per browser.** A person in several organisations still has one recovery phrase.
 - **The evidence chain.** No committed entry changes, for any reason.
-- **The server cannot sign.** Not an authorisation, not a checkpoint. `ATTACK 17` enforces it.
+- **The server cannot sign.** Not an authorisation, not a checkpoint. `ATTACK 17` enforces it,
+  and `ATTACK 21` joins it for tenant context.
 - **No scanner, no PAD, no measured biometric entropy.** Unchanged by either design.
+  `sensorEvidence: 'none'` stays a recorded value rather than an omission.
+- **No terminal and no protected signing boundary exist.** Neither design creates one, and
+  nothing in Phase C may describe one as existing. Signing happens in browser JavaScript, which
+  remains the dominant limitation of the whole system.
+- **Approval binds the exact transaction** (E4) — inputs, outputs, amounts, fee and change.
+- **Scope stays within institutional Bitcoin treasury management on testnet4.** No other chain
+  gains the ability to send, and fee-flexible approval is not built.
 
 ---
 
@@ -243,17 +349,24 @@ Stated explicitly because a large migration is where invariants quietly go.
 
 | | Condition | Met |
 |---|---|---|
-| E1 | Tenant isolation design reviewed and accepted | **awaiting review** |
-| E2 | Authorization V3 design reviewed and accepted | **awaiting review** |
-| E3 | Separation-of-duties default decided per customer tier (T3) | **NOT MET — product decision** |
-| E4 | Fee-adjustment requirement known (N6) | **NOT MET — product decision** |
-| E5 | 208-test baseline green | MET |
-| E6 | Evidence layer durable, externally anchorable, independently verifiable | MET — `CHECKPOINTING.md` |
-| E7 | Appetite for 40 route tests confirmed (M3) | **awaiting decision** |
-| E8 | Fate of a removed approver's pending approval decided (T5) | **NOT MET — product decision** |
+| E1 | Tenant isolation design reviewed and accepted | **MET** |
+| E2 | Authorization V3 design reviewed and accepted | **MET** |
+| E3 | Separation of duties decided (T3) | **MET** — maker-checker by default, §0 |
+| E4 | Fee flexibility decided (N6) | **MET** — deferred, `strict` only, §0 |
+| E5 | Test baseline green | **MET** — 211 tests, 211 pass |
+| E6 | Evidence layer durable, externally anchorable, independently verifiable | **MET** — `CHECKPOINTING.md` |
+| E7 | Cross-tenant test scope decided (M3) | **MET** — all 40 routes, both directions, §0 |
+| E8 | Fate of a removed approver's pending approval decided (T5) | **MET** — immediate revocation, §0 |
+| **E9** | Schema and migration sequence finalised before coding | **MET** — `PHASE-C-SCHEMA-AND-MIGRATION.md` |
+| **E10** | Route inventory and isolation matrix exist | **MET** — `PHASE-C-ROUTE-ISOLATION-MATRIX.md` |
 
-E3, E4, E7 and E8 are decisions, not work. None of them can be made by whoever writes the
-migration, and all four change what gets built.
+**All entry conditions are met. Phase C is ready to implement and has not been started.**
 
-E8 is the one that is easy to miss, because the system already has an answer and nobody chose
-it.
+Two things the decisions did not settle, carried forward rather than silently resolved:
+
+- **N4's deadline moved earlier.** The policy descriptor's canonical form is frozen by v22, not
+  by the first V3 receipt, because `policies.digest` is written at v22 and those rows are
+  immutable. The round-trip test has to land with that migration.
+- **N7 still blocks V3 itself.** Whether a V3 record needs an organisation identifier is
+  answerable only once tenancy exists. Tenancy first, V3 after — unchanged, and now with a
+  reason that is settled rather than assumed.

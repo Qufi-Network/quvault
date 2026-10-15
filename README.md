@@ -286,6 +286,8 @@ zero. That happened once here, and the check exists so it cannot happen again.
 | [CHECKPOINTING.md](CHECKPOINTING.md) | Bounded checkpointing: the unanchored window, the external anchor, and what a verifier can prove |
 | [AUTHORIZATION-V3-DESIGN.md](AUTHORIZATION-V3-DESIGN.md) | Design: separating transaction intent from the transaction, and anchoring a receipt to the log |
 | [TENANT-ISOLATION-DESIGN.md](TENANT-ISOLATION-DESIGN.md) | Design: the organisation model Phase C has to implement, and the rules that get broken |
-| [PHASE-C-DESIGN-REVIEW.md](PHASE-C-DESIGN-REVIEW.md) | The two designs above presented for review: risks, migration requirements, and the four decisions that block |
+| [PHASE-C-DESIGN-REVIEW.md](PHASE-C-DESIGN-REVIEW.md) | The two designs above presented for review: risks, migration requirements, and the four decisions — now made |
+| [PHASE-C-SCHEMA-AND-MIGRATION.md](PHASE-C-SCHEMA-AND-MIGRATION.md) | The finalised schema, the nine migration versions, maker-checker, revocation and the rollback one-way doors |
+| [PHASE-C-ROUTE-ISOLATION-MATRIX.md](PHASE-C-ROUTE-ISOLATION-MATRIX.md) | All 40 authenticated routes and the cross-tenant test matrix, both directions |
 | [PHASE-A-BASELINE-FINDINGS.md](PHASE-A-BASELINE-FINDINGS.md) | The institutional baseline audit and the corrections that followed |
 | [HUMAN-VERIFIED.md](HUMAN-VERIFIED.md) | What a palm approval does and does not prove |

@@ -2,6 +2,18 @@
 
 **Design only. Not implemented.** Version 2 remains what the browser signs.
 
+> **E4 is decided: `fee-flexible` is not being built.** Approval binds the exact transaction —
+> inputs, outputs, amounts, fee and change — and any material change requires fresh approval.
+> `intentBinding` is `'strict'` and a record carrying any other value is **refused, not
+> ignored**. §2's `fee-flexible` branch and `feeCeilingSats` are retained below as a documented
+> future capability and are not implemented. The cost of this decision, stated plainly: **a
+> stuck transaction cannot be fee-bumped without a fresh palm.**
+>
+> V3 therefore reduces to V2 plus the readable policy descriptor and the evidence anchor. The
+> descriptor's canonical form is now fixed by `policies.digest` at migration v22 — *earlier* than
+> the first V3 receipt — so §6.2's freeze has a deadline it did not have before. See
+> [PHASE-C-SCHEMA-AND-MIGRATION.md](PHASE-C-SCHEMA-AND-MIGRATION.md) §4.
+
 Three things V2 cannot do, and one it must keep doing.
 
 ---
@@ -56,8 +68,8 @@ matching fields by eye.
   // ---- what was MEANT, separately from what was BUILT
   intentDigest,                     // the human's decision: payee, amount, network
   transactionHash,                  // the exact transaction, as V2
-  intentBinding: 'strict' | 'fee-flexible',
-  feeCeilingSats,                   // only meaningful when fee-flexible
+  intentBinding: 'strict',          // E4: the ONLY permitted value; anything else is refused
+  // feeCeilingSats                 // NOT IMPLEMENTED — future capability, fee-flexible only
 
   // ---- under what rules, readably
   policyVersion, policyDigest,
@@ -90,20 +102,27 @@ matching fields by eye.
 }
 ```
 
-### Why `intentBinding` is a field and not a default
+### Why `intentBinding` is a field at all, now that only one value is permitted
 
 `strict` means the signature covers the exact transaction: any change, including the fee,
-invalidates it. That is V2's behaviour and must remain available, because it is the right
+invalidates it. That is V2's behaviour, it is **the only value E4 permits**, and it is the right
 default for a treasury that would rather re-approve than widen anything.
 
-`fee-flexible` means the signature covers the intent plus a **fee ceiling**, and the server may
-realise the intent with any transaction paying the same payee the same amount with a fee at or
-below the ceiling. The approver sees the ceiling in the statement they approve. Anything outside
-it — a different payee, a different amount, a fee above the ceiling — requires fresh
-authorisation.
+The field stays, carrying one legal value, for two reasons. A record has to *say* what its
+signature binds rather than leave a reader to infer it from the version number; and a later
+format that does implement a second mode must not be able to pass as this one. A record with
+`intentBinding` absent, or set to anything other than `'strict'`, is refused by the structural
+check — **a field that silently accepted an unimplemented mode would be worse than no field.**
 
-The ceiling is what makes this safe. Without it, "fee-flexible" would authorise an unbounded
-transfer of value to miners.
+**Not implemented, retained as a documented future capability:** `fee-flexible` would mean the
+signature covers the intent plus a **fee ceiling**, with the server free to realise that intent
+by any transaction paying the same payee the same amount at or below the ceiling. The approver
+would see the ceiling in the statement they approve, and a different payee, a different amount or
+a fee above the ceiling would require fresh authorisation.
+
+The ceiling is what would make it safe, and it is also the entire risk: missing, defaulted,
+unbounded or server-chosen, it turns "flexible on the fee" into "authorised to send an unbounded
+amount to miners". That is why it is deferred rather than built cheaply.
 
 ---
 
@@ -176,22 +195,38 @@ capability, and gains rows for V3:
 | policy version | no | yes | yes |
 | **readable policy** | no | no | **yes** |
 | threshold | no | yes | yes |
-| **intent, separately** | no | no | **yes** |
+| **intent, separately** | no | no | **yes** — recorded, never *relaxed* (E4) |
 | **evidence association** | no | no | **yes** |
 | sensor measurement | never | if measured | if measured |
+| fee flexibility | never | never | **never, this release** (E4) |
 
 No historical record becomes stronger. `expected.minVersion` already exists for a caller that
 needs V3 guarantees, and the default stays unset so nothing changes under existing callers.
 
+The `intent, separately` row needs its caveat read: V3 records the intent as its own digest so a
+reader can see what the human decided apart from how it was realised. Under E4 that is a
+**reporting** improvement only — the signature still binds the exact transaction, and the
+separate intent digest does not license the server to realise it any other way.
+
 ## 6. What must be true before building it
 
-1. **Fee adjustment is an actual requirement.** `fee-flexible` is the only part that changes
-   signing semantics, and building it before a treasury needs it adds an authorisation mode
-   nobody uses — which is a liability, not a feature. Until then, V3 is V2 plus the policy
-   descriptor and the evidence anchor, and `intentBinding` is always `strict`.
+1. ~~Fee adjustment is an actual requirement.~~ **SETTLED (E4): it is not, for this release.**
+   `fee-flexible` was the only part that changes signing semantics, and it is deferred. V3 is V2
+   plus the policy descriptor and the evidence anchor, and `intentBinding` is always `strict`.
 2. **The policy descriptor's canonical form is fixed**, because `policyDigest` is taken over it
    and changing the serialisation later invalidates every receipt.
+
+   **This now has a deadline earlier than V3 itself.** `policies.digest` is written from
+   migration v22 over the same canonical descriptor, and those rows are immutable. So the form is
+   frozen by the first migrated policy row, not by the first receipt — and a wrong serialisation
+   at v22 means every digest written before the discovery is wrong, permanently. The round-trip
+   test has to land **with** v22, not with V3.
+
+   Not a hypothetical class of bug in this codebase: the preceding phase fixed a `canonicalJson`
+   defect in which an absent field hashed one way when signed and a different way after a
+   database round trip, so an honest signature read as a forged one.
 3. **The evidence format version is stable.** The anchor names `quvault-evidence-1`; a future
    format needs the anchor to say which.
 4. Phase C is done, or `accountId` and `subject` are known to be sufficient without an
-   organisation identifier. See `TENANT-ISOLATION-DESIGN.md`.
+   organisation identifier. See `TENANT-ISOLATION-DESIGN.md`. **Still the blocking item** — it is
+   answerable only once tenancy exists, which is why tenancy is first.

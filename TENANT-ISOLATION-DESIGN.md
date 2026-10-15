@@ -5,6 +5,15 @@
 Today the model is one user, one wallet, and nothing is scoped to anything. This is what has to
 change, and — more importantly — what has to stay true while it changes.
 
+> **The decisions are made** and are applied below (R6, R7, §7.8). The schema, the migration
+> order and the semantics they imply are finalised in
+> [PHASE-C-SCHEMA-AND-MIGRATION.md](PHASE-C-SCHEMA-AND-MIGRATION.md); the route inventory and
+> isolation matrix are in
+> [PHASE-C-ROUTE-ISOLATION-MATRIX.md](PHASE-C-ROUTE-ISOLATION-MATRIX.md). Where this document
+> and the schema document differ in detail, the schema document is the later and governing one —
+> notably on **how** `organisation_id` is carried (denormalised with a composite foreign key,
+> not by join), which §2 there settles with a verified result.
+
 ---
 
 ## 1. The shape
@@ -78,16 +87,28 @@ defence; the check is.
 
 **R5 — A role is checked server-side on every route.** Not in the page, not once at login.
 
-**R6 — Separation of duties is a policy, not a convention.** Whether a proposer may approve
-their own proposal is a per-organisation setting. A single-person treasury needs it permitted;
-an institutional one needs it refused. **Neither is a safe default to hardcode**, which is why
-it is a policy field. Today a proposer can always approve their own proposal — correct for a
-personal wallet, unacceptable for an institution, and currently not even expressible.
+**R6 — Separation of duties is a policy, and maker-checker is the default.** **DECIDED.** An
+institutional organisation refuses self-approval: a proposer cannot approve their own
+transaction. A single-person treasury needs it permitted or it can never spend, and that is an
+**explicit exception** — `kind = 'single_owner'` *and* `selfApproval: 'permitted'`, both stated,
+both recorded in evidence, both visible in the receipt's policy descriptor. The permissive value
+is never reachable by omission: a descriptor without the field is refused, not defaulted.
 
-**R7 — An administrator cannot bypass a quorum.** Changing a policy, adding a signer or removing
-an approver is itself palm-approved at the strongest quorum the *current* policy requires. An
-admin who could edit the rules to lower them has no quorum at all. The existing
-`requiredToChange` already implements this for the single-wallet case and generalises directly.
+Today a proposer can always approve their own proposal — correct for a personal wallet,
+unacceptable for an institution, and currently not even expressible.
+
+**R7 — An administrator cannot bypass a quorum, and cannot reduce their own controls.**
+Changing a policy, adding a signer or removing an approver is itself palm-approved at the
+strongest quorum the *current* policy requires. An admin who could edit the rules to lower them
+has no quorum at all. `requiredToChange` already implements this for the single-wallet case and
+generalises directly.
+
+Strengthened by the E3 decision: a change that **weakens** any control can never be
+self-approved, whatever `selfApproval` says, and is measured against the `requiredToChange` of
+the policy **being replaced** — never of the one replacing it. Taking the new policy's threshold
+would let one actor propose a one-approval policy and approve it themselves, which is the entire
+attack. "Weakens" is a decidable function of seven conditions, not a judgement:
+`PHASE-C-SCHEMA-AND-MIGRATION.md` §4.
 
 ---
 
@@ -186,16 +207,28 @@ Step 8 last is the point of ordering this way.
 
 Not a wish list — these are the specific failures that multi-tenant systems ship with:
 
+Expanded by E7 into the full matrix: **all 40 authenticated routes, both directions**, in
+[PHASE-C-ROUTE-ISOLATION-MATRIX.md](PHASE-C-ROUTE-ISOLATION-MATRIX.md). The list below is the
+subset that is about *semantics* rather than route coverage.
+
 1. Read another organisation's wallet, proposal, policy, beneficiary, signer, evidence — each
    refused, each its own test.
 2. Supply another organisation's id in a request body while authenticated elsewhere. Refused.
 3. A proposal id from organisation A used on organisation B's route. Refused.
 4. An Operator attempting to approve. Refused.
 5. An Approver attempting to raise a proposal. Refused.
-6. An Administrator attempting to lower a policy without the current quorum. Refused.
-7. A proposer approving their own proposal — permitted or refused **according to the policy**,
-   tested both ways.
-8. A user removed from an organisation mid-proposal: their pending approval no longer counts.
+6. An Administrator attempting to lower a policy without the current quorum. Refused —
+   and separately, an Administrator attempting to **self-approve** a weakening change, refused
+   even in an organisation where `selfApproval: 'permitted'`.
+7. A proposer approving their own proposal — refused in an `institutional` organisation,
+   permitted in an explicit `single_owner` one, tested both ways.
+8. A user removed from an organisation mid-proposal: **their pending approval no longer counts,
+   immediately.** DECIDED (E8). The outstanding approval is invalidated, the quorum is
+   recalculated, and `operations.required` is **never** lowered to rescue the proposal — if the
+   valid count falls below it, the proposal reopens and needs a fresh palm. The evidence entry
+   recording the original approval is permanent and stays true; what changes is whether it counts.
+   Both facts are reported side by side: `historicallyValid` (never false) and `currentlyCounts`.
+   `PHASE-C-SCHEMA-AND-MIGRATION.md` §5.
 9. An evidence export scoped to one organisation containing no other organisation's entries,
    and still verifying as a slice.
 10. A role change taking effect without re-login.
