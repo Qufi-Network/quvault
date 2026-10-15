@@ -483,6 +483,14 @@ const CHECKPOINT_VERSION = 1;
 export function signCheckpoint({ vaultId, head, count, at, nonce }, keys) {
   if (!vaultId || !head || !nonce) throw new Error('A checkpoint must name a vault, a head and a nonce.');
   if (!Number.isInteger(count) || count < 0) throw new Error('A checkpoint must count the entries it covers.');
+  /*
+   * A checkpoint with no time is not a checkpoint: the unanchored window is measured from it,
+   * so an absent `at` would make the window unmeasurable. Checked here, at the point of
+   * signing, because the fields of a checkpoint arrive from the server — the party this whole
+   * mechanism exists to hold to account — and signing whatever it sends without looking is
+   * how it would get to choose what the owner's key attests to.
+   */
+  if (!Number.isInteger(at) || at <= 0) throw new Error('A checkpoint must say when it was made.');
   const record = { v: CHECKPOINT_VERSION, context: CHECKPOINT_CONTEXT, vaultId, head, count, at, nonce };
   return {
     record,
@@ -506,6 +514,14 @@ export function verifyCheckpoint(checkpoint, publicKeyBase64, expected = {}) {
     if (checkpoint.context !== CHECKPOINT_CONTEXT) return { ok: false, reason: 'signed for a different purpose' };
     if (record.v !== CHECKPOINT_VERSION || record.context !== CHECKPOINT_CONTEXT) {
       return { ok: false, reason: 'not a checkpoint record' };
+    }
+    // The verify-side twin of the check in `signCheckpoint`. A record with no time could carry
+    // a perfectly valid signature and still be useless, because the window is measured from it.
+    if (!Number.isInteger(record.at) || record.at <= 0) {
+      return { ok: false, reason: 'the checkpoint does not say when it was made' };
+    }
+    if (!record.vaultId || !record.head || !record.nonce || !Number.isInteger(record.count)) {
+      return { ok: false, reason: 'the checkpoint is missing a vault, head, count or nonce' };
     }
     if (!publicKeyBase64) return { ok: false, reason: 'this vault has no registered attestation key' };
     const publicKey = base64.decode(publicKeyBase64);

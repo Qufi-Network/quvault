@@ -13,6 +13,7 @@ import {
   checkAuthorization, checkChain, clearRecord, fromBase64, loadRecord, planDigest,
   createVaultKey, browserSigner, cosignerPublicKeyFor, deriveAccountFor,
   restoreVaultKey, revealPhrase, pinAttestationRoot,
+  signEvidenceCheckpoint, pinCheckpoint, checkpointDisagreement,
 } from '/vendor/wallet.js';
 
 const $ = id => document.getElementById(id);
@@ -152,6 +153,74 @@ async function boot() {
   }
 }
 
+/*
+ * What login can do about the evidence log, which is everything except sign.
+ *
+ * The signing key is here and nowhere else, so the browser is the only place a checkpoint can
+ * be made. A server schedule can decide one is DUE; it cannot produce one. That is why the
+ * window in src/anchor.js is expressed as "how much is unanchored" rather than "when did the
+ * job last run".
+ *
+ * Two of the three jobs need no key, so they happen here, on every refresh:
+ *
+ *   1. Compare what this browser last committed to against what the server now says its
+ *      history was at that point. A disagreement means the log was rewritten.
+ *   2. Report the unanchored window, and retry any forwarding a sink outage left waiting.
+ *
+ * The third — signing — needs an unlock, so it happens at the end of a payment instead. The
+ * comment on that step below says why, because it reads as an omission and is not one.
+ *
+ * The browser's own copy is a TRIPWIRE, not a durable record: it is one device's memory, it
+ * dies with cleared site data, and no verifier can fetch it. The durable anchor is the
+ * external sink. Both are reported; neither is described as the other.
+ */
+async function keepEvidenceAnchored(data) {
+  if (!data?.wallet || !device.holdsKeyFor(data.wallet)) return;
+
+  let target;
+  try {
+    target = await api('/api/evidence/checkpoint');
+  } catch {
+    return; // the status is not worth an error on screen
+  }
+
+  // 2 first: a rewrite is more urgent than a missing checkpoint.
+  const disagreement = checkpointDisagreement(device.record, target.claimedHeads ?? []);
+  if (disagreement) {
+    state.evidenceAlarm = disagreement;
+    toast('The evidence history this server reports does not match what this browser recorded. '
+      + 'Do not approve anything until this is explained.', 20_000);
+    return; // signing a fresh checkpoint over a rewritten log would endorse it
+  }
+
+  /*
+   * 1 cannot happen here, and that is a constraint rather than an omission.
+   *
+   * Signing a checkpoint needs the phrase, which needs the unlock secret, which the server
+   * releases only after a palm approval. So a page load cannot produce a checkpoint without
+   * demanding a palm scan for nothing but bookkeeping — which would make checkpointing compete
+   * with spending for the one thing the owner has to be present for.
+   *
+   * A checkpoint is therefore signed at the end of a payment, with the unlock that payment
+   * already holds (see `device.send`). The unanchored window closes at the next palm-approved
+   * action, not on a clock. For a treasury in use that is frequent; for an idle vault the tail
+   * grows, which is true and is reported here rather than hidden.
+   */
+  try {
+    state.evidenceAnchor = await api('/api/evidence/anchor');
+  } catch {
+    return;
+  }
+  if (state.evidenceAnchor.window?.state === 'overdue') {
+    toast(`${state.evidenceAnchor.window.unanchoredEntries} evidence entries are not yet `
+      + 'anchored. The next approved payment will checkpoint them.', 12_000);
+  }
+  // A sink outage leaves checkpoints waiting; retrying needs no key, so it can happen here.
+  if (state.evidenceAnchor.externalAnchor?.awaitingForwarding > 0) {
+    await api('/api/evidence/anchor/retry', {}).catch(() => {});
+  }
+}
+
 async function refresh() {
   let data;
   try {
@@ -162,6 +231,9 @@ async function refresh() {
   }
   state.data = data;
   await device.load();
+  // Fire and forget: the evidence log being unanchored is worth fixing, and is never a reason
+  // to hold up the page. See `keepEvidenceAnchored`.
+  keepEvidenceAnchored(data).catch(() => {});
   if (!data.wallet) {
     // Someone can sign for another vault without having one of their own: say so first.
     $('my-code').textContent = data.me.code;
@@ -530,7 +602,39 @@ const device = {
     // the palm approved; a mismatch throws there and nothing reaches this line.
     const { hex, authorization } = await this.signerFor(unlocked).signTransaction(this.signingRequest(unlocked));
     const sent = await api(`/api/operations/${operation.id}/broadcast`, { hex, authorization });
+    /*
+     * Checkpoint the evidence this payment just produced, using the unlock this payment
+     * already holds. No extra palm scan: the owner is present, the key is in hand, and the
+     * entries worth anchoring are the ones that were written a moment ago.
+     *
+     * Deliberately after the broadcast and deliberately not awaited into the result — a
+     * checkpoint is bookkeeping about a payment that has already happened, and must never be
+     * able to make a completed payment look failed.
+     */
+    this.anchorEvidence(unlocked).catch(() => {});
     return { ...sent, receipt: await readReceipt(operation.id) };
+  },
+
+  /**
+   * Signs a checkpoint over the log as it stands, with an unlock already in hand.
+   *
+   * Returns false rather than throwing when there is nothing to anchor or the server will not
+   * accept it — this is called from a path that has already succeeded, and nothing here is
+   * worth surfacing as a failure of that path.
+   */
+  async anchorEvidence(unlocked) {
+    if (!this.record) return false;
+    try {
+      const target = await api('/api/evidence/checkpoint');
+      if (!target?.head || !target.count) return false;
+      const signed = await signEvidenceCheckpoint(this.record, unlocked, target);
+      const stored = await api('/api/evidence/checkpoint', { checkpoint: signed });
+      // The browser's own tripwire copy. Local detection only; not the durable anchor.
+      await pinCheckpoint({ head: target.head, count: target.count, at: target.at });
+      return stored;
+    } catch {
+      return false;
+    }
   },
 
   /**

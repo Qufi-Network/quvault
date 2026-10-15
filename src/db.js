@@ -315,6 +315,35 @@ const SCHEMA = [
   `CREATE TRIGGER evidence_checkpoints_append_only
      BEFORE UPDATE OR DELETE ON evidence_checkpoints
      FOR EACH ROW EXECUTE FUNCTION quvault_evidence_is_append_only()`,
+
+  /*
+   * v18: what happened when a checkpoint was forwarded to an external sink.
+   *
+   * A separate table rather than columns on `evidence_checkpoints`, because that table is
+   * append-only and recording an outcome later would mean updating a row the trigger forbids.
+   * One row per attempt, so a sink outage followed by a success reads as exactly that — two
+   * facts, in order — rather than a mutable "status" field that forgets the outage happened.
+   *
+   * `ref` is whatever the sink handed back. It is a convenience for an operator chasing a
+   * record and is NOT evidence: this deployment could invent one. The proof that a checkpoint
+   * is externally retained is a verifier fetching it from the sink themselves.
+   */
+  `CREATE TABLE IF NOT EXISTS evidence_anchors (
+    id             TEXT PRIMARY KEY,
+    checkpoint_id  TEXT NOT NULL REFERENCES evidence_checkpoints(id),
+    wallet_user_id TEXT NOT NULL REFERENCES users(id),
+    sink           TEXT NOT NULL,          -- which sink, by name
+    result         TEXT NOT NULL,          -- STORED | REFUSED | UNREACHABLE | NOT_CONFIGURED
+    ref            TEXT,                   -- the sink's own reference, if it gave one
+    detail         TEXT,
+    at             BIGINT NOT NULL
+  )`,
+  'CREATE INDEX IF NOT EXISTS evidence_anchors_checkpoint ON evidence_anchors (checkpoint_id, at)',
+  'CREATE INDEX IF NOT EXISTS evidence_anchors_wallet ON evidence_anchors (wallet_user_id, at)',
+  'DROP TRIGGER IF EXISTS evidence_anchors_append_only ON evidence_anchors',
+  `CREATE TRIGGER evidence_anchors_append_only
+     BEFORE UPDATE OR DELETE ON evidence_anchors
+     FOR EACH ROW EXECUTE FUNCTION quvault_evidence_is_append_only()`,
 ];
 
 const INT8 = 20; // Timestamps are BIGINT; read them back as numbers.

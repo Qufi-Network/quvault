@@ -196,10 +196,22 @@ outcome lost that way is resolved by asking the chain:
 curl -X POST --cookie "$COOKIE" https://host/api/operations/$ID/reconcile
 ```
 
-**A full rewrite is detectable.** Your browser can sign a *checkpoint* — a commitment to the
-log's head, under the same ML-DSA key that signs receipts, which the server has never held. An
-operator who rewrites every entry and recomputes the chain cannot produce a matching checkpoint
-without forging a post-quantum signature.
+**A full rewrite is detectable.** Your browser signs a *checkpoint* at the end of each payment —
+a commitment to the log's head, under the same ML-DSA key that signs receipts, which the server
+has never held. An operator who rewrites every entry and recomputes the chain cannot produce a
+matching checkpoint without forging a post-quantum signature.
+
+Checkpoints are forwarded to an **external sink** — a store the operator does not control — and
+that is the durable anchor. A verifier fetches one themselves and compares:
+
+```bash
+npm run verify:evidence -- bundle.json --external checkpoint-from-the-sink.json
+```
+
+Three answers: the log matches, the log was **rewritten**, or its **tail is missing** — the last
+being one a hash chain can never reveal, since a truncated chain verifies perfectly. Without a
+sink configured there is no durable external anchor and the status says so.
+[CHECKPOINTING.md](CHECKPOINTING.md) has the bounded window, failure behaviour and recovery.
 
 ```bash
 curl -s --cookie "$COOKIE" https://host/api/evidence > bundle.json
@@ -271,7 +283,9 @@ zero. That happened once here, and the check exists so it cannot happen again.
 | [PHASE-2-ENTRY-GATE.md](PHASE-2-ENTRY-GATE.md) | What must be known before scanner integration begins |
 | [ON-CHAIN-MULTISIG.md](ON-CHAIN-MULTISIG.md) | The P2WSH design and what Bitcoin forces |
 | [EVIDENCE.md](EVIDENCE.md) | The evidence log: what is recorded, the integrity construction, and who can still rewrite it |
+| [CHECKPOINTING.md](CHECKPOINTING.md) | Bounded checkpointing: the unanchored window, the external anchor, and what a verifier can prove |
 | [AUTHORIZATION-V3-DESIGN.md](AUTHORIZATION-V3-DESIGN.md) | Design: separating transaction intent from the transaction, and anchoring a receipt to the log |
 | [TENANT-ISOLATION-DESIGN.md](TENANT-ISOLATION-DESIGN.md) | Design: the organisation model Phase C has to implement, and the rules that get broken |
+| [PHASE-C-DESIGN-REVIEW.md](PHASE-C-DESIGN-REVIEW.md) | The two designs above presented for review: risks, migration requirements, and the four decisions that block |
 | [PHASE-A-BASELINE-FINDINGS.md](PHASE-A-BASELINE-FINDINGS.md) | The institutional baseline audit and the corrections that followed |
 | [HUMAN-VERIFIED.md](HUMAN-VERIFIED.md) | What a palm approval does and does not prove |

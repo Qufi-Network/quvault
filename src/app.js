@@ -21,6 +21,9 @@ import {
 } from './evidence.js';
 import { createScanner, SCANNER } from './scanner.js';
 import { RATE, clientAddress, bucketFor, isOverLimit, refusalMessage } from './rate-limit.js';
+import {
+  ANCHOR, ANCHOR_POLICY, anchorWindow, createNullSink, assertSink, compareAgainstExternal,
+} from './anchor.js';
 
 const SESSION_COOKIE = 'palmsafe_sid';
 const LOGIN_COOKIE = 'palmsafe_login';
@@ -77,6 +80,21 @@ const SQL = {
       (id, wallet_user_id, head, entry_count, at, key_id, checkpoint)
     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
   checkpointsOf: 'SELECT * FROM evidence_checkpoints WHERE wallet_user_id = $1 ORDER BY at',
+  checkpointById: 'SELECT * FROM evidence_checkpoints WHERE id = $1',
+  checkpointByHead: 'SELECT * FROM evidence_checkpoints WHERE wallet_user_id = $1 AND head = $2',
+  insertAnchor: `INSERT INTO evidence_anchors
+      (id, checkpoint_id, wallet_user_id, sink, result, ref, detail, at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+  anchorsOf: 'SELECT * FROM evidence_anchors WHERE wallet_user_id = $1 ORDER BY at',
+  /*
+   * Checkpoints with no STORED attempt: the ones still to be forwarded. A sink outage leaves
+   * work here rather than losing it, and this is what a retry run picks up.
+   */
+  checkpointsAwaitingAnchor: `SELECT c.* FROM evidence_checkpoints c
+    WHERE c.wallet_user_id = $1
+      AND NOT EXISTS (
+        SELECT 1 FROM evidence_anchors a WHERE a.checkpoint_id = c.id AND a.result = 'STORED')
+    ORDER BY c.at`,
   latestCheckpoint: 'SELECT * FROM evidence_checkpoints WHERE wallet_user_id = $1 ORDER BY at DESC LIMIT 1',
 
   userBySub: 'SELECT * FROM users WHERE sub = $1',
@@ -369,6 +387,15 @@ export function createApp(options) {
    * to come from. It cannot report a pass, so no code path here can act on one.
    */
   const scanner = createScanner({ provider: options.scannerProvider });
+
+  /*
+   * The external checkpoint sink, and how much unanchored evidence this deployment tolerates.
+   *
+   * No sink by default. That is the weaker posture and it is reported as such — see
+   * `anchorStatus` and CHECKPOINTING.md — rather than quietly treated as fine.
+   */
+  const sink = assertSink(options.anchorSink ?? createNullSink());
+  const anchorPolicy = { ...ANCHOR_POLICY, ...(options.anchorPolicy ?? {}) };
 
   /**
    * Turns whatever a provider said into the right security event.
@@ -1737,6 +1764,102 @@ export function createApp(options) {
   }
 
   /**
+   * Forwards a checkpoint to the external sink, and records what happened either way.
+   *
+   * Every attempt is a row, so an outage followed by a success reads as two facts in order
+   * rather than a status field that forgets the outage. A failure is never fatal: the
+   * checkpoint is already stored and still useful locally, and `retryAnchors` picks it up.
+   */
+  async function anchorCheckpoint(checkpointRow, { actor = null } = {}) {
+    let outcome;
+    try {
+      outcome = await sink.store(JSON.parse(checkpointRow.checkpoint));
+    } catch (error) {
+      log.error(error);
+      outcome = { result: ANCHOR.UNREACHABLE, ref: null, detail: 'the sink threw' };
+    }
+    await query('insertAnchor', randomId(12), checkpointRow.id, checkpointRow.wallet_user_id,
+      sink.name, outcome.result, outcome.ref ?? null, outcome.detail ?? null, now());
+
+    await appendEvidence(EVIDENCE.CHECKPOINT_ANCHORED, {
+      actor,
+      subjectKind: 'wallet',
+      subjectId: checkpointRow.wallet_user_id === actor ? undefined : checkpointRow.wallet_user_id,
+      provider: sink.name,
+      outcome: outcome.result,
+      reason: outcome.detail ?? null,
+    });
+    return outcome;
+  }
+
+  /**
+   * Forwards every checkpoint that has no successful anchor yet.
+   *
+   * This is the recovery path after a sink outage, and the only part of checkpointing a server
+   * schedule can actually perform — the signing needs the owner's key, which is in their
+   * browser. Idempotent: a checkpoint already STORED is not in the set.
+   */
+  async function retryAnchors({ user }) {
+    const waiting = await all('checkpointsAwaitingAnchor', user.id);
+    const results = [];
+    for (const row of waiting) {
+      const outcome = await anchorCheckpoint(row, { actor: user.id });
+      results.push({ checkpoint: row.head, count: row.entry_count, result: outcome.result });
+      // A sink that is down will be down for the next one too; do not hammer it.
+      if (outcome.result === ANCHOR.UNREACHABLE) break;
+    }
+    return { attempted: results.length, waiting: waiting.length, results, sink: sink.describe() };
+  }
+
+  /**
+   * Where this log stands: how much of it is unanchored, and by what.
+   *
+   * The honest summary, with the three tiers kept apart. A deployment with no sink is told
+   * that it has no durable external anchor, in those words, rather than being shown a green
+   * light because a hash chain verifies.
+   */
+  async function anchorStatus({ user }) {
+    const wallet = await one('walletOf', user.id);
+    if (!wallet) throw new HttpError(409, 'This account has no wallet.');
+    const latest = await one('latestCheckpoint', user.id);
+    const count = Number((await one('evidenceCount')).n);
+    const window = anchorWindow({
+      lastCheckpointAt: latest ? Number(latest.at) : null,
+      lastCheckpointCount: latest ? latest.entry_count : 0,
+      entryCount: count,
+      now: now(),
+      policy: anchorPolicy,
+    });
+    const anchors = await all('anchorsOf', user.id);
+    const stored = anchors.filter(a => a.result === ANCHOR.STORED);
+    const awaiting = await all('checkpointsAwaitingAnchor', user.id);
+
+    return {
+      entries: count,
+      window,
+      policy: anchorPolicy,
+      // Tier 1: the chain. Tier 2: the browser, which is local only. Tier 3: the sink.
+      externalAnchor: {
+        ...sink.describe(),
+        lastStoredAt: stored.length ? Number(stored.at(-1).at) : null,
+        lastStoredCount: stored.length
+          ? (await one('checkpointById', stored.at(-1).checkpoint_id))?.entry_count ?? null
+          : null,
+        awaitingForwarding: awaiting.length,
+      },
+      lastCheckpoint: latest
+        ? { head: latest.head, count: latest.entry_count, at: Number(latest.at) }
+        : null,
+      /*
+       * Said explicitly because the brief it answers was explicit: a browser's stored head is
+       * a local tripwire, not a durable external record. A verifier cannot fetch it, and
+       * clearing site data erases it.
+       */
+      browserCopyIsNotAnAnchor: true,
+    };
+  }
+
+  /**
    * What the browser needs in order to sign a checkpoint: the head, and how many entries it
    * covers. Read-only, and it commits to nothing — the signature is the commitment.
    */
@@ -1807,7 +1930,20 @@ export function createApp(options) {
       actor: user.id, subjectKind: 'wallet', subjectId: wallet.address,
       vaultId: wallet.address, keyEpoch: lineage.epoch, outcome: 'committed',
     });
-    return { checkpoint: { head, count, at: checked.record.at }, appended: true };
+
+    /*
+     * Forwarded immediately, because a checkpoint sitting only in this database is not an
+     * external anchor. If the sink is down the attempt is recorded and the checkpoint waits
+     * for `POST /api/evidence/anchor/retry` — losing it here would be the one unrecoverable
+     * outcome, so it is the one thing that cannot happen.
+     */
+    const row = await one('checkpointByHead', user.id, head);
+    const anchored = row ? await anchorCheckpoint(row, { actor: user.id }) : { result: ANCHOR.NOT_CONFIGURED };
+    return {
+      checkpoint: { head, count, at: checked.record.at },
+      appended: true,
+      external: { result: anchored.result, sink: sink.name, ...sink.describe() },
+    };
   }
 
   /** Reconciles one payment on request. Read-mostly: it writes only a settled outcome. */
@@ -2829,6 +2965,8 @@ export function createApp(options) {
     { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/reconcile$/, handler: reconcileOne, auth: true, limit: RATE.unlock },
     { method: 'GET', path: '/api/evidence/checkpoint', handler: checkpointTarget, auth: true, limit: RATE.upstream },
     { method: 'POST', path: '/api/evidence/checkpoint', handler: registerCheckpoint, auth: true, limit: RATE.write },
+    { method: 'GET', path: '/api/evidence/anchor', handler: anchorStatus, auth: true, limit: RATE.upstream },
+    { method: 'POST', path: '/api/evidence/anchor/retry', handler: retryAnchors, auth: true, limit: RATE.write },
     { method: 'GET', path: /^\/api\/operations\/([\w-]{8,64})\/evidence$/, handler: exportEvidence, auth: true, limit: RATE.upstream },
     { method: 'GET', path: '/api/random', handler: getRandom, auth: true, limit: RATE.upstream },
     { method: 'GET', path: '/api/wallet', handler: getWallet, auth: true },

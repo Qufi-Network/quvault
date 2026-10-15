@@ -2,3 +2,7 @@ node_modules/
 data/
 .env
 wallet-seed.txt
+
+# test/migrate.test.js writes a past version of db.js beside the current one so its relative
+# imports resolve, and removes it in a finally. A crashed run leaves one behind.
+src/_replay_*.js

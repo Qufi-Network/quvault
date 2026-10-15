@@ -598,8 +598,21 @@ export async function restoreVaultKey(mnemonic, { unlock, salt }, expectedAddres
  * It takes a head the server supplied and says "this is the log I saw". It does not verify the
  * log — a browser cannot read the whole log cheaply — so a checkpoint attests to what the
  * server presented at that moment, which is exactly what makes a later disagreement visible.
+ *
+ * It does, however, check the SHAPE of what it was handed before signing it. Every field here
+ * arrives from the server, and the server is the party a checkpoint exists to hold to account.
+ * A field it left out would otherwise be signed as absent, producing a checkpoint that is
+ * accepted everywhere and verifies nowhere — anchoring that reports success and proves
+ * nothing. Refusing is the safe direction: the caller treats a refusal as "not anchored yet",
+ * and the window stays visibly open.
  */
 export async function signEvidenceCheckpoint(record, unlocked, { vaultId, head, count, at, nonce }) {
+  if (!vaultId || typeof head !== 'string' || !head || typeof nonce !== 'string' || !nonce) {
+    throw new Error('The server did not supply a complete checkpoint to sign.');
+  }
+  if (!Number.isInteger(count) || count < 0 || !Number.isInteger(at) || at <= 0) {
+    throw new Error('The server did not supply a usable count or time to checkpoint.');
+  }
   return withPhrase(record, unlocked.unlock, mnemonic => {
     const keys = attestationKeys(mnemonic, unlocked.attestationEpoch ?? 1);
     try {

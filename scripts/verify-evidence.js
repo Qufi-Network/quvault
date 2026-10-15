@@ -22,10 +22,25 @@
 import fs from 'node:fs';
 import { verifyBundle, summarisePayment, checkpointsAgree, EVIDENCE } from '../src/evidence.js';
 import { verifyCheckpoint } from '../src/authorization.js';
+import { compareAgainstExternal } from '../src/anchor.js';
 
 const args = process.argv.slice(2);
 const asJson = args.includes('--json');
-const source = args.find(a => a !== '--json');
+/*
+ * `--external <file>` is a checkpoint the verifier fetched from the retention sink themselves,
+ * not from the deployment being checked. It is the only input here that the deployment cannot
+ * influence, and therefore the only one that can establish that a log was NOT rewritten.
+ */
+const externalAt = args.indexOf('--external');
+const externalPath = externalAt === -1 ? null : args[externalAt + 1];
+/*
+ * The bundle is the first argument that is not a flag or a flag's value. Written as an
+ * explicit index rather than an arithmetic comparison because the obvious form —
+ * `i !== externalAt + 1` — silently excludes index 0 when `--external` is absent and
+ * `externalAt` is -1, which swallows the bundle path itself.
+ */
+const skip = externalAt === -1 ? new Set() : new Set([externalAt, externalAt + 1]);
+const source = args.filter((a, i) => a !== '--json' && !skip.has(i))[0];
 
 if (!source) {
   console.error('Usage: node scripts/verify-evidence.js <bundle.json|-> [--json]');
@@ -65,12 +80,41 @@ const commitments = checkpointsAgree(bundle, vaultPublicKey
   ? checkpoint => verifyCheckpoint(checkpoint, vaultPublicKey, { vaultId: checkpoint?.record?.vaultId })
   : null);
 
+/*
+ * The external comparison. This is the decisive check: a checkpoint the verifier holds, from a
+ * sink the deployment does not control, against the log the deployment is presenting. The
+ * checkpoints inside the bundle cannot do this job — an operator who rewrote the log could
+ * have deleted them.
+ */
+let external = null;
+if (externalPath) {
+  try {
+    const raw = fs.readFileSync(externalPath, 'utf8');
+    const held = JSON.parse(raw);
+    const record = held?.record ?? held;
+    const signature = vaultPublicKey
+      ? verifyCheckpoint(held?.record ? held : null, vaultPublicKey, { vaultId: record?.vaultId })
+      : null;
+    external = {
+      ...compareAgainstExternal(bundle.entries ?? [], record),
+      signatureChecked: Boolean(signature),
+      signatureOk: signature ? signature.ok : null,
+      signatureReason: signature && !signature.ok ? signature.reason : null,
+    };
+  } catch (error) {
+    external = { verdict: 'UNUSABLE', reason: `could not read the external checkpoint: ${error.message}` };
+  }
+}
+
 const subjects = [...new Set((bundle.entries ?? []).map(e => e.subjectId).filter(Boolean))];
 const payments = subjects.map(id => summarisePayment(bundle.entries, id));
-const passed = result.ok && (!commitments.anyPresent || commitments.ok);
+const passed = result.ok
+  && (!commitments.anyPresent || commitments.ok)
+  // An external checkpoint that disagrees is a failure whatever else holds.
+  && (!external || (external.verdict === 'MATCHES' && external.signatureOk !== false));
 
 if (asJson) {
-  console.log(JSON.stringify({ result, commitments, payments }, null, 2));
+  console.log(JSON.stringify({ result, commitments, external, payments }, null, 2));
   process.exit(passed ? 0 : 1);
 }
 
@@ -86,6 +130,27 @@ console.log(`checkpoints ${commitments.anyPresent
 if (commitments.anyPresent && !vaultPublicKey) {
   console.log('            signatures NOT checked: this bundle carries no vault public key');
 }
+if (external) {
+  console.log('');
+  const label = {
+    MATCHES: 'the log agrees with the externally held checkpoint',
+    REWRITTEN: 'THE LOG HAS BEEN REWRITTEN',
+    TAIL_MISSING: 'THE END OF THE LOG IS MISSING',
+    UNUSABLE: 'the external checkpoint could not be used',
+  }[external.verdict] ?? external.verdict;
+  console.log(`external    ${label}`);
+  console.log(`            ${external.reason}`);
+  if (external.signatureChecked) {
+    console.log(`            signature: ${external.signatureOk ? 'valid' : `INVALID — ${external.signatureReason}`}`);
+  } else {
+    console.log('            signature NOT checked: no vault public key available');
+  }
+  if (external.verdict === 'MATCHES' && external.unanchoredTail > 0) {
+    console.log(`            ${external.unanchoredTail} entries after the committed point are not`);
+    console.log('            covered by this checkpoint — a rewrite of that tail alone would pass');
+  }
+}
+
 for (const c of commitments.results.filter(r => !r.ok)) {
   console.log(`\ncheckpoint covering ${c.count} entries (head ${String(c.head).slice(0, 12)}…):`);
   for (const problem of c.problems) console.log(`  ${problem}`);
@@ -119,7 +184,19 @@ const unknown = Object.keys(kinds).filter(k => !Object.values(EVIDENCE).includes
 if (unknown.length) console.log(`\nunknown entry kinds: ${unknown.join(', ')}`);
 
 console.log('');
-if (commitments.anyPresent && commitments.ok && vaultPublicKey) {
+if (external?.verdict === 'MATCHES' && external.signatureOk) {
+  console.log('A checkpoint held outside this deployment, signed by a key it has never had,');
+  console.log('commits to this exact history. That is the strongest statement available: the');
+  console.log('operator could rewrite the database and would still not match this file.');
+  if (external.unanchoredTail > 0) {
+    console.log(`Note the ${external.unanchoredTail}-entry tail after the committed point, which no`);
+    console.log('checkpoint covers yet.');
+  }
+} else if (external && external.verdict !== 'MATCHES') {
+  console.log('The externally held checkpoint does not agree with this log. Treat the log as');
+  console.log('untrustworthy and investigate: a rewritten or truncated audit trail is not a');
+  console.log('reporting problem, it is an incident.');
+} else if (commitments.anyPresent && commitments.ok && vaultPublicKey) {
   console.log('The chain is intact AND the log passed through every head committed to by a key');
   console.log('this server has never held. Rewriting this history would mean forging an');
   console.log('ML-DSA-65 signature, not recomputing a hash. That is the strong reading.');

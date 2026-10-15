@@ -371,6 +371,11 @@ test('a browser that kept its own head notices a rewrite even with the checkpoin
   const db = await env.app.db();
   await db.query('DROP TRIGGER evidence_append_only ON evidence');
   await db.query('DROP TRIGGER evidence_checkpoints_append_only ON evidence_checkpoints');
+  // The anchor records reference the checkpoints and are append-only in their own right, so
+  // even this attack has to disable a third trigger and clear them first. Needing to is the
+  // protection working.
+  await db.query('DROP TRIGGER evidence_anchors_append_only ON evidence_anchors');
+  await db.query('DELETE FROM evidence_anchors');
   await db.query('DELETE FROM evidence_checkpoints');
   const rows = (await db.query('SELECT * FROM evidence ORDER BY seq')).rows;
   const { sealEntry } = await import('../src/evidence.js');

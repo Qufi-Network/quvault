@@ -77,6 +77,12 @@ export const EVIDENCE = {
    * depend on each other.
    */
   CHECKPOINT_SIGNED: 'evidence.checkpoint_signed',
+  /*
+   * A checkpoint was forwarded to an external sink, and what the sink said. Recorded even when
+   * it failed: a sink outage is a fact about how well protected this log is, and the one thing
+   * an audit trail must not do is forget that it was briefly unprotected.
+   */
+  CHECKPOINT_ANCHORED: 'evidence.checkpoint_anchored',
 };
 
 const KNOWN_KINDS = new Set(Object.values(EVIDENCE));

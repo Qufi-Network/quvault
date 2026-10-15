@@ -136,28 +136,49 @@ structures never depend on each other.
 field in it says anything about a palm. Keeping it apart from the receipt is what stops anyone
 reading a checkpoint as evidence that a human or a sensor did anything.
 
-### Claim 5 — a rewrite is detectable even if the checkpoints are deleted too. IMPLEMENTED.
+### Claim 5 — a rewrite is detectable locally, immediately, with no configuration. IMPLEMENTED.
 
 Claim 4 has a hole, and it is the word *externally*. Checkpoints live in the same database the
 operator controls. An operator who rewrites the log can also drop the checkpoint trigger and
-delete every row — and then there is nothing left to contradict them.
+delete every row, and then nothing in the database contradicts them.
 
-So the browser keeps its own note of what it committed to: `{ head, count, at }`, in IndexedDB,
-in storage the operator does not control. `GET /api/evidence/checkpoint` reports the heads the
-server *now* claims at each committed count — recomputed from the live log, never read back from
-the checkpoint rows, so a rewrite shows up — and `checkpointDisagreement` compares.
+So the browser keeps its own note of what it committed to: `{ head, count, at }` in IndexedDB.
+`GET /api/evidence/checkpoint` reports the heads the server *now* claims at each committed count
+— recomputed from the live log, never read back from the checkpoint rows, so a rewrite shows up
+— and `checkpointDisagreement` compares on login. There is a test that performs the complete
+attack (reseal every entry, perfect the chain, delete the checkpoints) and requires the browser
+to notice.
 
-An operator who rewrites the log and destroys every checkpoint still has to face a browser that
-remembers the log had head H at N entries. There is a test that performs the complete attack —
-reseal every entry, perfect the chain, delete the checkpoints — and requires the browser to
-notice.
+**This is a tripwire, not the durable external anchor, and the earlier version of this document
+was wrong to present it as answering "externally retained".** The browser copy lives on one
+device, dies with cleared site data, cannot be fetched by an auditor, and attests to nothing
+cryptographically — it is a memory, not a record. What it uniquely gives is detection with *no
+configuration at all*, at the moment somebody next signs in.
 
 A log that merely **grew** is not a disagreement. Only a different history at a count already
 committed to is.
 
-**What this still needs from the operator:** checkpoints have to actually be signed, and
-regularly. A log with no checkpoints is back to Claim 3, and the verifier says so in those
-words. Nothing signs one automatically.
+### Claim 6 — a rewrite is provable to an outsider. IMPLEMENTED, when a sink is configured.
+
+The durable anchor is a checkpoint forwarded to a store the operator does not control, which a
+verifier retrieves themselves:
+
+```bash
+npm run verify:evidence -- bundle.json --external checkpoint-from-the-sink.json
+```
+
+Three verdicts, kept apart: `MATCHES`, `REWRITTEN`, and `TAIL_MISSING` — the last being the one
+a hash chain can never produce, because a truncated chain verifies perfectly and only an
+externally held *count* reveals that entries are gone.
+
+Checkpoints are forwarded as soon as they are signed; a sink outage leaves them waiting rather
+than losing them, and every attempt is recorded, including the failures. **Unconfigured, there is
+no durable external anchor and the status says so in those words.**
+
+Full design, the bounded window, failure behaviour and recovery: [CHECKPOINTING.md](CHECKPOINTING.md).
+
+**What this still needs from the operator:** a sink, pointed at a party that is not them; and
+payments, since a checkpoint is signed at the end of one and an idle vault drifts.
 
 ---
 
@@ -277,11 +298,14 @@ configuration, not code.
 - **The application role is not yet restricted** to insert-and-select. §5.
 - **`broadcast.accepted` is still best-effort**, necessarily — the transaction is on the network
   before it can be written. Mitigated by reconciliation, which needs running. §3a.
-- **Checkpoints must actually be signed.** Nothing signs one automatically; an unvisited vault
-  accumulates uncommitted history, and a rewrite of that tail would not be detectable.
-- **The browser's retained head is per browser.** Clear site data and that tripwire is gone —
-  which is why exports held outside the operator's control remain the durable answer, and the
-  browser copy is a second line rather than the only one.
+- **A checkpoint is signed at the end of a payment, not on a schedule.** The signing key is in
+  the browser, so no server job can produce one. An idle vault accumulates an unanchored tail
+  indefinitely, and a rewrite confined to that tail passes every check. `/api/evidence/anchor`
+  reports how large it is. See [CHECKPOINTING.md](CHECKPOINTING.md) §3.
+- **The external sink must be configured, and by the right party.** Unconfigured, there is no
+  durable anchor. Operator-controlled, it is a backup. Both are reported as such.
+- **The browser's retained head is a tripwire, not a record.** One device, lost with site data,
+  not fetchable by a verifier.
 - **`transaction.confirmed` is never written.** Confirmation tracking is not implemented, so a
   reconciled acceptance reports whether the chain has it, not how deeply.
 - **Receipts do not yet carry an evidence anchor**, so a receipt cannot be associated with a

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApp } from './src/app.js';
+import { createHttpSink } from './src/anchor.js';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 try {
@@ -26,6 +27,19 @@ const app = createApp({
   // Absent in a normal deployment: without it, no request can open a legacy wallet's private
   // key at all. Set it only on a process that is running the legacy migration.
   legacySeed: env.QUVAULT_LEGACY_SEED || '',
+  /*
+   * The external checkpoint sink. Absent by default, which means this deployment has no
+   * durable anchor outside its own database — reported as such by /api/evidence/anchor.
+   * The URL must belong to whoever retains the evidence, NOT to whoever runs this service;
+   * QUVAULT_ANCHOR_OPERATOR_CONTROLLED=true says plainly that it does not.
+   */
+  anchorSink: env.QUVAULT_ANCHOR_URL
+    ? createHttpSink({
+      url: env.QUVAULT_ANCHOR_URL,
+      token: env.QUVAULT_ANCHOR_TOKEN || null,
+      operatorControlled: env.QUVAULT_ANCHOR_OPERATOR_CONTROLLED === 'true',
+    })
+    : undefined,
   network: env.BITCOIN_NETWORK || 'testnet4',
   chainApi: env.CHAIN_API || 'https://mempool.space/testnet4/api',
   requirePalmSignin: env.REQUIRE_PALM_SIGNIN === 'true',

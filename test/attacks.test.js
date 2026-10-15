@@ -307,16 +307,26 @@ test('ATTACK 17 — no server path can sign an authorisation', () => {
     if (name === 'authorization.js') continue;
     const text = readFileSync(path.join(src, name), 'utf8');
     /*
-     * Every signing function in the module, not a subset. `signAuthorizationV2` and
-     * `signCheckpoint` were added after this test was written and were not covered by it —
-     * a guard that only knows the signing functions that existed when it was written stops
-     * being a guard the moment a new one is added.
+     * Every signing function in the module, not a subset — a guard that only knows the ones
+     * that existed when it was written stops guarding the moment another is added.
+     *
+     * Checked by IMPORT and by CALL rather than by substring. A substring scan cannot tell a
+     * call from a protective mention, and `src/anchor.js` legitimately names `signCheckpoint`
+     * in the list of things a sink may not have. Flagging that would have trained somebody to
+     * delete the guard rather than the risk.
      */
-    for (const forbidden of [
+    const signers = [
       'signAuthorization', 'signAuthorizationV2', 'signRegistration', 'signCheckpoint',
       'deriveAttestationKeys',
-    ]) {
-      if (text.includes(forbidden)) offenders.push(`${name} mentions ${forbidden}`);
+    ];
+    const imports = [...text.matchAll(/import\s*\{([^}]*)\}\s*from\s*'\.\/authorization\.js'/g)]
+      .flatMap(match => match[1].split(',').map(part => part.trim().split(/\s+as\s+/)[0]));
+    for (const forbidden of signers) {
+      if (imports.includes(forbidden)) offenders.push(`${name} imports ${forbidden}`);
+      // A call, however it was obtained — a dynamic import would not show up above.
+      // Double-escaped on purpose: inside a template literal a single \b is a backspace
+      // character, not a word boundary, and the regex then matches nothing at all.
+      if (new RegExp(`\\b${forbidden}\\s*\\(`).test(text)) offenders.push(`${name} calls ${forbidden}`);
     }
   }
   assert.deepEqual(offenders, [], 'server code must not be able to sign');

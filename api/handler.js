@@ -1,4 +1,5 @@
 import { createApp } from '../src/app.js';
+import { createHttpSink } from '../src/anchor.js';
 
 // Vercel serves public/ from its CDN and sends every /api/* request here (see vercel.json).
 const env = process.env;
@@ -36,6 +37,19 @@ const app = createApp({
   // key at all. Setting it here puts that capability in the web process, which is the thing
   // the migration document tells operators not to do.
   legacySeed: env.QUVAULT_LEGACY_SEED || '',
+  /*
+   * The external checkpoint sink. Absent by default, which means this deployment has no
+   * durable anchor outside its own database — reported as such by /api/evidence/anchor.
+   * The URL must belong to whoever retains the evidence, NOT to whoever runs this service;
+   * QUVAULT_ANCHOR_OPERATOR_CONTROLLED=true says plainly that it does not.
+   */
+  anchorSink: env.QUVAULT_ANCHOR_URL
+    ? createHttpSink({
+      url: env.QUVAULT_ANCHOR_URL,
+      token: env.QUVAULT_ANCHOR_TOKEN || null,
+      operatorControlled: env.QUVAULT_ANCHOR_OPERATOR_CONTROLLED === 'true',
+    })
+    : undefined,
   network: env.BITCOIN_NETWORK || 'testnet4',
   chainApi: env.CHAIN_API || 'https://mempool.space/testnet4/api',
   requirePalmSignin: env.REQUIRE_PALM_SIGNIN === 'true',
