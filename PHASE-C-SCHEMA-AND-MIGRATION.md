@@ -1,6 +1,9 @@
 # Phase C — finalised schema and migration sequence
 
-**Design only. No code written. This is what had to exist before any.**
+**v19–v24 are implemented.** §12 records where the build departed from the plan below and why.
+
+The later stages — scoping authenticated routes, assigning evidence scope, roles, revocation and
+Authorization V3 — are **not started**.
 
 The four decisions are made (`PHASE-C-DESIGN-REVIEW.md` §7). This document turns them into a
 schema, a migration order, and the semantics that have to hold at every step — including the
@@ -179,8 +182,11 @@ CREATE TABLE IF NOT EXISTS policies (
   -- The palm-approved operation that produced this version. Null only for the backfilled v1,
   -- which records the policy that was already in force before policies were versioned.
   operation_id     TEXT REFERENCES operations(id),
-  UNIQUE (organisation_id, wallet_user_id, network, version),
-  UNIQUE (organisation_id, digest, version)
+  UNIQUE (organisation_id, wallet_user_id, network, version)
+  -- An earlier draft of this document also had UNIQUE (organisation_id, digest, version). It is
+  -- WRONG and was not built: two accounts in one organisation with identical rules produce an
+  -- identical descriptor and therefore an identical digest, which is correct and must be
+  -- allowed. The constraint would have rejected the second account. See §12.
 );
 -- Versions are immutable: a change writes a new row. Same guard as the evidence tables.
 CREATE TRIGGER policies_are_immutable
@@ -562,3 +568,162 @@ Re-asserted because a migration this size is where invariants quietly go.
   transaction — inputs, outputs, amounts, fee and change — and any material change requires a
   fresh approval.
 - **Nothing certified.** No audit, no certification, no regulatory approval has occurred.
+
+---
+
+## 12. What was built, and where it departed from this document
+
+v19–v24 are implemented. Six things turned out differently from the plan above, five of them
+because the engine or the data said so. Each is a correction to this document, not a shortcut.
+
+### D1 — `wallets.organisation_id` moved from v21 to v20
+
+The plan had v20 create organisations and v21 link them. Nothing connects the two: at v21 the
+only way to find a wallet's organisation would be "the one whose sole owner-roled member is this
+wallet's user" — unambiguous only because v20 had just created them — or a provenance column
+that a later reader could mistake for an authorisation path. Creating and linking in one step
+removes the question. The five child tables follow in v21 exactly as planned.
+
+### D2 — `organisations.kind` has three values, not two
+
+`CHECK (kind IN ('institutional', 'single_owner', 'migrated'))`.
+
+Every migrated organisation keeps `selfApproval: 'permitted'`, because today a proposer can
+approve their own proposal in any vault and writing `'forbidden'` would not tighten a control —
+it would make existing vaults **unspendable**. Three members with a three-approval rule cannot
+reach three if the proposer is excluded.
+
+But a grandfathered three-member vault is not `single_owner`. Reusing that value to avoid adding
+one would put a false statement in the data, and the decision requires exceptions to be explicit.
+So a one-member vault migrates as `single_owner` and a multi-member one as `migrated`, and
+"which organisations still have grandfathered self-approval?" is one query.
+
+### D3 — `UNIQUE (organisation_id, digest, version)` was wrong and is not built
+
+Two accounts in one organisation with identical rules produce an identical descriptor and
+therefore an identical digest. That is correct behaviour; the constraint would have rejected the
+second account. Verified: a two-account fixture with matching ladders digests to
+`i41xDbKssBxSvEgHi3IQhiaqNsz0QlL--5hwBtpcgTs` for both.
+
+### D4 — `ADD CONSTRAINT` has no `IF NOT EXISTS`, so every one is guarded
+
+The whole schema array re-runs on every cold start, and the second run would fail on a
+constraint the first added. Each is wrapped in a `DO` block that checks `pg_constraint` first —
+the `addConstraint` helper in `src/db.js`. Without it the migration is a one-shot, which for a
+serverless deployment that cold-starts constantly means permanently broken.
+
+### D5 — the migration runner now accepts computed steps
+
+Two backfills cannot be a SQL string: v20 needs a fresh random id per wallet plus three
+dependent inserts that all name it, and v22 has to compute a SHA-256 over a canonical JSON
+descriptor and **refuse to write at all** if that serialisation has moved. `migrate()` therefore
+runs a step that is either SQL text or a function `q => …`, in the same transaction under the
+same advisory lock. Everything expressible as one set-based statement still is one — a function
+step is for computation, never for looping over work the database could do itself.
+
+`backfillPolicyVersions` is exported and takes its guard as a parameter, so the claim "the guard
+runs before anything is persisted" is a test rather than a comment.
+
+### D6 — rollback has a forced order, and partial un-linking is impossible
+
+Two properties found by trying to write the rollback test the obvious way, both consequences of
+the composite-key web and both better than what the plan assumed:
+
+- **A linked wallet cannot be un-linked while any child references its organisation.** Each
+  child refuses in turn — `accounts`, then `members`, and so on — so there is no order in which
+  a wallet quietly loses its tenant while rows still point at it. §10's "partly reversible" is
+  therefore stronger than stated: the half-scoped state is not reachable.
+- **Dropping the tenancy must go in reverse dependency order.** `DROP TABLE policies` is refused
+  while `operations.policy_id` references it, and `operations` cannot lose `organisation_id`
+  while `approvals_in_org` points at it. Taking it out of order fails loudly instead of leaving
+  a half-scoped database. `CASCADE` would paper over both refusals and is the wrong instinct: it
+  drops whatever else has come to depend on the object by then, unseen.
+
+The working order, verified end to end:
+
+```
+approvals.organisation_id                        -- child of operations
+accounts | operations | invites | members .organisation_id   -- children of wallets
+operations.policy_id                             -- references policies
+DROP TABLE policies
+approvals.invalidated_at | _by | _reason
+wallets.organisation_id                          -- the root
+DROP TABLE org_member_roles, org_members, organisations
+```
+
+### And one thing the plan got right that is worth restating
+
+A `policies` row **cannot be deleted**, so rollback of v22 is never by `DELETE` — only by
+`DROP TABLE`. §10's one-way doors stand: the immutable rows are immutable, and once a later
+stage writes evidence *about* the migration, no rollback reaches it.
+
+---
+
+## 13. Unresolved after v19–v24
+
+Carried into the next stage rather than left implicit. None of these blocks the additive stage;
+all of them are things the scoping stage must not assume away.
+
+### U1 — the composite key prevents disagreement, not absence
+
+`organisation_id` is nullable everywhere in this stage, so a child row with **no** organisation
+is accepted even under a scoped parent. Verified, and asserted as a test so nobody over-reads
+the guarantee. v25's NOT NULL is what closes it, and v25 is not in this stage.
+
+The consequence for the next stage: a query of the form `WHERE organisation_id = $1` will not
+return an unscoped row, which is the safe direction — but code that assumes every row has a
+tenant will be wrong until v25.
+
+### U2 — the backfill runs at boot, so a wallet created afterwards has no organisation until the next start
+
+The v20 step runs during migration, which happens on a cold start. A vault created after that
+start is unscoped until the process restarts. Harmless now — nothing reads the column — and
+proven to be picked up on the next start.
+
+**The scoping stage must create the organisation at wallet-creation time** rather than leaning on
+the backfill, which exists for rows that predate tenancy and for nothing else.
+
+### U3 — the migration writes nothing to the evidence log, including the single-owner exception
+
+The plan said v20 should record in evidence that a single-owner exception had been taken. It does
+not, deliberately: an entry written now would carry `scope = null` **permanently**, before the
+scope mechanism exists, and §6.3 is explicit that an entry cannot gain one later. Writing
+evidence from a step that re-runs on every cold start would also put a new failure mode in the
+boot path.
+
+So the exception is explicit in the **data** — `organisations.kind` and
+`descriptor.selfApproval` — and absent from the **evidence log**. That satisfies "explicit, not
+silent"; it does not yet satisfy "recorded in evidence". The entry belongs to the stage that
+assigns evidence scope, and should be written then with the scope it deserves.
+
+### U4 — the descriptor serialisation is frozen from the first real deployment
+
+The guard protects against the form moving unnoticed. It cannot protect against the form having
+been *wrong* to begin with. Once a production `policies` row exists, adding a field to the
+descriptor means a version 2 descriptor, not an edit — the rows are immutable and the digest is
+over exactly these bytes.
+
+Anything the descriptor will need later — per-rule time locks, beneficiary allowlists, velocity
+limits — is cheaper to decide before the first deployment runs this migration than after.
+
+### U5 — `requiredRoles: ['approver']` on every backfilled rule is a forward-looking default
+
+No role is enforced yet, so the field is inert. When roles land, every migrated rule will require
+the `approver` role — which the backfill granted to every existing signer, so the two agree
+today. They can drift: a signer added later without the role, or a role narrowed deliberately,
+could make a tier unreachable. That is W7 of §4 and the check belongs with the role work.
+
+### U6 — verified in PGlite, not against Postgres
+
+Everything above was tested against PGlite, which is what the suite and local runs use. The
+hosted deployment is Neon Postgres. Composite foreign keys, partial indexes, `DO` blocks and
+`information_schema` are all core Postgres and the risk is low, but **it is not zero and has not
+been run against Neon.**
+
+Closing it needs one command against a real database, and no credential for one was supplied:
+
+```bash
+QUVAULT_DATABASE_URL="postgres://…" node --test test/organisations.test.js
+```
+
+Until that runs, treat "the constraints hold" as proven on PGlite and expected on Postgres.

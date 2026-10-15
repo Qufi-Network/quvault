@@ -2,6 +2,44 @@
  * One small interface over Postgres: query(text, params) -> { rows, count } and transaction(fn).
  * Hosted: node-postgres with DATABASE_URL. Local and tests: PGlite (see db-local.js).
  */
+import crypto from 'node:crypto';
+import {
+  buildDescriptor, checkDescriptorStability, descriptorBytes, SELF_APPROVAL,
+} from './policy-descriptor.js';
+import { requiredToChange as quorumToChange, DEFAULT_POLICY } from './policy.js';
+
+const newId = (bytes = 12) => crypto.randomBytes(bytes).toString('base64url');
+const sha256Base64Url = text => crypto.createHash('sha256').update(text, 'utf8').digest('base64url');
+
+/**
+ * `ALTER TABLE … ADD CONSTRAINT` has no IF NOT EXISTS, and the whole schema re-runs on every
+ * cold start, so the second run would fail on a constraint the first one added. Guarding on
+ * the catalogue is the idempotent form.
+ */
+const addConstraint = (table, name, definition) => `DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = '${name}') THEN
+    ALTER TABLE ${table} ADD CONSTRAINT ${name} ${definition};
+  END IF;
+END $do$`;
+
+/**
+ * The tenant key on a child table, and the composite foreign key that stops it disagreeing
+ * with its parent.
+ *
+ * This is the load-bearing line of the whole tenancy design. The column is denormalised onto
+ * every tenant-owned table so a query can scope directly — `WHERE organisation_id = $1` — which
+ * means a MISSED scope returns nothing rather than everything. Denormalising normally costs you
+ * a second copy of a fact that can drift; the composite FK removes that, because the database
+ * refuses a child row naming an organisation its parent is not in, and refuses moving one later.
+ *
+ * A NULL organisation is still accepted, which is what lets this step be additive: the column
+ * arrives, nothing reads it, and the backfill fills it in the same migration.
+ */
+const tenantColumn = (table, parentKey, parentTable, parentColumns, name) => [
+  `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS organisation_id TEXT`,
+  addConstraint(table, name,
+    `FOREIGN KEY (organisation_id, ${parentKey}) REFERENCES ${parentTable} (${parentColumns})`),
+];
 
 const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS users (
@@ -344,7 +382,320 @@ const SCHEMA = [
   `CREATE TRIGGER evidence_anchors_append_only
      BEFORE UPDATE OR DELETE ON evidence_anchors
      FOR EACH ROW EXECUTE FUNCTION quvault_evidence_is_append_only()`,
+
+  /* ==================================================================== v19 — organisations
+   *
+   * The tenant boundary gets its own identity. Until now the tenant key WAS a user id — every
+   * table hangs off `wallet_user_id`, the owner's row in `users` — which means a treasury whose
+   * identity is its founder's account cannot survive that person leaving and cannot hold two
+   * owners. An organisation id is generated and is never a user id.
+   *
+   * Nothing reads any of this yet. v19–v24 are additive by design: they can be deployed, run
+   * and left alone for a release while the backfill is proven under real traffic.
+   */
+  `CREATE TABLE IF NOT EXISTS organisations (
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    /*
+     * 'institutional' is the maker-checker default for anything created from now on.
+     * 'single_owner' and 'migrated' are the two explicit exceptions the backfill writes, and
+     * both of them permit self-approval. Three values rather than two: calling a grandfathered
+     * three-member vault 'single_owner' would be a false statement in the data, and a vault
+     * that permits self-approval because it predates the control is a different thing from one
+     * that permits it because it has one member. See v20.
+     */
+    kind       TEXT NOT NULL DEFAULT 'institutional'
+                 CHECK (kind IN ('institutional', 'single_owner', 'migrated')),
+    created_at BIGINT NOT NULL
+  )`,
+
+  `CREATE TABLE IF NOT EXISTS org_members (
+    organisation_id TEXT NOT NULL REFERENCES organisations(id),
+    user_id         TEXT NOT NULL REFERENCES users(id),
+    label           TEXT NOT NULL,
+    added_by        TEXT REFERENCES users(id),
+    added_at        BIGINT NOT NULL,
+    /*
+     * Revocation is a timestamp, not a deletion. Deleting the row would erase who was ever in
+     * the organisation, leaving the append-only evidence log as the only record of a person the
+     * operational tables deny existed. Nothing reads these two columns until the revocation
+     * work lands; they are here so the shape is settled before anything depends on it.
+     */
+    revoked_at      BIGINT,
+    revoked_by      TEXT REFERENCES users(id),
+    PRIMARY KEY (organisation_id, user_id)
+  )`,
+  // Partial, because every live lookup is for a membership that has not been revoked.
+  'CREATE INDEX IF NOT EXISTS org_members_user ON org_members (user_id) WHERE revoked_at IS NULL',
+
+  `CREATE TABLE IF NOT EXISTS org_member_roles (
+    organisation_id TEXT NOT NULL,
+    user_id         TEXT NOT NULL,
+    role            TEXT NOT NULL CHECK (role IN
+                      ('owner', 'administrator', 'operator', 'approver', 'auditor', 'viewer')),
+    granted_by      TEXT REFERENCES users(id),
+    granted_at      BIGINT NOT NULL,
+    PRIMARY KEY (organisation_id, user_id, role),
+    /*
+     * One path to the organisation: a role reaches it THROUGH the membership, never beside it.
+     * Two paths would mean two answers to "whose is this?", and eventually they disagree. The
+     * cascade means a membership cannot be deleted leaving a role behind — though revocation
+     * sets a timestamp rather than deleting, so the cascade is a backstop, not the mechanism.
+     */
+    FOREIGN KEY (organisation_id, user_id)
+      REFERENCES org_members (organisation_id, user_id) ON DELETE CASCADE
+  )`,
+
+  /* ============================================================ v20 — one organisation each
+   *
+   * `wallets.organisation_id` lands here rather than with the other five tables, which is a
+   * correction to the approved plan. The plan had v20 create organisations and v21 link them,
+   * but then nothing connects the two: at v21 the only way to find which organisation belongs
+   * to a wallet would be "the one whose sole owner-roled member is this wallet's user", which
+   * is unambiguous only because v20 just created them, or a provenance column that could later
+   * be mistaken for an authorisation path. Putting the link in the same step as the creation
+   * removes the question. The five child tables follow in v21, unchanged.
+   */
+  'ALTER TABLE wallets ADD COLUMN IF NOT EXISTS organisation_id TEXT REFERENCES organisations(id)',
+  // The parent key every child's composite foreign key points at.
+  addConstraint('wallets', 'wallets_org_user', 'UNIQUE (organisation_id, user_id)'),
+  'CREATE INDEX IF NOT EXISTS wallets_org ON wallets (organisation_id)',
+
+  /*
+   * The backfill. A function step rather than SQL because each wallet needs a fresh random id
+   * and three dependent inserts that all have to name it; `WHERE organisation_id IS NULL` is
+   * what makes it idempotent, so a second cold start finds nothing to do.
+   *
+   * What an existing user experiences afterwards must be exactly what they experience now.
+   * That is the constraint that decides `selfApproval`, below.
+   */
+  async q => {
+    const { rows } = await q(`SELECT user_id, created_at FROM wallets WHERE organisation_id IS NULL`);
+    for (const wallet of rows) {
+      const orgId = `org_${newId()}`;
+      const at = Number(wallet.created_at);
+      /*
+       * Everyone who can approve for this vault today becomes a member who can approve for the
+       * organisation. `members` is the signer roster and includes the owner; a vault old enough
+       * to predate that table has no rows, so the owner stands alone.
+       */
+      const roster = await q(
+        `SELECT member_id, label, is_owner FROM members WHERE wallet_user_id = $1 ORDER BY is_owner DESC, added_at`,
+        [wallet.user_id]);
+      const people = roster.rows.length
+        ? roster.rows
+        : [{ member_id: wallet.user_id, label: 'Owner', is_owner: true }];
+
+      await q(
+        `INSERT INTO organisations (id, name, kind, created_at) VALUES ($1, $2, $3, $4)`,
+        [orgId, 'Treasury', people.length === 1 ? 'single_owner' : 'migrated', at]);
+
+      for (const person of people) {
+        await q(
+          `INSERT INTO org_members (organisation_id, user_id, label, added_by, added_at)
+           VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING`,
+          [orgId, person.member_id, person.label, wallet.user_id, at]);
+        /*
+         * Roles backfill to what the person can already do and no more: every signer approves
+         * today, so every signer is an approver. Narrowing happens deliberately later, never by
+         * a migration deciding somebody has lost a capability.
+         */
+        const roles = person.is_owner ? ['owner', 'approver'] : ['approver'];
+        for (const role of roles) {
+          await q(
+            `INSERT INTO org_member_roles (organisation_id, user_id, role, granted_by, granted_at)
+             VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING`,
+            [orgId, person.member_id, role, wallet.user_id, at]);
+        }
+      }
+      await q('UPDATE wallets SET organisation_id = $1 WHERE user_id = $2 AND organisation_id IS NULL',
+        [orgId, wallet.user_id]);
+    }
+  },
+
+  /* ======================================================== v21 — the tenant key on the rest
+   *
+   * Nullable, with the composite foreign key of `tenantColumn`, then populated from the wallet.
+   * Still nothing reads it.
+   */
+  ...tenantColumn('accounts', 'wallet_user_id', 'wallets', 'organisation_id, user_id', 'accounts_in_org'),
+  ...tenantColumn('operations', 'wallet_user_id', 'wallets', 'organisation_id, user_id', 'operations_in_org'),
+  ...tenantColumn('invites', 'wallet_user_id', 'wallets', 'organisation_id, user_id', 'invites_in_org'),
+  ...tenantColumn('members', 'wallet_user_id', 'wallets', 'organisation_id, user_id', 'members_in_org'),
+
+  /*
+   * An approval reaches its organisation through its operation, not through a wallet, so its
+   * parent key is the operation and `operations` needs a composite UNIQUE for it to point at.
+   */
+  addConstraint('operations', 'operations_org_id', 'UNIQUE (organisation_id, id)'),
+  ...tenantColumn('approvals', 'operation_id', 'operations', 'organisation_id, id', 'approvals_in_org'),
+
+  /*
+   * Populated as set-based statements: the database can do this itself, so a function step
+   * would only be a slower way to get the same rows. Each is idempotent on IS NULL.
+   *
+   * Order matters: `approvals` reads `operations.organisation_id`, so operations go first.
+   */
+  `UPDATE accounts a SET organisation_id = w.organisation_id
+     FROM wallets w WHERE w.user_id = a.wallet_user_id AND a.organisation_id IS NULL`,
+  `UPDATE operations o SET organisation_id = w.organisation_id
+     FROM wallets w WHERE w.user_id = o.wallet_user_id AND o.organisation_id IS NULL`,
+  `UPDATE invites i SET organisation_id = w.organisation_id
+     FROM wallets w WHERE w.user_id = i.wallet_user_id AND i.organisation_id IS NULL`,
+  `UPDATE members m SET organisation_id = w.organisation_id
+     FROM wallets w WHERE w.user_id = m.wallet_user_id AND m.organisation_id IS NULL`,
+  `UPDATE approvals ap SET organisation_id = o.organisation_id
+     FROM operations o WHERE o.id = ap.operation_id AND ap.organisation_id IS NULL`,
+
+  'CREATE INDEX IF NOT EXISTS accounts_org ON accounts (organisation_id, network)',
+  'CREATE INDEX IF NOT EXISTS operations_org ON operations (organisation_id, status)',
+  'CREATE INDEX IF NOT EXISTS invites_org ON invites (organisation_id, status)',
+  'CREATE INDEX IF NOT EXISTS members_org ON members (organisation_id)',
+  'CREATE INDEX IF NOT EXISTS approvals_org ON approvals (organisation_id, operation_id)',
+
+  /* ============================================================= v22 — versioned policies
+   *
+   * A policy stops being a column and becomes an immutable version. `digest` is taken over the
+   * canonical descriptor and a later authorisation receipt will name the same digest, so these
+   * bytes are frozen the moment the first row is written — with no migration available
+   * afterwards, because the trigger forbids rewriting one.
+   */
+  `CREATE TABLE IF NOT EXISTS policies (
+    id               TEXT PRIMARY KEY,
+    organisation_id  TEXT NOT NULL REFERENCES organisations(id),
+    wallet_user_id   TEXT NOT NULL REFERENCES users(id),
+    network          TEXT NOT NULL,
+    version          INTEGER NOT NULL CHECK (version >= 1),
+    descriptor       TEXT NOT NULL,              -- canonical JSON; see src/policy-descriptor.js
+    digest           TEXT NOT NULL,              -- base64url SHA-256 over exactly those bytes
+    effective_from   BIGINT NOT NULL,
+    created_by       TEXT NOT NULL REFERENCES users(id),
+    /*
+     * The palm-approved operation that produced this version. Null only for the version 1 row
+     * the backfill writes, which records a policy that was already in force before policies
+     * were versioned — there is no operation to point at, and inventing one would be a lie.
+     */
+    operation_id     TEXT REFERENCES operations(id),
+    UNIQUE (organisation_id, wallet_user_id, network, version)
+  )`,
+  'CREATE INDEX IF NOT EXISTS policies_live ON policies (organisation_id, wallet_user_id, network, version DESC)',
+  'DROP TRIGGER IF EXISTS policies_are_immutable ON policies',
+  // Same guarantee and the same function as the evidence tables: a change writes a new row.
+  `CREATE TRIGGER policies_are_immutable
+     BEFORE UPDATE OR DELETE ON policies
+     FOR EACH ROW EXECUTE FUNCTION quvault_evidence_is_append_only()`,
+
+  /*
+   * The version 1 backfill — and, before it writes anything, the stability guard.
+   *
+   * `checkDescriptorStability` recomputes a fixed reference descriptor, checks its exact bytes
+   * against a locked value, checks that those bytes are valid JSON, that they survive a JSON
+   * round trip, that the order the fields were supplied in does not change them, and that the
+   * digest matches a locked vector deterministically. If any of that has moved, it throws and
+   * the migration writes nothing: digests nobody can reproduce are worse than no digests, and
+   * these rows cannot be corrected.
+   */
+  q => backfillPolicyVersions(q),
+
+  /* ===================================================== v23 — a proposal names its version
+   *
+   * A proposal is judged against the rules that were in force when it was raised, so it points
+   * at a policy VERSION rather than at a policy. Pending operations get the version 1 row,
+   * which is the one that was in force when they were raised.
+   */
+  'ALTER TABLE operations ADD COLUMN IF NOT EXISTS policy_id TEXT REFERENCES policies(id)',
+  'CREATE INDEX IF NOT EXISTS operations_policy ON operations (policy_id)',
+  `UPDATE operations o SET policy_id = p.id
+     FROM policies p
+    WHERE p.wallet_user_id = o.wallet_user_id
+      AND p.network = COALESCE(o.network, 'bitcoin')
+      AND p.version = 1
+      AND o.policy_id IS NULL`,
+
+  /* ================================================== v24 — an approval that no longer counts
+   *
+   * Revocation has to take effect on proposals already in flight without touching the evidence
+   * that the approval happened. The evidence entry is permanent and stays true; these columns
+   * are what decides whether it still counts toward a quorum. Nothing reads them yet.
+   *
+   * `operations.required` is deliberately NOT given a way to change: a threshold lowered to
+   * rescue a proposal is the silent weakening this whole design refuses.
+   */
+  'ALTER TABLE approvals ADD COLUMN IF NOT EXISTS invalidated_at BIGINT',
+  'ALTER TABLE approvals ADD COLUMN IF NOT EXISTS invalidated_by TEXT REFERENCES users(id)',
+  'ALTER TABLE approvals ADD COLUMN IF NOT EXISTS invalidated_reason TEXT',
+  addConstraint('approvals', 'approvals_invalidated_reason',
+    `CHECK (invalidated_reason IS NULL OR invalidated_reason IN
+      ('approver_revoked', 'role_removed', 'policy_changed', 'plan_changed'))`),
+  // Every live quorum count reads only the approvals that still stand.
+  'CREATE INDEX IF NOT EXISTS approvals_standing ON approvals (operation_id) WHERE invalidated_at IS NULL',
 ];
+
+/**
+ * v22's backfill: one immutable version 1 policy per account, and the guard that runs first.
+ *
+ * Exported and taking its dependencies, for one reason: the guard's whole value is that it
+ * runs BEFORE anything is persisted, and that ordering is a claim worth a test rather than a
+ * comment. A test passes a failing `check` and asserts the table is still empty.
+ *
+ * `digest` is taken over the canonical descriptor and a later receipt will name the same
+ * digest, so these bytes are frozen once the first row exists — the trigger forbids rewriting
+ * one. Digests nobody can reproduce would be worse than no digests at all, so if the canonical
+ * form has moved this writes nothing and the migration fails loudly.
+ */
+export async function backfillPolicyVersions(q, {
+  check = checkDescriptorStability, digestOf = sha256Base64Url, idOf = () => `pol_${newId()}`,
+} = {}) {
+  check(digestOf);
+
+  const { rows } = await q(
+    `SELECT a.wallet_user_id, a.network, a.policy AS account_policy, a.created_at,
+            w.policy AS wallet_policy, w.organisation_id
+       FROM accounts a JOIN wallets w ON w.user_id = a.wallet_user_id
+      WHERE w.organisation_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM policies p
+           WHERE p.wallet_user_id = a.wallet_user_id AND p.network = a.network AND p.version = 1)`);
+
+  for (const row of rows) {
+    // Exactly the fallback the application uses: the account's rules, else the vault's, else
+    // the default. Reading it differently here would record a policy that was never in force.
+    const stored = row.account_policy ?? row.wallet_policy;
+    const policy = stored ? JSON.parse(stored) : DEFAULT_POLICY;
+    const counted = await q(
+      'SELECT count(*)::int AS n FROM org_members WHERE organisation_id = $1 AND revoked_at IS NULL',
+      [row.organisation_id]);
+    const approverCount = Math.max(1, counted.rows[0].n);
+
+    /*
+     * Every migrated organisation gets `selfApproval: 'permitted'`, and this is the one
+     * decision in v22 worth arguing with.
+     *
+     * Today a proposer can approve their own proposal in any vault. Writing 'forbidden' here
+     * would not merely tighten a control, it would make existing vaults UNSPENDABLE: three
+     * members with a three-approval rule cannot reach three if the proposer is excluded. So the
+     * grandfathered permission is preserved, written explicitly, and visible both in the
+     * descriptor and in `organisations.kind`. Explicit and disclosed, not inherited silently.
+     * Organisations created after this default to 'institutional' and 'forbidden'.
+     */
+    const descriptor = buildDescriptor({
+      rules: policy.rules?.length ? policy.rules : DEFAULT_POLICY.rules,
+      selfApproval: SELF_APPROVAL.PERMITTED,
+      approverCount,
+      requiredToChange: quorumToChange(policy, approverCount),
+    });
+    const bytes = descriptorBytes(descriptor);
+
+    await q(
+      `INSERT INTO policies (id, organisation_id, wallet_user_id, network, version,
+                             descriptor, digest, effective_from, created_by, operation_id)
+       VALUES ($1, $2, $3, $4, 1, $5, $6, $7, $8, NULL)
+       ON CONFLICT (organisation_id, wallet_user_id, network, version) DO NOTHING`,
+      [idOf(), row.organisation_id, row.wallet_user_id, row.network, bytes,
+        digestOf(bytes), Number(row.created_at), row.wallet_user_id]);
+  }
+  return rows.length;
+}
 
 const INT8 = 20; // Timestamps are BIGINT; read them back as numbers.
 
@@ -360,13 +711,26 @@ export const describeDbError = error => {
   return `${stage}${step}: ${error?.code || error?.name || 'unknown'}`;
 };
 
+/*
+ * Runs the schema in order, in one transaction, under one lock.
+ *
+ * A step is either a SQL string or a function `q => …`. The functions exist because two of the
+ * v19–v24 backfills cannot be expressed in SQL: one needs a fresh random id per row plus three
+ * dependent inserts, and one has to compute a SHA-256 over a canonical JSON descriptor and
+ * refuse to write at all if that serialisation has moved. Everything that can be a single
+ * set-based statement still is one — a function step is for computation, not for looping over
+ * work the database could do itself.
+ *
+ * Every step, string or function, must be idempotent: the whole array runs on every cold start.
+ */
 async function migrate(db) {
   await db.transaction(async q => {
     // Several cold-starting instances may race to create the schema.
     await q('SELECT pg_advisory_xact_lock(4970)');
-    for (const [index, statement] of SCHEMA.entries()) {
+    for (const [index, step] of SCHEMA.entries()) {
       try {
-        await q(statement);
+        if (typeof step === 'function') await step(q);
+        else await q(step);
       } catch (error) {
         error.dbStage = 'migrate';
         error.dbStatement = index;
