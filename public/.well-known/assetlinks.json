@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "io.veyns.quvault",
+      "sha256_cert_fingerprints": [
+        "ED:58:B1:D5:83:A2:AC:5B:FD:B0:22:21:C0:D1:7D:CA:58:18:26:18:4E:8F:9C:42:74:2F:DA:A6:10:C6:66:92"
+      ]
+    }
+  }
+]

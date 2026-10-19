@@ -1,0 +1,41 @@
+{
+  "packageId": "io.veyns.quvault",
+  "host": "quvault-one.vercel.app",
+  "name": "Veyns Quantum Vault",
+  "launcherName": "Veyns",
+  "display": "standalone",
+  "orientation": "portrait",
+  "themeColor": "#070a12",
+  "themeColorDark": "#070a12",
+  "navigationColor": "#070a12",
+  "navigationColorDark": "#070a12",
+  "navigationDividerColor": "#070a12",
+  "navigationDividerColorDark": "#070a12",
+  "backgroundColor": "#070a12",
+  "enableNotifications": false,
+  "startUrl": "/",
+  "iconUrl": "https://quvault-one.vercel.app/icon-512.png",
+  "maskableIconUrl": "https://quvault-one.vercel.app/icon-512.png",
+  "appVersionName": "0.1.0",
+  "appVersionCode": 1,
+  "shortcuts": [],
+  "generatorApp": "bubblewrap-cli",
+  "webManifestUrl": "https://quvault-one.vercel.app/manifest.webmanifest",
+  "fallbackType": "customtabs",
+  "features": {},
+  "alphaDependencies": {
+    "enabled": false
+  },
+  "enableSiteSettingsShortcut": true,
+  "isChromeOSOnly": false,
+  "isMetaQuest": false,
+  "fullScopeUrl": "https://quvault-one.vercel.app/",
+  "minSdkVersion": 21,
+  "fingerprints": [],
+  "additionalTrustedOrigins": [],
+  "retainedBundles": [],
+  "signingKey": {
+    "path": "./android/veyns-release.keystore",
+    "alias": "veyns"
+  }
+}
