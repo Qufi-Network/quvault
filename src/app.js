@@ -57,6 +57,9 @@ const STATIC_TYPES = {
   '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.webp': 'image/webp',
 };
 
 const SQL = {
@@ -513,6 +516,10 @@ export function createApp(options) {
     "frame-ancestors 'none'",
     "base-uri 'none'",
     "form-action 'self'",
+    // The installable-app pieces. Both fall back to default-src 'self' anyway; stated so a
+    // browser that does not fall back still loads the manifest and registers the worker.
+    "manifest-src 'self'",
+    "worker-src 'self'",
   ].join('; ');
 
   /* ------------------------------------------------------------- queries */

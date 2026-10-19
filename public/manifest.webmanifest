@@ -1,0 +1,27 @@
+{
+  "name": "Veyns Quantum Vault",
+  "short_name": "Veyns",
+  "description": "A palm-authorised treasury wallet. Every payment needs a Veyns palm approval bound to that exact transaction.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#070a12",
+  "theme_color": "#070a12",
+  "categories": ["finance"],
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/veyns-symbol-white.png",
+      "sizes": "220x146",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

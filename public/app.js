@@ -2209,3 +2209,14 @@ setInterval(() => {
 }, 120_000);
 
 boot();
+
+/*
+ * Register the service worker, which makes the app installable and lets its shell open offline.
+ * It is strictly additive: if registration fails, or the browser has no service worker, the app
+ * runs exactly as before. Registered after boot so it never delays first paint.
+ */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
+}
