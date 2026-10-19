@@ -19,6 +19,8 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { base64urlnopad } from '@scure/base';
 import { canonicalTransaction, canonicalBytes } from '../src/canonical.js';
+import { canonicalTransfer, transferBytes, transferDigest, checkErc20Plan } from '../src/canonical-transfer.js';
+import { signingHash, assembleSigned, transactionHash as evmTxHash } from '../src/evm.js';
 import {
   deriveAttestationKeys, signAuthorization, signAuthorizationV2, signRegistration,
   signCheckpoint, verifyAuthorization, verifyChain,
@@ -120,6 +122,8 @@ export function cosignerFrom(mnemonic, index) {
 export const NETWORKS = {
   bitcoin: { label: 'Bitcoin', symbol: 'tBTC', path: "m/84'/1'/0'/0/0", curve: 'secp256k1' },
   ethereum: { label: 'Ethereum', symbol: 'SepoliaETH', path: "m/44'/60'/0'/0/0", curve: 'secp256k1' },
+  // BSC is an EVM chain: coin type 60, so the same address as Ethereum from the same phrase.
+  bsc: { label: 'BNB Smart Chain', symbol: 'tBNB', path: "m/44'/60'/0'/0/0", curve: 'secp256k1' },
   tron: { label: 'Tron', symbol: 'TRX', path: "m/44'/195'/0'/0/0", curve: 'secp256k1' },
   solana: { label: 'Solana', symbol: 'SOL', path: "m/44'/501'/0'/0'", curve: 'ed25519' },
   stellar: { label: 'Stellar', symbol: 'XLM', path: "m/44'/148'/0'", curve: 'ed25519' },
@@ -198,7 +202,9 @@ export function accountsFrom(mnemonic) {
       const uncompressed = secp256k1.getPublicKey(node.privateKey, false).subarray(1);
       const hash20 = keccak_256(uncompressed).subarray(-20);
       out[id] = {
-        address: id === 'ethereum' ? eip55(hash20) : base58check(sha256).encode(new Uint8Array([0x41, ...hash20])),
+        // EVM chains (Ethereum, BSC) use the EIP-55 checksummed address; Tron uses 0x41 + base58check.
+        address: (id === 'ethereum' || id === 'bsc')
+          ? eip55(hash20) : base58check(sha256).encode(new Uint8Array([0x41, ...hash20])),
         publicKey: toHex(node.publicKey),
         path: network.path,
       };
@@ -540,6 +546,96 @@ export async function signApprovedQuorum(record, unlocked, { network }) {
     transactionHash: unlocked.transactionHash,
     network,
   }));
+}
+
+/* ------------------------------------------------------------------ EVM: Ethereum, BSC */
+
+/** The secp256k1 private key for an EVM account path, derived from the phrase. Caller zeroes it. */
+function evmPrivateKey(mnemonic, path) {
+  const node = HDKey.fromMasterSeed(mnemonicToSeedSync(mnemonic)).derive(path);
+  if (!node.privateKey) throw new Error('No private key for that derivation path.');
+  return node.privateKey;
+}
+
+/** The EIP-55 address of an EVM private key, so a signer can refuse to sign for the wrong account. */
+function evmAddress(priv) {
+  const uncompressed = secp256k1.getPublicKey(priv, false).subarray(1);
+  return eip55(keccak_256(uncompressed).subarray(-20));
+}
+
+/**
+ * Signs an EVM transfer into a broadcastable raw transaction.
+ *
+ * The transfer is re-canonicalised here and its digest recomputed, then checked against the
+ * digest the palm approved — the same binding the Bitcoin path makes through `planDigest`. An
+ * EVM key signs only for its own derived address: if the phrase does not derive `transfer.from`,
+ * nothing is signed. For a token transfer the readable asset and the call data are reconciled
+ * before a signature is spent on them.
+ */
+export function signTransfer(mnemonic, transfer, { path, expectedDigest = null } = {}) {
+  // Accept either shape: the { chain, network, from, plan } build input, or an already-flat
+  // canonical record (what the server stores and hands back through the unlock). Re-canonicalising
+  // a flat record is idempotent and re-validates it, so a tampered stored record is caught here.
+  const input = transfer.plan ? transfer : {
+    chain: transfer.chain, network: transfer.network, from: transfer.from, asset: transfer.asset,
+    plan: {
+      chainId: transfer.chainId, nonce: transfer.nonce, to: transfer.to, value: transfer.value,
+      data: transfer.data, gasLimit: transfer.gasLimit,
+      maxFeePerGas: transfer.maxFeePerGas, maxPriorityFeePerGas: transfer.maxPriorityFeePerGas,
+    },
+  };
+  const canonical = canonicalTransfer(input);
+  const digest = transferDigest(canonical);
+  if (expectedDigest && digest !== expectedDigest) {
+    throw new Error('The transfer does not match what was approved.');
+  }
+  if (canonical.asset.kind === 'erc20') checkErc20Plan(canonical); // throws on any disagreement
+
+  const priv = evmPrivateKey(mnemonic, path);
+  try {
+    const address = evmAddress(priv);
+    if (address.toLowerCase() !== canonical.from.toLowerCase()) {
+      throw new Error('This phrase does not control the sending address.');
+    }
+    const sig = secp256k1.sign(signingHash(canonical), priv, { prehash: false });
+    const hex = assembleSigned(canonical, { yParity: sig.recovery, r: sig.r, s: sig.s });
+    return { hex, txid: evmTxHash(hex), digest };
+  } finally {
+    priv.fill(0);
+  }
+}
+
+/**
+ * The unlock-wrapped EVM signer, the account-chain twin of `signApprovedSpend`: it opens the
+ * vault with the palm-released unlock, signs the approved transfer, and attaches a version-2
+ * authorisation record carrying the policy and threshold the payment was authorised under.
+ */
+export async function signApprovedTransfer(record, unlocked, { network }) {
+  return withPhrase(record, unlocked.unlock, mnemonic => {
+    const signed = signTransfer(mnemonic, unlocked.transfer, {
+      path: unlocked.path,
+      expectedDigest: unlocked.transactionHash,
+    });
+    const authorization = attestInstitutional(mnemonic, {
+      vaultId: record.address,
+      accountId: unlocked.accountId ?? network,
+      subject: unlocked.subject,
+      proposalId: unlocked.proposalId,
+      transactionHash: unlocked.transactionHash,
+      statementDigest: unlocked.statementDigest,
+      chain: unlocked.chain,
+      network: unlocked.network,
+      policyVersion: unlocked.policyVersion,
+      threshold: unlocked.threshold,
+      approvalMethod: 'veyns:palm',
+      nonce: unlocked.authorizationId,
+      approvedBy: unlocked.approvedBy,
+      decisionIds: unlocked.decisionIds,
+      approvedAt: Math.floor(Date.now() / 1000),
+      expiresAt: unlocked.expiresAt,
+    }, unlocked.attestationEpoch ?? 1);
+    return { hex: signed.hex, txid: signed.txid, authorization };
+  });
 }
 
 /** The public half of this browser's signing key for one vault's branch. */

@@ -35,10 +35,20 @@ export const NETWORKS = {
     explorer: address => `https://mempool.space/testnet4/address/${address}`,
   },
   ethereum: {
-    label: 'Ethereum', symbol: 'ETH', chain: 'sepolia', decimals: 18, canSend: false,
+    label: 'Ethereum', symbol: 'ETH', chain: 'sepolia', decimals: 18, canSend: true,
+    family: 'evm', chainId: 11155111,
     valid: address => /^0x[0-9a-fA-F]{40}$/.test(address),
     explorer: address => `https://sepolia.etherscan.io/address/${address}`,
     rpc: 'https://ethereum-sepolia-rpc.publicnode.com',
+  },
+  bsc: {
+    // BNB Smart Chain testnet (Chapel). Mainnet (chainId 56) is a separate, gated decision:
+    // it carries real value, which crosses the testnet-only line the rest of this wallet holds.
+    label: 'BNB Smart Chain', symbol: 'tBNB', chain: 'chapel', decimals: 18, canSend: true,
+    family: 'evm', chainId: 97,
+    valid: address => /^0x[0-9a-fA-F]{40}$/.test(address),
+    explorer: address => `https://testnet.bscscan.com/address/${address}`,
+    rpc: 'https://bsc-testnet-rpc.publicnode.com',
   },
   tron: {
     label: 'Tron', symbol: 'TRX', chain: 'nile', decimals: 6, canSend: false,
@@ -95,7 +105,7 @@ export function createBalances({ fetchImpl = globalThis.fetch, timeout = 12_000 
       const network = NETWORKS[networkId];
       if (!network) return null;
       try {
-        if (networkId === 'ethereum') {
+        if (network.family === 'evm') {
           const { body } = await rpc(network.rpc, 'eth_getBalance', [address, 'latest']);
           return body?.result ? Number(BigInt(body.result)) : 0;
         }

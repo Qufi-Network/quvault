@@ -164,8 +164,9 @@ test('accounts on other networks are added with a palm, and addresses are checke
 
   const first = ok(await c.get('/api/wallet'));
   assert.deepEqual(first.accounts.map(a => a.network), ['bitcoin'], 'the wallet starts with its Bitcoin account');
-  assert.deepEqual(first.networks.map(n => n.id), ['bitcoin', 'ethereum', 'tron', 'solana', 'stellar']);
-  assert.deepEqual(first.networks.filter(n => n.canSend).map(n => n.id), ['bitcoin'], 'only Bitcoin can send today');
+  assert.deepEqual(first.networks.map(n => n.id), ['bitcoin', 'ethereum', 'bsc', 'tron', 'solana', 'stellar']);
+  assert.deepEqual(first.networks.filter(n => n.canSend).map(n => n.id), ['bitcoin', 'ethereum', 'bsc'],
+    'Bitcoin and the EVM chains (Ethereum, BSC) can send; Tron, Solana and Stellar are receive-only');
 
   assert.match((await c.post('/api/accounts/approval', { network: 'dogecoin' })).body.error, /supported networks/);
   const { operation } = ok(await c.post('/api/accounts/approval', { network: 'ethereum' }));
@@ -185,7 +186,7 @@ test('accounts on other networks are added with a palm, and addresses are checke
   const ethereum = after.accounts[1];
   assert.equal(ethereum.symbol, 'ETH');
   assert.equal(ethereum.chain, 'sepolia');
-  assert.equal(ethereum.canSend, false);
+  assert.equal(ethereum.canSend, true);
   assert.match(ethereum.explorer, /sepolia\.etherscan\.io/);
   assert.ok(ethereum.qr.startsWith('<svg'));
   assert.equal((await c.post('/api/accounts/approval', { network: 'ethereum' })).status, 409, 'one account per network');

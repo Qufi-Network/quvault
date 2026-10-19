@@ -26,6 +26,9 @@ test('every network derives on its own standard path', () => {
     {
       bitcoin: "m/84'/1'/0'/0/0",
       ethereum: "m/44'/60'/0'/0/0",
+      // BSC is an EVM chain and shares Ethereum's coin type 60, so the same path by design —
+      // the same key, the same address. The distinction between them is the chain id, not the key.
+      bsc: "m/44'/60'/0'/0/0",
       tron: "m/44'/195'/0'/0/0",
       solana: "m/44'/501'/0'/0'", // what Phantom and Solflare use for the first account
       stellar: "m/44'/148'/0'",
@@ -34,12 +37,22 @@ test('every network derives on its own standard path', () => {
   assert.deepEqual(Object.keys(accounts).sort(), Object.keys(SERVER_NETWORKS).sort());
 });
 
+test('Ethereum and BSC derive the same EVM address, as every EVM chain does', () => {
+  // Not an accident to be defended against: one phrase gives one EVM identity across all EVM
+  // chains. What keeps a BSC transaction off Ethereum is the signed chain id, not the address.
+  assert.equal(accounts.bsc.address, accounts.ethereum.address);
+  assert.equal(SERVER_NETWORKS.bsc.family, 'evm');
+  assert.equal(SERVER_NETWORKS.ethereum.family, 'evm');
+  assert.notEqual(SERVER_NETWORKS.bsc.chainId, SERVER_NETWORKS.ethereum.chainId);
+});
+
 test('the server recognises every address its own page derives', () => {
   for (const [id, account] of Object.entries(accounts)) {
     assert.ok(SERVER_NETWORKS[id].valid(account.address), `${id}: ${account.address}`);
-    // And does not mistake it for another network.
+    // And does not mistake it for a network of a DIFFERENT family. Two EVM chains share an
+    // address format and are expected to accept each other's addresses — that is what they are.
     for (const [other, network] of Object.entries(SERVER_NETWORKS)) {
-      if (other === id) continue;
+      if (other === id || network.family === SERVER_NETWORKS[id].family) continue;
       assert.ok(!network.valid(account.address), `${other} accepted a ${id} address`);
     }
   }

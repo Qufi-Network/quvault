@@ -15,6 +15,9 @@ import {
 } from './bitcoin.js';
 import { DEFAULT_POLICY, PolicyError, describePolicy, requiredFor, requiredToChange, validatePolicy } from './policy.js';
 import { NETWORKS, createBalances, format, networkList } from './networks.js';
+import { canonicalTransfer, transferBytes, transferDigest, checkErc20Plan } from './canonical-transfer.js';
+import { reconcileSignedTransfer, transactionHash as evmTransactionHash } from './evm.js';
+import { createEvmChain, EvmChainError } from './evm-chain.js';
 import { createSecurityLog, redact } from './events.js';
 import {
   EVIDENCE, GENESIS, sealEntry, buildBundle, verifyBundle, summarisePayment, checkpointsAgree,
@@ -418,6 +421,19 @@ export function createApp(options) {
 
   const veyns = createVeyns({ issuer, getClientId: () => clientId, backendSecret, now, fetchImpl });
   const chain = createChain({ apiUrl: chainApi, fetchImpl });
+  // One EVM chain client per network, built lazily from the network's config. An EVM account's
+  // whole send lifecycle goes through this instead of `chain`, which is Bitcoin's.
+  const evmChains = new Map();
+  const isEvm = networkId => NETWORKS[networkId]?.family === 'evm';
+  function evmChainFor(networkId) {
+    if (!evmChains.has(networkId)) {
+      const net = NETWORKS[networkId];
+      if (!net?.rpc || !net.chainId) throw new HttpError(409, `${networkId} is not a configured EVM network.`);
+      const base = typeof net.explorer === 'function' ? net.explorer('X').replace(/\/address\/X$/, '') : null;
+      evmChains.set(networkId, createEvmChain({ rpcUrl: net.rpc, chainId: net.chainId, explorer: base, fetchImpl }));
+    }
+    return evmChains.get(networkId);
+  }
   const balances = createBalances({ fetchImpl });
   const prices = createPrices({ apiUrl: options.priceApi ?? 'https://mempool.space/api', fetchImpl, now });
 
@@ -1104,7 +1120,13 @@ export function createApp(options) {
         // With the key in the owner's browser, the quorum is complete but the signing is not:
         // the operation waits, and the owner's device signs and sends it. A lock with nothing
         // to move has no transaction to wait for, so it simply happens.
-        const moving = Boolean(op.payload && JSON.parse(op.payload).inputs);
+        //
+        // "Moving" means there is a transaction for the browser to sign — a Bitcoin plan has
+        // `inputs`, and an EVM withdrawal is an account-chain transfer (`chain === 'evm'`).
+        // Without the EVM arm an EVM withdrawal would be marked done here, before it was ever
+        // signed, and the broadcast would then be refused as "not running".
+        const stored = op.payload ? JSON.parse(op.payload) : null;
+        const moving = Boolean(stored && (stored.inputs || stored.chain === 'evm'));
         if (wallet?.custody === CUSTODY.BROWSER && moving) return;
         // Nothing else may move coins here. A legacy vault used to be signed for at this
         // point, by the server, with the key it was holding; that path is gone, and both of
@@ -1328,6 +1350,8 @@ export function createApp(options) {
       return { unlock: openSealed(payload.unlockSealed, vault()).toString('base64'), salt: payload.salt };
     }
     if (wallet.custody !== CUSTODY.BROWSER) throw new HttpError(409, 'This wallet signs on the server.');
+    // An EVM withdrawal unlocks to a transfer and a derivation path, not a UTXO plan.
+    if (op.kind === 'withdraw' && isEvm(op.network)) return evmWithdrawalUnlock(op, wallet);
     return {
       unlock: openSealed(wallet.unlock_sealed, vault()).toString('base64'),
       salt: wallet.salt,
@@ -1456,9 +1480,12 @@ export function createApp(options) {
     if (op.status === 'done' && op.txid) return { txid: op.txid };
     if (op.status !== 'running') throw new HttpError(409, 'This withdrawal is not ready to send.');
 
-    const plan = JSON.parse(op.payload);
     const wallet = await one('walletOf', user.id);
     if (!wallet) throw new HttpError(409, 'This account has no wallet.');
+    // An EVM withdrawal runs the same three gates on the account-chain path.
+    if (isEvm(op.network)) return evmBroadcast({ op, user, wallet, body });
+
+    const plan = JSON.parse(op.payload);
 
     const event = { operationId: op.id, userId: user.id, vaultId: wallet.address, kind: op.kind, network, chain: 'bitcoin', custody: wallet.custody };
     security.signingAttempt(event);
@@ -2715,6 +2742,198 @@ export function createApp(options) {
   }
 
   /** Plans an exact spend and works out how many palms it needs. */
+  /* ============================================================ EVM: Ethereum and BSC spends
+   *
+   * The account-chain path, kept apart from the Bitcoin one so the Bitcoin code is untouched.
+   * It builds the exact transaction the palm approves (`canonicalTransfer`), runs the same
+   * three broadcast gates the Bitcoin path does — the stored transfer still hashes to the
+   * approval, the owner's key attested to it, and the signed bytes are that transfer — with
+   * `reconcileSignedTransfer` as the third, and posts through the network's own JSON-RPC.
+   */
+
+  /** The expectation the owner's V2 record is checked against, for an EVM transfer. */
+  async function evmExpectedAuthorization(op, wallet) {
+    const approvals = (await all('approvalsOf', op.id)).filter(a => a.status === 'approved');
+    const stored = JSON.parse(op.payload);
+    const digest = transferDigest(canonicalTransfer({
+      chain: stored.chain, network: stored.network, from: stored.from, asset: stored.asset,
+      plan: stored,
+    }));
+    if (digest !== stored.transactionHash || digest !== JSON.parse(op.details).transaction_hash) {
+      throw new HttpError(409, 'The stored transaction no longer matches the one that was approved.');
+    }
+    const members = await all('membersOf', op.wallet_user_id);
+    const account = await one('accountOn', op.wallet_user_id, op.network);
+    return {
+      vaultId: wallet.address,
+      accountId: op.network,
+      transactionHash: digest,
+      statementDigest: op.digest,
+      approvalMethod: 'veyns:palm',
+      approvals: `${approvals.length} of ${op.required}`,
+      approvedBy: approvals.map(a => a.user_id),
+      decisionIds: approvals.map(a => a.decision_id).filter(Boolean),
+      keyEpoch: attestationOf(wallet).epoch ?? 0,
+      chain: 'evm',
+      network: op.network,
+      policyVersion: policyVersionOf(policyOfAccount(account, wallet), members),
+      proposalId: op.id,
+      threshold: op.required,
+      subject: subjectOf((await one('userById', op.wallet_user_id))?.sub),
+      notBefore: Math.min(...approvals.map(a => a.closed_at ?? a.created_at)) - 60,
+      notAfter: now() + 60,
+    };
+  }
+
+  /** What the owner's browser needs to sign an EVM transfer: the transfer, its path, the V2 fields. */
+  async function evmWithdrawalUnlock(op, wallet) {
+    const expected = await evmExpectedAuthorization(op, wallet);
+    const owner = await one('userById', op.wallet_user_id);
+    return {
+      unlock: openSealed(wallet.unlock_sealed, vault()).toString('base64'),
+      salt: wallet.salt,
+      transfer: JSON.parse(op.payload),
+      path: NETWORKS[op.network]?.path ?? "m/44'/60'/0'/0/0",
+      address: wallet.address,
+      accountId: op.network,
+      transactionHash: expected.transactionHash,
+      statementDigest: expected.statementDigest,
+      chain: 'evm',
+      network: op.network,
+      policyVersion: expected.policyVersion,
+      approvals: expected.approvals,
+      approvedBy: expected.approvedBy,
+      decisionIds: expected.decisionIds,
+      attestationEpoch: expected.keyEpoch,
+      proposalId: op.id,
+      threshold: op.required,
+      subject: subjectOf(owner?.sub),
+      authorizationId: op.id,
+      expiresAt: op.expires_at,
+    };
+  }
+
+  /** Build, propose, and record an EVM withdrawal. Native-coin send; ERC-20 is a later step. */
+  async function evmWithdrawal({ user, wallet, account, networkId, body }) {
+    const net = NETWORKS[networkId];
+    const evm = evmChainFor(networkId);
+    const from = account.address;
+    const to = String(body.to ?? '').trim();
+    if (!net.valid(to)) throw new HttpError(400, `That is not a valid ${net.label} address.`);
+    const value = String(body.amount ?? '').trim();
+    if (!/^[1-9][0-9]*$/.test(value)) throw new HttpError(400, `Enter an amount in the smallest unit (wei) of ${net.symbol}.`);
+
+    let plan;
+    try {
+      const [nonce, fees] = await Promise.all([evm.nonce(from), evm.fees()]);
+      // A native transfer is a fixed 21000 gas; no contract call, nothing to estimate.
+      plan = {
+        chainId: String(net.chainId), nonce, to, value, data: '0x', gasLimit: '21000',
+        maxFeePerGas: fees.maxFeePerGas, maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+      };
+    } catch (error) {
+      if (error instanceof EvmChainError) throw new HttpError(502, error.message);
+      throw error;
+    }
+    const transfer = canonicalTransfer({ chain: 'evm', network: networkId, from, plan });
+    const digest = transferDigest(transfer);
+
+    // The quorum ladder, by amount, exactly as Bitcoin — the account carries its own policy.
+    // The ladder compares a number; a wei value past Number range collapses to its top rule,
+    // which is the safe direction (more approvals, never fewer).
+    const ladder = await quorumFor(user.id, networkId, Number(value));
+    const required = ladder.required;
+    const statement = `Send ${format(value, networkId)} ${net.symbol} to ${to}`;
+    const details = {
+      action: 'withdraw', network: networkId, to,
+      amount_wei: value, chain_id: net.chainId,
+      max_fee_per_gas: plan.maxFeePerGas, gas_limit: plan.gasLimit,
+      approvals_required: `${required} of ${ladder.signers.length} signer${ladder.signers.length === 1 ? '' : 's'}`,
+      transaction_hash: digest,
+    };
+    const op = await newOperation({
+      walletOwnerId: user.id, user, kind: 'withdraw', statement, details,
+      payload: { ...transfer, transactionHash: digest }, required, networkId,
+    });
+    await appendEvidence(EVIDENCE.PROPOSAL_CREATED, {
+      actor: user.id, subjectKind: 'operation', subjectId: op.id,
+      userId: user.id, vaultId: from, kind: 'withdraw', network: networkId, chain: 'evm',
+      transactionHash: digest, threshold: required, address: to,
+    });
+    return { operation: operationView(op, [], user), transfer, transactionHash: digest, rule: ladder.rule };
+  }
+
+  /** Verify the three gates and broadcast an EVM transfer. Mirrors the Bitcoin broadcast tail. */
+  async function evmBroadcast({ op, user, wallet, body }) {
+    const networkId = op.network;
+    const event = { operationId: op.id, userId: user.id, vaultId: wallet.address, kind: op.kind, network: networkId, chain: 'evm', custody: wallet.custody };
+    const asEvidence = { actor: user.id, subjectKind: 'operation', subjectId: op.id };
+    security.signingAttempt(event);
+    await appendEvidence(EVIDENCE.AUTHORIZATION_ATTEMPTED, { ...asEvidence, ...event });
+
+    const stored = JSON.parse(op.payload);
+    // Gate 1 + the authorisation check share this expectation; it throws on a stored-plan mismatch.
+    const expected = await evmExpectedAuthorization(op, wallet);
+
+    // Gate 2 — the owner's key attested to this exact transfer.
+    const authorization = body.authorization ?? authorizationOf(op);
+    const lineage = attestationOf(wallet);
+    if (!lineage.ok) {
+      await appendEvidence(EVIDENCE.AUTHORIZATION_REJECTED, { ...asEvidence, ...event, reason: 'no valid attestation key' });
+      throw new HttpError(409, `This vault has no valid attestation key: ${lineage.reason}.`);
+    }
+    const checkedAuth = verifyAuthorization(authorization, lineage.publicKey, expected);
+    if (!checkedAuth.ok) {
+      security.signingRejected({ ...event, reason: 'authorisation did not verify' });
+      await appendEvidence(EVIDENCE.AUTHORIZATION_REJECTED, { ...asEvidence, ...event, reason: checkedAuth.reason });
+      throw new HttpError(409, `No valid human authorisation for this transaction: ${checkedAuth.reason}.`);
+    }
+    if (!op.human_authorization) await query('setAuthorization', JSON.stringify(authorization), op.id);
+    await appendEvidence(EVIDENCE.AUTHORIZATION_GRANTED, {
+      ...asEvidence, ...event, required: true,
+      transactionHash: expected.transactionHash,
+      receiptVersion: authorization?.record?.v ?? null,
+      policyVersion: authorization?.record?.policyVersion ?? null,
+      threshold: authorization?.record?.threshold ?? null,
+      approvalCount: authorization?.record?.approvalCount ?? null,
+      keyEpoch: lineage.epoch,
+      approvedBy: expected.approvedBy, decisionIds: expected.decisionIds,
+      sensorEvidence: authorization?.record?.verification?.sensorEvidence ?? 'none',
+      verification: 'verified',
+    });
+
+    // Gate 3 — the signed bytes are exactly the approved transfer, signed by the approved account.
+    const raw = String(body.hex ?? '').trim();
+    const reconciled = reconcileSignedTransfer(stored, raw);
+    if (!reconciled.ok) {
+      security.signingRejected({ ...event, reason: reconciled.reason });
+      await appendEvidence(EVIDENCE.AUTHORIZATION_REJECTED, { ...asEvidence, ...event, reason: reconciled.reason });
+      throw new HttpError(400, `The signed transaction does not match the approval: ${reconciled.reason}.`);
+    }
+    const txid = evmTransactionHash(raw);
+
+    try {
+      await appendEvidence(EVIDENCE.SIGNATURE_PRODUCED, {
+        ...asEvidence, ...event, required: true,
+        transactionHash: expected.transactionHash, isolation: 'none:browser-javascript',
+      });
+      await appendEvidence(EVIDENCE.BROADCAST_ATTEMPTED, {
+        ...asEvidence, ...event, required: true, txid, transactionHash: expected.transactionHash,
+      });
+      const sent = await evmChainFor(networkId).broadcast(raw);
+      await query('finishOperation', 'done', sent, null, now(), op.id);
+      security.signingSuccess({ ...event, txid: sent, transactionHash: expected.transactionHash, isolation: 'none:browser-javascript' });
+      await appendEvidence(EVIDENCE.BROADCAST_ACCEPTED, { ...asEvidence, ...event, txid: sent, transactionHash: expected.transactionHash });
+      return { txid: sent };
+    } catch (error) {
+      if (!(error instanceof EvmChainError)) throw error;
+      await query('finishOperation', 'failed', null, error.message, now(), op.id);
+      security.signingRejected({ ...event, reason: 'the network would not take the transaction' });
+      await appendEvidence(EVIDENCE.BROADCAST_REFUSED, { ...asEvidence, ...event, reason: 'the network would not take the transaction' });
+      throw new HttpError(502, error.message);
+    }
+  }
+
   async function requestWithdrawal({ user, body }) {
     requirePalmReady();
     const wallet = await one('walletOf', user.id);
@@ -2731,6 +2950,16 @@ export function createApp(options) {
         + 'holds its key and spending from it is no longer allowed. Move the vault into your browser '
         + 'first — it takes one palm scan and brings every coin with it.');
     }
+
+    // Which account is spending. Defaults to Bitcoin for back-compatibility; an EVM network
+    // routes to its own send path, which is UTXO-free and account-based.
+    const networkId = String(body.network ?? 'bitcoin');
+    if (isEvm(networkId)) {
+      const evmAccount = await one('accountOn', user.id, networkId);
+      if (!evmAccount) throw new HttpError(409, `Add a ${NETWORKS[networkId].label} account first.`);
+      return evmWithdrawal({ user, wallet, account: evmAccount, networkId, body });
+    }
+
     const account = await one('accountOn', user.id, 'bitcoin');
     const lock = lockOfAccount(account, wallet);
 
