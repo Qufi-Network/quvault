@@ -2403,15 +2403,15 @@
             </div>
             <div class="two">
               <div class="field-row">
-                <label for="send-amount">Amount <span class="optional">satoshis</span></label>
+                <label for="send-amount">Amount <span class="optional" id="send-amount-unit">satoshis</span></label>
                 <input id="send-amount" inputmode="numeric" placeholder="50000">
               </div>
-              <div class="field-row">
+              <div class="field-row" id="send-fee-field">
                 <label for="send-fee">Fee rate <span class="optional">sat/vB, optional</span></label>
                 <input id="send-fee" inputmode="numeric" placeholder="auto">
               </div>
             </div>
-            <label class="check"><input type="checkbox" id="send-max"> <span>Send everything (the fee comes out of the amount)</span></label>
+            <label class="check" id="send-max-row"><input type="checkbox" id="send-max"> <span>Send everything (the fee comes out of the amount)</span></label>
             <p class="fine" id="send-rule-note"></p>
             <div class="card-foot">
               <p class="error" id="send-error" role="alert"></p>

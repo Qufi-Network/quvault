@@ -907,10 +907,46 @@ function renderAccountReceive(account, data) {
     : `Balance ${account.formatted ?? 'unknown'} ${account.symbol}.`;
 }
 
+/**
+ * A human amount ("0.25") to an integer string of base units, without floating point — the
+ * server wants wei, and 0.1 ETH cannot be represented as a Number without rounding.
+ */
+function toBaseUnits(human, decimals) {
+  const text = String(human ?? '').trim();
+  if (!/^\d+(\.\d+)?$/.test(text)) throw new Error('Enter a valid amount.');
+  const [whole, frac = ''] = text.split('.');
+  if (frac.length > decimals) throw new Error(`${decimals} decimal places at most.`);
+  const base = (whole + frac.padEnd(decimals, '0')).replace(/^0+/, '') || '0';
+  if (base === '0') throw new Error('Enter an amount greater than zero.');
+  return base;
+}
+
+/** Shapes the one send form to the active account: Bitcoin is sats + fee rate; EVM is a coin amount. */
+function configureSendForm(account) {
+  const form = $('send-form');
+  const evm = account.family === 'evm';
+  form.dataset.family = account.family;
+  form.dataset.network = account.network;
+  form.dataset.decimals = String(account.decimals);
+  $('send-to').placeholder = evm ? '0x…' : 'tb1…';
+  $('send-amount-unit').textContent = evm ? account.symbol : 'satoshis';
+  $('send-amount').placeholder = evm ? '0.25' : '50000';
+  $('send-amount').inputMode = evm ? 'decimal' : 'numeric';
+  $('send-amount').disabled = false;
+  // Gas is chosen for the owner on an EVM chain, and there is nothing to sweep to a change
+  // address, so the fee-rate field and the send-everything box belong to Bitcoin only.
+  $('send-fee-field').hidden = evm;
+  $('send-max-row').hidden = evm;
+  if (evm) $('send-max').checked = false;
+}
+
 function renderAccountSend(account, data) {
   $('send-form').hidden = !account.canSend;
+  if (account.canSend) configureSendForm(account);
   $('send-rule-note').textContent = account.canSend ? `This account: ${account.rulesText}.` : '';
-  $('fee-note').textContent = data.feeRate ? `Network suggests ${data.feeRate} sat/vB` : '';
+  $('fee-note').textContent = account.family === 'evm'
+    ? 'Gas is estimated for you at send time.'
+    : (data.feeRate ? `Network suggests ${data.feeRate} sat/vB` : '');
   $('send-soon').hidden = account.canSend;
   $('send-soon').textContent = account.canSend ? ''
     : `Signing for ${account.label} is the next step. This account receives and shows its balance today.`;
@@ -1862,12 +1898,24 @@ $('send-form').addEventListener('submit', async event => {
   const submit = event.submitter;
   if (submit) submit.disabled = true;
   try {
-    const max = $('send-max').checked;
-    const { operation } = await api('/api/withdrawals', {
-      to: $('send-to').value.trim(),
-      amount: max ? 'max' : Number($('send-amount').value),
-      ...($('send-fee').value ? { feeRate: Number($('send-fee').value) } : {}),
-    });
+    const form = $('send-form');
+    const to = $('send-to').value.trim();
+    let body;
+    if (form.dataset.family === 'evm') {
+      // The server wants the amount in base units (wei), converted here without floating point.
+      body = {
+        network: form.dataset.network, to,
+        amount: toBaseUnits($('send-amount').value, Number(form.dataset.decimals)),
+      };
+    } else {
+      const max = $('send-max').checked;
+      body = {
+        to,
+        amount: max ? 'max' : Number($('send-amount').value),
+        ...($('send-fee').value ? { feeRate: Number($('send-fee').value) } : {}),
+      };
+    }
+    const { operation } = await api('/api/withdrawals', body);
     openApproval(operation, 'Sending…');
   } catch (error) {
     $('send-error').textContent = friendly(error);

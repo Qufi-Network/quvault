@@ -2043,6 +2043,10 @@ export function createApp(options) {
         symbol: network.symbol,
         chain: network.chain,
         canSend: network.canSend,
+        // The page needs these to shape the send form: how many base units a whole coin is,
+        // and whether the account is account-based (EVM) or UTXO (Bitcoin).
+        decimals: network.decimals,
+        family: network.family ?? row.network,
         address: row.address,
         explorer: network.explorer(row.address),
         // When the chain keeps this account's threshold, what it keeps.
@@ -2795,11 +2799,16 @@ export function createApp(options) {
       transfer: JSON.parse(op.payload),
       path: NETWORKS[op.network]?.path ?? "m/44'/60'/0'/0/0",
       address: wallet.address,
+      walletId: wallet.address,
       accountId: op.network,
       transactionHash: expected.transactionHash,
       statementDigest: expected.statementDigest,
       chain: 'evm',
       network: op.network,
+      // The browser signer checks the request against these before it signs. An EVM transfer
+      // is authorised with a version-2 record, and the binding nonce is the transfer digest.
+      authorizationVersion: 2,
+      bindingNonce: expected.transactionHash,
       policyVersion: expected.policyVersion,
       approvals: expected.approvals,
       approvedBy: expected.approvedBy,

@@ -808,7 +808,7 @@ export function browserSigner(record, authorization) {
     isolation: ISOLATION.BROWSER_JAVASCRIPT,
     keyHandle: record?.address ?? null,
     supportedAlgorithms: ['secp256k1-ecdsa', 'ML-DSA-65'],
-    supportedNetworks: ['bitcoin:testnet4'],
+    supportedNetworks: ['bitcoin:testnet4', 'ethereum:sepolia', 'bsc:chapel'],
     transactionBinding: BINDING.RECOMPUTED_DIGEST,
     humanAuthorizationRequired: true,
 
@@ -820,7 +820,7 @@ export function browserSigner(record, authorization) {
       isolation: ISOLATION.BROWSER_JAVASCRIPT,
       keyHandle: record?.address ?? null,
       supportedAlgorithms: ['secp256k1-ecdsa', 'ML-DSA-65'],
-      supportedNetworks: ['bitcoin:testnet4'],
+      supportedNetworks: ['bitcoin:testnet4', 'ethereum:sepolia', 'bsc:chapel'],
       transactionBinding: BINDING.RECOMPUTED_DIGEST,
       humanAuthorizationRequired: true,
     }),
@@ -844,6 +844,10 @@ export function browserSigner(record, authorization) {
       const wrong = requestMatchesAuthorization(request, authorization);
       if (wrong) throw new SignerError(`This signer will not sign that: ${wrong}.`);
       const network = request.network;
+      // An account-chain transfer (Ethereum, BSC) carries a `transfer` to sign, not a UTXO
+      // plan or a PSBT. Which kind of signature this is comes from the authorisation, never
+      // the caller, so a page cannot ask for an EVM transfer on a Bitcoin approval.
+      if (authorization.transfer) return sealResult(await signApprovedTransfer(record, authorization, { network }));
       return sealResult(authorization.psbt
         ? await signApprovedQuorum(record, authorization, { network })
         : await signApprovedSpend(record, authorization, { network }));

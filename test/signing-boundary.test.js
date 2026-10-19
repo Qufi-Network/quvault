@@ -77,7 +77,8 @@ test('a signer exposes three questions and no way to ask for the key', async () 
   assert.equal(said.keyHandle, record.address, 'a handle, which is the public address');
   assert.equal(said.transactionBinding, BINDING.RECOMPUTED_DIGEST);
   assert.equal(said.humanAuthorizationRequired, true);
-  assert.deepEqual([...said.supportedNetworks], ['bitcoin:testnet4'], 'testnet4 only');
+  assert.deepEqual([...said.supportedNetworks], ['bitcoin:testnet4', 'ethereum:sepolia', 'bsc:chapel'],
+    'the testnets it signs for — Bitcoin and the two EVM chains');
   const described = JSON.stringify(said);
   assert.ok(!described.includes(PHRASE) && !described.includes(record.blob), 'nothing secret in it');
 });
