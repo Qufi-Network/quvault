@@ -6,34 +6,51 @@
  * compresses slightly, a focus ring that appears beside the control instead of moving it, and
  * motion measured in tenths of a second and dropped entirely when the system asks for that.
  */
+/*
+ * The instrument.
+ *
+ * This is a treasury console, not a consumer wallet, and it is the same product as the
+ * marketing site in front of it — so it takes that site's language rather than inventing a
+ * second one: the blues, hairlines and motion curves below are lifted from veyns.css, and the
+ * two typefaces were already shared. The palette it replaced was Apple's light system set
+ * (#f5f5f7 on #1d1d1f), which looked like a different company's product the moment anyone
+ * signed in.
+ *
+ * Dark is not decoration here. Money, quorum state and countdowns are what this screen is
+ * for; a dark ground lets the one blue accent mean "this is the action" and lets an amount in
+ * mono be the brightest thing in the room.
+ */
 :root {
-  /* surfaces */
-  --page: #f5f5f7;
-  --surface: #ffffff;
-  --surface-2: #fbfbfd;
-  --surface-3: #f2f2f5;
-  --hair: rgba(0, 0, 0, .07);
-  --hair-strong: rgba(0, 0, 0, .13);
+  /* surfaces — near-black with a blue cast, the hero's ground */
+  --page: #070a12;
+  --surface: #0d1220;
+  --surface-2: #121a2b;
+  --surface-3: #0a101c;
+  /* hairlines, straight from veyns.css: blue-grey, never neutral grey on a blue-black */
+  --hair: rgba(150, 185, 240, .14);
+  --hair-strong: rgba(150, 185, 240, .26);
 
   /* ink */
-  --text: #1d1d1f;
-  --text-2: #424245;
-  --muted: #86868b;
-  --faint: #aeaeb2;
+  --text: #ffffff;
+  --text-2: rgba(223, 234, 250, .78);
+  --muted: rgba(196, 214, 238, .6);
+  --faint: rgba(196, 214, 238, .36);
 
   /* accent, and the states it has */
-  --brand: #0a62ff;
-  --brand-hover: #0052e0;
-  --brand-press: #0043bb;
-  --brand-tint: #eef4ff;
-  --brand-tint-2: #dbe8ff;
-  --ring: rgba(10, 98, 255, .35);
+  --brand: #1272ff;
+  --brand-hover: #3488ff;
+  --brand-press: #0b59d2;
+  /* Tints are translucent rather than mixed, so they sit on any surface without banding. */
+  --brand-tint: rgba(18, 114, 255, .14);
+  --brand-tint-2: rgba(18, 114, 255, .24);
+  --ring: rgba(79, 157, 255, .45);
 
-  --danger: #d70015;
-  --danger-hover: #b5000f;
-  --danger-tint: rgba(215, 0, 21, .07);
-  --ok: #0a7d46;
-  --ok-tint: rgba(10, 125, 70, .1);
+  /* Lightened deliberately: #d70015 and #0a7d46 are legible on white and vanish on black. */
+  --danger: #ff6170;
+  --danger-hover: #ff8692;
+  --danger-tint: rgba(255, 97, 112, .12);
+  --ok: #3ddc97;
+  --ok-tint: rgba(61, 220, 151, .13);
 
   --sans: 'Sora', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', monospace;
@@ -45,10 +62,17 @@
   --r-xl: 22px;
   --pill: 980px;
 
-  /* one shadow family, layered rather than blurred hard */
-  --lift-1: 0 1px 1px rgba(0, 0, 0, .04), 0 2px 6px rgba(0, 0, 0, .04);
-  --lift-2: 0 1px 1px rgba(0, 0, 0, .04), 0 8px 24px -10px rgba(0, 0, 0, .18);
-  --lift-3: 0 24px 70px -28px rgba(0, 0, 0, .38), 0 2px 8px rgba(0, 0, 0, .06);
+  /*
+   * One shadow family. On a dark ground a drop shadow is invisible — there is nothing darker
+   * to cast onto — so each lift is a hairline of light along the top edge plus a deep ambient
+   * pool underneath. The light edge is what separates a panel from the page; the pool only
+   * gives it height.
+   */
+  --lift-1: inset 0 1px 0 rgba(255, 255, 255, .05), 0 1px 2px rgba(0, 0, 0, .5);
+  --lift-2: inset 0 1px 0 rgba(255, 255, 255, .06), 0 10px 30px -12px rgba(0, 0, 0, .8);
+  --lift-3: inset 0 1px 0 rgba(255, 255, 255, .08), 0 30px 80px -24px rgba(0, 0, 0, .9);
+  /* The accent carries its own light, so a primary action reads as energised rather than flat. */
+  --glow: 0 0 0 1px rgba(79, 157, 255, .3), 0 8px 26px -8px rgba(18, 114, 255, .55);
 
   /*
    * One measure for the whole site. It lives here rather than on the page, because the header
@@ -61,7 +85,7 @@
 
   --ease: cubic-bezier(.4, 0, .2, 1);
   --quick: .16s var(--ease);
-  color-scheme: light;
+  color-scheme: dark;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -77,6 +101,36 @@ body {
   letter-spacing: -.011em;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/*
+ * Atmosphere. A flat #070a12 reads as switched-off rather than dark, so the ground carries two
+ * very wide, very low-opacity pools of the accent — one warm-side at the top left where the
+ * eye enters, one at the far side to stop the right edge dying. Fixed, so they belong to the
+ * room rather than to the scroll, and behind everything so no panel has to opt out.
+ *
+ * `pointer-events: none` matters: without it this layer swallows every click on the page.
+ */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(900px 600px at 12% -5%, rgba(18, 114, 255, .16), transparent 60%),
+    radial-gradient(700px 500px at 100% 0%, rgba(79, 157, 255, .08), transparent 55%);
+}
+
+/*
+ * Numbers are the content of a treasury screen, so they get the mono face and tabular figures
+ * everywhere at once: an amount, a fee, a countdown and a txid all have to align in a column
+ * and stop shifting while they tick. Proportional digits make a live countdown jitter.
+ */
+.mono, .amount, .sats, .txid, .countdown, code, kbd, samp {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1, 'zero' 1;
 }
 
 /* the faintest wash of accent, top of page only */
@@ -126,7 +180,7 @@ code { font-family: var(--mono); font-size: .9em; letter-spacing: -.01em; }
   justify-content: space-between;
   gap: 16px;
   padding: 11px 28px;
-  background: rgba(255, 255, 255, .72);
+  background: rgba(13, 18, 32, .72);
   backdrop-filter: saturate(180%) blur(20px);
   -webkit-backdrop-filter: saturate(180%) blur(20px);
   border-bottom: 1px solid var(--hair);
@@ -280,7 +334,7 @@ input, textarea, select {
   transition: border-color var(--quick), box-shadow var(--quick);
 }
 input::placeholder, textarea::placeholder { color: var(--faint); }
-input:hover:not(:focus), textarea:hover:not(:focus) { border-color: rgba(0, 0, 0, .2); }
+input:hover:not(:focus), textarea:hover:not(:focus) { border-color: var(--hair-strong); }
 input:focus, textarea:focus, select:focus { border-color: var(--brand); }
 textarea { height: auto; min-height: 92px; padding: 11px 13px; font-family: var(--mono); font-size: 14px; resize: vertical; }
 select { padding: 0 10px; }
@@ -465,7 +519,7 @@ select { padding: 0 10px; }
 }
 .tab:hover { color: var(--text); }
 .tab:active { transform: scale(.97); }
-.tab.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, .08); }
+.tab.active { background: var(--surface-2); color: var(--text); box-shadow: inset 0 0 0 1px var(--hair-strong), inset 0 1px 0 rgba(255, 255, 255, .06); }
 .subpane > * + * { margin-top: 18px; }
 
 .lane { padding-top: 28px; border-top: 1px solid var(--hair); }
@@ -511,7 +565,7 @@ select { padding: 0 10px; }
   transition: background-color var(--quick), color var(--quick), box-shadow var(--quick);
 }
 .chip.pick:hover { color: var(--text); }
-.chip.pick.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, .08); }
+.chip.pick.on { background: var(--surface-2); color: var(--text); box-shadow: inset 0 0 0 1px var(--hair-strong), inset 0 1px 0 rgba(255, 255, 255, .06); }
 
 .chart { display: grid; gap: 10px; min-height: 230px; }
 .price-chart { display: block; width: 100%; height: auto; }
@@ -686,7 +740,7 @@ select { padding: 0 10px; }
 }
 .seg-item:hover { color: var(--text); }
 .seg-item:active { transform: scale(.97); }
-.seg-item.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, .09); }
+.seg-item.on { background: var(--surface-2); color: var(--text); box-shadow: inset 0 0 0 1px var(--hair-strong), inset 0 1px 0 rgba(255, 255, 255, .06); }
 
 .rule-rows { display: grid; gap: 7px; }
 .rule-row {
@@ -731,7 +785,7 @@ select { padding: 0 10px; }
   margin: 20px auto 0;
   max-width: 1340px;
   padding: 12px 12px 12px 20px;
-  background: rgba(255, 255, 255, .86);
+  background: rgba(13, 18, 32, .86);
   backdrop-filter: saturate(180%) blur(20px);
   -webkit-backdrop-filter: saturate(180%) blur(20px);
   border: 1px solid var(--hair-strong);
@@ -772,7 +826,7 @@ dialog {
   color: var(--text);
   box-shadow: var(--lift-3);
 }
-dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); }
+dialog::backdrop { background: rgba(3, 5, 10, .72); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); }
 
 @media (prefers-reduced-motion: no-preference) {
   dialog[open] { animation: sheet-in .22s var(--ease); }
@@ -2287,3 +2341,74 @@ dialog::backdrop { background: rgba(0, 0, 0, .34); backdrop-filter: blur(3px); -
 
 /* The supplied Veyns lockup, at its own proportions, in the application's own header. */
 .mark-veyns { width: auto; height: 24px; }
+
+/* ───────────────────────────────────────────────────────────────────────────
+ * Instrument refinements
+ *
+ * Corrections that the token swap alone could not make, because they are about
+ * what the screen spends its space on rather than what colour it is.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+/*
+ * The price chart reserved 230px by 950px whether or not it had anything to draw, and on
+ * testnet4 it never does: the price service is not authorised for this build, and a price for
+ * test coins would be meaningless even if it were. So the space collapses when it is empty
+ * instead of sitting as the largest element on the dashboard.
+ *
+ * `:empty` is exact here — the chart either has an SVG in it or it has nothing.
+ */
+.chart:empty { min-height: 0; height: 0; margin: 0; }
+
+/* With no chart to anchor it, the price readout is noise beside a balance. Keep the elements
+ * (the page script writes to them) and stop them competing. */
+.chart:empty ~ .total-head .total-change,
+.total:has(.chart:empty) .total-change { display: none; }
+
+/*
+ * A failed price lookup is not something to tell a treasurer about in the main card. The note
+ * stays in the DOM for the script, but it reads as an aside rather than an error.
+ */
+#chart-note { color: var(--faint); font-size: 12px; }
+
+/*
+ * The balance is the one number the eye should land on first, so it gets the mono face,
+ * tabular figures and real size. The unit trails it quietly rather than matching it.
+ */
+.card.total .amount {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: clamp(34px, 4.4vw, 56px);
+  font-weight: 500;
+  letter-spacing: -.03em;
+  line-height: 1.05;
+  margin: 0;
+}
+.card.total .amount .unit {
+  font-family: var(--sans);
+  font-size: .3em;
+  font-weight: 500;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-left: .5em;
+  vertical-align: .55em;
+}
+
+/* Panels sit on the page rather than float above it: a hairline of light, not a drop shadow. */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--hair);
+  box-shadow: var(--lift-1);
+}
+
+/* The primary action carries the accent's own light, so it reads as energised on a dark ground. */
+.btn.primary, .btn.brand-solid { box-shadow: var(--glow); }
+
+/* An eyebrow is a label, not body copy: small, spaced, quiet. */
+.eyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: var(--muted);
+}

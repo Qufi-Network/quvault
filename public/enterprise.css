@@ -2189,3 +2189,97 @@
 .en-hero-cta { gap: 14px; }
 .en-hero-cta .vx-btn { flex: none; }
 @media (max-width: 620px) { .en-hero-cta .vx-btn { width: 100%; } }
+
+/* ───────────────────────────────────────────────────────────────────────────
+ * The architecture sequence, rebuilt.
+ *
+ * It was `repeat(auto-fit, minmax(150px, 1fr))` over seven items, which at most
+ * desktop widths lays out six and leaves the seventh stranded on its own row —
+ * reading as a bug rather than a design. Equal tiles were the wrong form anyway:
+ * the copy says a transaction "passes through each of these", which is a
+ * sequence, not a set. So it is drawn as one — a spine with seven stations.
+ *
+ * Seven explicit columns can never orphan. Below the breakpoint it becomes a
+ * vertical timeline, which is what a sequence should do on a narrow screen
+ * instead of reflowing into an arbitrary grid.
+ *
+ * The `.on` class the page script already toggles keeps working; it now lights
+ * a station on the spine rather than tinting a card.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+.home-layers {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0;
+  margin: clamp(30px, 4vw, 52px) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.home-layers li {
+  position: relative;
+  padding: 46px 20px 0 0;
+  /* the card is gone: no border, no fill, no radius */
+  border: 0;
+  background: none;
+  border-radius: 0;
+  transition: none;
+}
+
+/*
+ * The spine, drawn per station so it ends with the last node instead of running
+ * off into the padding. Each segment fades left-to-right, so the line reads as
+ * travelling forward rather than as a static rule.
+ */
+.home-layers li::before {
+  content: '';
+  position: absolute;
+  top: 13px;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(150, 185, 240, .34), rgba(150, 185, 240, .12));
+}
+.home-layers li:last-child::before { right: calc(100% - 10px); }
+
+/*
+ * The number is the label, and it carries the station marker as its own
+ * pseudo-element — so the markup is untouched and nothing depends on an
+ * attribute that is not there.
+ */
+.home-layer-n {
+  display: block;
+  margin: 0 0 14px;
+  font: 600 10px/1 var(--mono);
+  letter-spacing: .16em;
+  color: rgba(79, 157, 255, .85);
+  transition: color 420ms var(--vx-ease, ease);
+}
+.home-layer-n::before {
+  content: '';
+  position: absolute;
+  top: 7px;
+  left: 0;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--en-dark);
+  box-shadow: 0 0 0 1px rgba(150, 185, 240, .4);
+  transition: box-shadow 420ms var(--vx-ease, ease), background-color 420ms var(--vx-ease, ease);
+}
+
+.home-layers b { padding-left: 34px; }
+  .home-layers small { padding-left: 34px; max-width: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-layer-n, .home-layer-n::before { transition: none; }
+}
+
+/*
+ * The old lit-card rule is more specific than `.home-layers li`, so its tint and border
+ * survived the rebuild and painted a faint rectangle behind the reached stations. The lit
+ * state now lives entirely on the marker, so the box has nothing left to say.
+ */
+.home-layers li.on { background: none; border-color: transparent; }
