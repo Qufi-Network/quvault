@@ -19,7 +19,7 @@ const CACHE = 'veyns-shell-v1';
 const SHELL = [
   '/', '/style.css', '/veyns.css', '/enterprise.css',
   '/app.js', '/veyns.js', '/vendor/wallet.js',
-  '/manifest.webmanifest', '/icon.svg',
+  '/manifest.webmanifest', '/icon.svg', '/icon-192.png', '/icon-512.png',
 ];
 
 self.addEventListener('install', event => {
