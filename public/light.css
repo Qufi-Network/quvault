@@ -369,3 +369,33 @@ body:has(#view-signin:not([hidden])) header.top { display: none !important; }
   .qv-steps li::before { display: none; }
   .qv-value h2, .qv-how .qv-label, .qv-sec .qv-label, .qv-uses .qv-label { text-align: center; }
 }
+
+/* ---------------------------------------------------------------- wallet app — light theme
+   The authenticated app (style.css) is dark and fully tokenised. Redefining its tokens on the app
+   view containers recolours the whole wallet to the site's white palette, without touching the
+   marketing views. */
+#view-loading, #view-setup, #view-create, #view-wallet, #approval {
+  --page: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #f3f6fc;
+  --surface-3: #f8fafe;
+  --hair: rgba(13, 30, 70, .1);
+  --hair-strong: rgba(13, 30, 70, .2);
+  --text: #06152e;
+  --text-2: #3b485f;
+  --muted: #5a6a85;
+  --faint: #8893a6;
+  --brand: #155eef;
+  --brand-hover: #1150d4;
+  --brand-press: #0f49bf;
+  --brand-tint: rgba(21, 94, 239, .1);
+  --brand-tint-2: rgba(21, 94, 239, .16);
+  --ring: rgba(21, 94, 239, .4);
+  --lift-1: 0 1px 2px rgba(13, 30, 70, .06);
+  --lift-2: 0 12px 30px -14px rgba(13, 30, 70, .2);
+  --lift-3: 0 30px 70px -26px rgba(13, 30, 70, .24);
+  --glow: 0 0 0 1px rgba(21, 94, 239, .18), 0 10px 26px -10px rgba(21, 94, 239, .3);
+  color: var(--text);
+}
+/* the danger/ok tints read on white without being neon */
+#view-setup, #view-create, #view-wallet, #approval { --danger: #d4334a; --ok: #0c8a52; }
