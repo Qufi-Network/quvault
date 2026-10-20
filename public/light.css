@@ -434,5 +434,25 @@ body:has(#view-wallet:not([hidden])) header.top,
 body:has(#view-create:not([hidden])) header.top,
 body:has(#view-setup:not([hidden])) header.top { background: rgba(255, 255, 255, .92); backdrop-filter: blur(12px); border-bottom: 1px solid var(--line); color: var(--ink); }
 header.top .mark-quvault { height: 26px; width: auto; display: block; }
-header.top .who, header.top .chip, header.top .link { font-family: 'Inter', system-ui, sans-serif; color: var(--body); }
-header.top .link:hover { color: var(--ink); }
+header.top .who { display: inline-flex; align-items: center; gap: 12px; font-family: 'Inter', system-ui, sans-serif; }
+/* network chip — a quiet, capitalised testnet marker, not a heavy black pill */
+header.top .chip, header.top #network-chip {
+  height: 24px; padding: 0 11px;
+  display: inline-flex; align-items: center; gap: 6px;
+  background: rgba(21, 94, 239, .08);
+  color: var(--blue-deep);
+  border: 1px solid rgba(21, 94, 239, .16);
+  border-radius: 999px;
+  font: 700 10px/1 'Inter', system-ui, sans-serif;
+  letter-spacing: .13em; text-transform: uppercase;
+}
+header.top #network-chip::before {
+  content: ""; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--blue); box-shadow: 0 0 0 3px rgba(21, 94, 239, .14);
+}
+header.top .link {
+  font: 600 13px/1 'Inter', system-ui, sans-serif; color: var(--body);
+  padding: 7px 12px; border-radius: 8px; border: 1px solid transparent;
+  transition: color .15s var(--ease), background-color .15s var(--ease), border-color .15s var(--ease);
+}
+header.top .link:hover { color: var(--ink); background: var(--wash); border-color: var(--line); }
