@@ -1,0 +1,155 @@
+/*
+ * studio.css — an editorial, creative-agency elevation of the Veyns marketing landing.
+ *
+ * It is purely additive and loads last, so it restyles type, rhythm, section indices and
+ * the marquee over the existing enterprise system without touching any component's
+ * behaviour. It NEVER hides content: every rule here is decoration, so if a browser paints
+ * zero animation frames the page still reads exactly the same, just without motion. None of
+ * it reaches the wallet app views (everything is scoped under .en / the marketing classes).
+ *
+ * The signature is a grotesque/serif pairing — Sora for structure, Fraunces italic for the
+ * emphasised words — on a warm paper ground, the way a print-led studio site reads.
+ */
+
+:root {
+  --studio-serif: 'Fraunces', Georgia, 'Times New Roman', serif;
+  --studio-accent: #0f62e6;
+  --studio-accent-lit: #2b7cff;
+}
+
+/* ---------------------------------------------------------------- warm paper ground */
+/* The grey ground becomes a warm paper; white cards now read as objects laid on paper,
+   which is what gives the page its gallery feel. Dark sections and the hero are untouched. */
+.en {
+  --en-page: #f4f2ec;
+  --en-tint: #ece9e1;
+  --en-pale: #f7f5f0;
+  --en-line: #e2ddd2;
+  --en-line-2: #d3cdbf;
+  --en-ink: #1b1b1a;
+  --en-ink-2: #46453f;
+  --en-ink-3: #6b6a61;
+}
+
+/* ---------------------------------------------------------------- display typography */
+/* Bigger, tighter, more confident headlines — the first thing that reads as "template". */
+.en-hero h1 {
+  font-size: clamp(42px, 6.4vw, 88px);
+  letter-spacing: -.046em;
+  line-height: .96;
+  font-weight: 660;
+}
+.en-sec h2,
+.home-strip-head {
+  font-size: clamp(29px, 4.3vw, 60px);
+  letter-spacing: -.04em;
+  line-height: 1.0;
+  font-weight: 640;
+}
+
+/* The editorial move: emphasised words become a serif italic, not just a colour change. */
+.en-hero h1 em,
+.en-sec h2 em,
+.home-strip-head em,
+.en-sec h3 em {
+  font-family: var(--studio-serif);
+  font-style: italic;
+  font-weight: 450;
+  letter-spacing: -.012em;
+}
+.en-hero h1 em { color: #7cb3ff; }
+.en-sec h2 em,
+.home-strip-head em { color: var(--studio-accent); }
+
+/* ---------------------------------------------------------------- numbered indices */
+/* Sequential 01 / 02 / 03 on every eyebrowed section — a studio-index signifier. The
+   counter rides the eyebrow itself so the numbers stay contiguous even when a section
+   has no label. The hero eyebrow is deliberately excluded. */
+.en { counter-reset: studio-sec; }
+.en-sec .en-eyebrow { counter-increment: studio-sec; }
+/* Strip the pill badge so the eyebrow reads as a studio index line, not a chip. */
+.en-sec .en-eyebrow {
+  background: none !important;
+  padding: 0 !important;
+  height: auto !important;
+  border-radius: 0 !important;
+  gap: .66em;
+  color: var(--en-ink-3);
+}
+.en-sec .en-eyebrow.light { color: rgba(226, 236, 250, .74); }
+/* The 6px dot becomes the sequential number. */
+.en-sec .en-eyebrow::before {
+  content: counter(studio-sec, decimal-leading-zero);
+  width: auto;
+  height: auto;
+  background: none;
+  border-radius: 0;
+  color: var(--studio-accent);
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+.en-sec .en-eyebrow.light::before,
+.home-dark-head .en-eyebrow::before { color: var(--en-blue-lit, #2b7cff); }
+
+/* ---------------------------------------------------------------- running marquee */
+/* The markup ships .wz-marquee > .wz-track > 12 spans (6, doubled). Translating the track
+   by -50% loops seamlessly. If the animation never runs, the strip is simply a static row
+   of phrases — still correct, never blank. */
+.wz-marquee {
+  overflow: hidden;
+  white-space: nowrap;
+  padding: clamp(18px, 3vh, 30px) 0;
+  background: #0a0e18;
+  border-block: 1px solid rgba(255, 255, 255, .08);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent);
+          mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent);
+}
+.wz-track {
+  display: inline-flex;
+  align-items: center;
+  gap: clamp(2rem, 5vw, 4rem);
+  padding-left: clamp(2rem, 5vw, 4rem);
+  animation: wz-scroll 42s linear infinite;
+  will-change: transform;
+}
+.wz-track span {
+  display: inline-flex;
+  align-items: center;
+  gap: clamp(2rem, 5vw, 4rem);
+  flex: none;
+  font-size: clamp(19px, 2.4vw, 32px);
+  font-weight: 620;
+  letter-spacing: -.02em;
+  color: rgba(239, 244, 252, .9);
+}
+.wz-track span::after {
+  content: "✦";
+  font-size: .5em;
+  color: var(--studio-accent-lit);
+  transform: translateY(-.1em);
+}
+.wz-track em {
+  font-family: var(--studio-serif);
+  font-style: italic;
+  font-weight: 440;
+  color: #7cb3ff;
+}
+@keyframes wz-scroll {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wz-track { animation: none; }
+}
+
+/* ---------------------------------------------------------------- eyebrow + rhythm polish */
+.en-eyebrow { font-weight: 650; letter-spacing: .22em; }
+.en-hero-tags {
+  font-family: var(--studio-serif);
+  font-style: italic;
+  letter-spacing: -.01em;
+}
+
+/* ---------------------------------------------------------------- buttons, a touch sharper */
+.vx-btn { letter-spacing: -.005em; font-weight: 600; border-radius: 2px; }
+.vx-btn.lg { height: 56px; }

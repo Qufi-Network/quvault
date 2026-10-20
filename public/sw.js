@@ -17,7 +17,7 @@ const CACHE = 'veyns-shell-v1';
 
 // The shell: enough to render the app offline. Everything else is cached as it is fetched.
 const SHELL = [
-  '/', '/style.css', '/veyns.css', '/enterprise.css',
+  '/', '/style.css', '/veyns.css', '/enterprise.css', '/studio.css',
   '/app.js', '/veyns.js', '/vendor/wallet.js',
   '/manifest.webmanifest', '/icon.svg', '/icon-192.png', '/icon-512.png',
 ];
