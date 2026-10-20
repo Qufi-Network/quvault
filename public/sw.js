@@ -13,13 +13,14 @@
  *   - A POST, a cross-origin request to the identity provider, or anything with credentials is
  *     passed straight through and left alone.
  */
-const CACHE = 'veyns-shell-v1';
+const CACHE = 'veyns-shell-v3';
 
 // The shell: enough to render the app offline. Everything else is cached as it is fetched.
 const SHELL = [
-  '/', '/style.css', '/veyns.css', '/enterprise.css', '/studio.css',
-  '/app.js', '/veyns.js', '/vendor/wallet.js',
+  '/', '/style.css', '/veyns.css', '/enterprise.css', '/light.css',
+  '/app.js', '/veyns.js', '/qicons.js', '/qvcore.js', '/qvfx.js', '/qvdemo.js', '/vendor/wallet.js',
   '/manifest.webmanifest', '/icon.svg', '/icon-192.png', '/icon-512.png',
+  '/veyns-lockup-black.png', '/qufi-logo.png', '/quvault-logo.png', '/veyns-palm.webp',
 ];
 
 self.addEventListener('install', event => {
@@ -50,6 +51,20 @@ self.addEventListener('fetch', event => {
   if (request.mode === 'navigate') {
     event.respondWith(
       fetch(request).catch(() => caches.match('/', { ignoreSearch: true }).then(r => r || caches.match('/'))),
+    );
+    return;
+  }
+
+  // Code (CSS/JS): network-first, so a fresh build always wins; fall back to cache when offline.
+  if (/\.(css|js)$/.test(url.pathname)) {
+    event.respondWith(
+      fetch(request).then(response => {
+        if (response && response.ok && (response.type === 'basic' || response.type === 'cors')) {
+          const copy = response.clone();
+          caches.open(CACHE).then(cache => cache.put(request, copy)).catch(() => {});
+        }
+        return response;
+      }).catch(() => caches.match(request)),
     );
     return;
   }

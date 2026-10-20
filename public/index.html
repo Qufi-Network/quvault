@@ -7,21 +7,29 @@
   <meta name="description" content="Veyns Quantum Vault. Human gated security and biometric verification for digital assets — always know who signed the transaction.">
   <link rel="icon" href="/veyns-symbol-white.png" type="image/png">
   <link rel="manifest" href="/manifest.webmanifest">
-  <meta name="theme-color" content="#070a12">
+  <meta name="theme-color" content="#ffffff">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="Veyns">
   <link rel="apple-touch-icon" href="/icon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700;800;900&family=Fraunces:ital,opsz,wght@1,9..144,400;1,9..144,500;1,9..144,600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Sora:wght@300;400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/veyns.css">
   <link rel="stylesheet" href="/enterprise.css">
-  <link rel="stylesheet" href="/studio.css">
+  <link rel="stylesheet" href="/light.css">
   <script src="/app.js" type="module"></script>
   <script src="/veyns.js" type="module"></script>
+  <script src="/qicons.js" defer></script>
+  <script src="/qvcore.js" defer></script>
+  <script src="/qvaurora.js" defer></script>
+  <script src="/qvsplash.js" defer></script>
+  <script src="/qvblocks.js" defer></script>
+  <script src="/qvglx.js" defer></script>
+  <script src="/qvfx.js" defer></script>
+  <script src="/qvdemo.js" defer></script>
 </head>
 <body>
   <div class="field" aria-hidden="true"></div>
@@ -91,6 +99,24 @@
 
   <main id="view-signin" class="view en" hidden>
 
+    <!-- dark cinematic marketing nav -->
+    <header class="qv-nav" id="qv-nav">
+      <div class="qv-nav-in">
+        <a class="qv-brand" href="#home" aria-label="QuVault">
+          <img class="qv-brand-logo" src="/quvault-logo.png" alt="QuVault">
+        </a>
+        <nav class="qv-links">
+          <a href="#home">QuVault</a>
+          <a href="#tech">Technology</a>
+          <a href="#uses">Use Cases</a>
+          <a href="#security">Security</a>
+          <a href="#how">How it works</a>
+        </nav>
+        <a class="qv-demo" href="#demo">Request a Demo<span aria-hidden="true">→</span></a>
+        <button class="qv-burger" id="qv-burger" type="button" aria-label="Menu"><span></span><span></span></button>
+      </div>
+    </header>
+
     <!-- ============================================ hero (the one dark section) -->
     <section class="en-hero home-hero" id="home">
       <div class="en-hero-bed" aria-hidden="true">
@@ -100,40 +126,208 @@
         <div class="en-hero-veil"></div>
       </div>
 
-      <div class="en-hero-in">
-        <div class="en-hero-copy">
-          <p class="en-eyebrow light" data-reveal>Enterprise digital asset security</p>
-          <h1 data-reveal>Control<br>how <em>digital value</em><br>moves.</h1>
-          <p class="home-hero-sub" data-reveal>The programmable security layer for digital assets.</p>
-          <div class="en-hero-lede" data-reveal>
-            <p>Veyns Quantum Vault combines human authorization, programmable policy controls and
-              post quantum cryptography to give institutions precise control over how digital
-              value is protected and moved.</p>
-          </div>
-          <div class="en-hero-cta" data-reveal>
-            <button class="vx-btn solid lg" id="signin-browser" type="button" disabled>
-              Request enterprise access
-              <svg class="vx-chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.6 4.8 5.6 5.2-5.6 5.2"/></svg>
-            </button>
-            <a class="vx-btn ghost lg" href="#home-architecture">
-              Explore the security architecture
-              <svg class="vx-chev down" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.6 4.8 5.6 5.2-5.6 5.2"/></svg>
-            </a>
-          </div>
-          <button class="vx-palm-link" id="signin-palm" type="button" disabled>or sign in with your palm</button>
-          <p class="vx-error" id="signin-error" role="alert"></p>
-
-          <ul class="home-hero-marks" data-reveal>
-            <li>Human authorization</li>
-            <li>Policy control</li>
-            <li>Post quantum cryptography</li>
-            <li>Key protection</li>
-          </ul>
+      <canvas class="qv-aurora" aria-hidden="true"></canvas>
+      <div class="qv-hero-art" aria-hidden="true">
+        <div class="qv-hero-imgwrap">
+          <img class="qv-hero-img" src="/hero-scan.webp" alt="">
         </div>
-
-        <p class="en-hero-tags" data-reveal>Built for<br>institutional<br>digital assets</p>
+      </div>
+      <div class="qv-hero">
+        <div class="qv-hero-text">
+          <h1 class="qv-h1"><span>Post quantum security.</span><span class="qv-accent">Verified human control.</span></h1>
+          <p class="qv-powered">Powered by <img src="/veyns-lockup-black.png" alt="Veyns"></p>
+          <p class="qv-powered-sub">Human gated digital asset security.</p>
+          <p class="qv-hero-desc">A quantum secure digital asset vault combining Veyns powered palm vein biometrics and QuFi's institutional policy enforcement and independent verification to protect high value digital assets.</p>
+          <div class="qv-cta">
+            <button class="qv-btn primary" id="signin-palm" type="button" disabled>
+              <svg class="qv-btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 11a7 7 0 0 1 14 0v2"/><path d="M8.5 11a3.5 3.5 0 0 1 7 0v3.6"/><path d="M12 11v6.6"/><path d="M5 14.6v1.8"/><path d="M19 15v1.6"/></svg>
+              Sign in with your palm
+            </button>
+            <button class="qv-btn ghost" id="signin-browser" type="button" hidden disabled>Explore QuVault</button>
+          </div>
+          <p class="vx-error" id="signin-error" role="alert"></p>
+        </div>
       </div>
     </section>
+
+    <!-- capability strip -->
+    <section class="qv-cap">
+      <div class="qv-cap-in">
+        <article class="qv-cap-item">
+          <span class="qv-cap-fx"><canvas class="qv-glx" data-fx="fingerprint" aria-hidden="true"></canvas></span>
+          <h3>Biometric authentication</h3>
+          <p>Veyns powered palm vein biometrics for high assurance authorisation.</p>
+        </article>
+        <article class="qv-cap-item">
+          <span class="qv-cap-fx"><canvas class="qv-glx" data-fx="people" aria-hidden="true"></canvas></span>
+          <h3>Multi party control</h3>
+          <p>Supports institutional policies, roles and approval workflows.</p>
+        </article>
+        <article class="qv-cap-item">
+          <span class="qv-cap-fx"><canvas class="qv-glx" data-fx="check" aria-hidden="true"></canvas></span>
+          <h3>Independent verification</h3>
+          <p>Critical actions are recorded with verifiable evidence.</p>
+        </article>
+        <article class="qv-cap-item">
+          <span class="qv-cap-fx"><canvas class="qv-glx" data-fx="lattice" aria-hidden="true"></canvas></span>
+          <h3>Post quantum security</h3>
+          <p>Designed around quantum resistant cryptographic protection.</p>
+        </article>
+      </div>
+    </section>
+
+    <!-- value proposition -->
+    <section class="qv-value">
+      <div class="qv-value-in">
+        <p class="qv-label">The value proposition</p>
+        <h2>Stronger control for a<br>digital asset economy.</h2>
+        <p class="qv-value-lead">QuVault combines biometric identity, quantum wrapped keys and independent verification to give institutions stronger control, governance and transparency over digital assets.</p>
+        <ul class="qv-pillars">
+          <li>Human gated security</li>
+          <li>Institutional control</li>
+          <li>Verifiable actions</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- how QuVault works -->
+    <section class="qv-how" id="how">
+      <div class="qv-how-in">
+        <p class="qv-label">How QuVault works</p>
+        <h2>From access to accountability.</h2>
+        <ol class="qv-steps">
+          <li><span class="qv-step-head"><span class="qv-step-fx"><canvas class="qv-glx" data-fx="send" data-light aria-hidden="true"></canvas></span><span class="qv-step-n">01</span></span><h3>Action requested</h3><p>A transaction is initiated — a transfer, settlement or other high value action.</p></li>
+          <li><span class="qv-step-head"><span class="qv-step-fx"><canvas class="qv-glx" data-fx="rules" data-light aria-hidden="true"></canvas></span><span class="qv-step-n">02</span></span><h3>Policy checked</h3><p>Institutional rules, roles and approval requirements are validated against the request.</p></li>
+          <li><span class="qv-step-head"><span class="qv-step-fx"><canvas class="qv-glx" data-fx="palm" data-light aria-hidden="true"></canvas></span><span class="qv-step-n">03</span></span><h3>Palm authorisation</h3><p>The owner authorises with Veyns powered palm vein biometrics, and any required approvers add theirs.</p></li>
+          <li><span class="qv-step-head"><span class="qv-step-fx"><canvas class="qv-glx" data-fx="cube" data-light aria-hidden="true"></canvas></span><span class="qv-step-n">04</span></span><h3>Execution</h3><p>The approved transaction is executed under the applicable policy and cryptographic controls.</p></li>
+          <li><span class="qv-step-head"><span class="qv-step-fx"><canvas class="qv-glx" data-fx="ledger" data-light aria-hidden="true"></canvas></span><span class="qv-step-n">05</span></span><h3>Record</h3><p>The action is recorded with supporting evidence for independent verification and audit.</p></li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- Veyns biometric layer -->
+    <section class="qv-veyns" id="tech">
+      <canvas class="qv-splash" aria-hidden="true"></canvas>
+      <div class="qv-veyns-in">
+        <div class="qv-veyns-text">
+          <p class="qv-label">Veyns biometric layer</p>
+          <h2>Your assets.<br>Your identity.<br>Your authority.</h2>
+          <p>Veyns powers the human gated authorisation layer within QuVault, connecting biometric identity to controlled digital asset access and institutional approval workflows.</p>
+          <p class="qv-powered"><span>Powered by</span><img src="/veyns-lockup-black.png" alt="Veyns"></p>
+        </div>
+        <div class="qv-veyns-art">
+          <div class="qv-palm-wrap qv-veyns-wrap" data-reveal-up>
+            <img class="qv-palm qv-veyns-palm" src="/veyns-palm.webp" alt="">
+            <span class="qv-core"></span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- institutional use cases -->
+    <section class="qv-uses" id="uses">
+      <div class="qv-uses-in">
+        <p class="qv-label">Institutional use cases</p>
+        <h2>Built for institutions moving<br>serious digital value.</h2>
+        <div class="qv-use-grid">
+          <article class="qv-use">
+            <span class="qv-use-fx"><canvas class="qv-glx" data-fx="building" data-light aria-hidden="true"></canvas></span>
+            <h3>Corporate treasury</h3>
+            <p>Secure governance for high value digital asset holdings and treasury operations.</p>
+          </article>
+          <article class="qv-use">
+            <span class="qv-use-fx"><canvas class="qv-glx" data-fx="shield" data-light aria-hidden="true"></canvas></span>
+            <h3>Custody providers</h3>
+            <p>Enhanced authorisation, governance and evidence for institutional custody workflows.</p>
+          </article>
+          <article class="qv-use">
+            <span class="qv-use-fx"><canvas class="qv-glx" data-fx="swap" data-light aria-hidden="true"></canvas></span>
+            <h3>Exchanges</h3>
+            <p>Institutional wallet security, operational controls and transaction approval.</p>
+          </article>
+          <article class="qv-use">
+            <span class="qv-use-fx"><canvas class="qv-glx" data-fx="chart" data-light aria-hidden="true"></canvas></span>
+            <h3>Funds and asset managers</h3>
+            <p>Policy based authorisation and auditable control over managed digital assets.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- security architecture -->
+    <section class="qv-sec" id="security">
+      <div class="qv-sec-in">
+        <p class="qv-label">Security architecture</p>
+        <h2>Security built around verification.</h2>
+        <div class="qv-sec-grid">
+          <article class="qv-sec-item"><span class="qv-sec-fx"><canvas class="qv-glx" data-fx="scan" data-light aria-hidden="true"></canvas></span><span class="qv-sec-n">01</span><h3>Biometric authorisation</h3><p>The Veyns powered human authorisation layer.</p></article>
+          <article class="qv-sec-item"><span class="qv-sec-fx"><canvas class="qv-glx" data-fx="gate" data-light aria-hidden="true"></canvas></span><span class="qv-sec-n">02</span><h3>Policy enforcement</h3><p>Rules, permissions and approval requirements applied to relevant operations.</p></article>
+          <article class="qv-sec-item"><span class="qv-sec-fx"><canvas class="qv-glx" data-fx="key" data-light aria-hidden="true"></canvas></span><span class="qv-sec-n">03</span><h3>Post quantum cryptography</h3><p>Quantum resistant mechanisms designed to protect keys and transactions.</p></article>
+          <article class="qv-sec-item"><span class="qv-sec-fx"><canvas class="qv-glx" data-fx="audit" data-light aria-hidden="true"></canvas></span><span class="qv-sec-n">04</span><h3>Independent verification</h3><p>Evidence that supports independent checking and institutional audit.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <!-- final call to action -->
+    <section class="qv-final" id="demo">
+      <canvas class="qv-blocks qv-final-gl" aria-hidden="true"></canvas>
+      <div class="qv-final-in">
+        <h2>Move from access<br>to accountability.</h2>
+        <p>Explore how QuVault, powered by Veyns, can support stronger authorisation, institutional governance and verifiable digital asset security.</p>
+        <a class="qv-btn primary lg" href="#home">Request an institutional demo<span aria-hidden="true">→</span></a>
+      </div>
+    </section>
+
+    <!-- request a demo — messaging panel -->
+    <div class="qd-modal" id="qd-modal" hidden>
+      <div class="qd-backdrop" data-qd-close></div>
+      <div class="qd-card" role="dialog" aria-modal="true" aria-labelledby="qd-title">
+        <button class="qd-x" type="button" data-qd-close aria-label="Close">&times;</button>
+        <div class="qd-head">
+          <span class="qd-ava" aria-hidden="true"></span>
+          <div>
+            <p class="qd-title" id="qd-title">Request a demo</p>
+            <p class="qd-sub">QuVault · powered by Veyns</p>
+          </div>
+          <span class="qd-dot" aria-hidden="true"></span>
+        </div>
+        <div class="qd-thread" id="qd-thread">
+          <div class="qd-msg qd-in">Tell us about your institution and what you'd like to see. We'll route this to the QuFi and Veyns teams.</div>
+        </div>
+        <form class="qd-form" id="qd-form">
+          <div class="qd-row">
+            <input class="qd-field" id="qd-name" type="text" placeholder="Your name" autocomplete="name" required>
+            <input class="qd-field" id="qd-email" type="email" placeholder="Work email" autocomplete="email" required>
+          </div>
+          <input class="qd-field" id="qd-org" type="text" placeholder="Organisation" autocomplete="organization">
+          <textarea class="qd-field qd-text" id="qd-body" rows="3" placeholder="What would you like to discuss?"></textarea>
+          <button class="qd-send" type="submit">Send message<span aria-hidden="true">→</span></button>
+          <p class="qd-note">Routes to info@qufi.network · cc info@veyns.io</p>
+        </form>
+      </div>
+    </div>
+
+    <!-- footer -->
+    <footer class="qv-footer">
+      <div class="qv-footer-in">
+        <div class="qv-footer-top">
+          <div class="qv-footer-brand">
+            <img class="qv-footer-logo" src="/quvault-logo.png" alt="QuVault">
+            <p>Powered by <img class="qv-footer-veyns" src="/veyns-lockup-black.png" alt="Veyns"></p>
+          </div>
+          <nav class="qv-footer-nav">
+            <a href="#home">QuVault</a>
+            <a href="#tech">Technology</a>
+            <a href="#uses">Use Cases</a>
+            <a href="#security">Security</a>
+            <a href="#how">How it works</a>
+            <a href="https://veyns.io" target="_blank" rel="noopener noreferrer">Veyns</a>
+            <a href="https://qufi.network" target="_blank" rel="noopener noreferrer">qufi.network</a>
+          </nav>
+        </div>
+        <p class="qv-footer-note">QuVault is the institutional digital asset vault within the QuFi Quantum Verification Network, powered by Veyns for human gated biometric authorisation. QuFi QPL is coming soon.</p>
+      </div>
+    </footer>
 
     <div class="wz-marquee" aria-hidden="true"><div class="wz-track"><span><em>Human</em> authorisation</span><span><em>Programmable</em> policy</span><span><em>Post</em> quantum cryptography</span><span><em>Key</em> protection</span><span><em>Multi</em> party control</span><span><em>Verifiable</em> evidence</span><span><em>Human</em> authorisation</span><span><em>Programmable</em> policy</span><span><em>Post</em> quantum cryptography</span><span><em>Key</em> protection</span><span><em>Multi</em> party control</span><span><em>Verifiable</em> evidence</span></div></div>
 
