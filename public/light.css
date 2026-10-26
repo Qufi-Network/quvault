@@ -374,7 +374,7 @@ body:has(#view-signin:not([hidden])) header.top { display: none !important; }
    The authenticated app (style.css) is dark and fully tokenised. Redefining its tokens on the app
    view containers recolours the whole wallet to the site's white palette, without touching the
    marketing views. */
-#view-loading, #view-setup, #view-create, #view-wallet, #approval {
+#view-loading, #view-setup, #view-create, #view-wallet, #approval, #receipt {
   --page: #ffffff;
   --surface: #ffffff;
   --surface-2: #f3f6fc;
@@ -399,7 +399,7 @@ body:has(#view-signin:not([hidden])) header.top { display: none !important; }
   color: var(--text);
 }
 /* the danger/ok tints read on white without being neon */
-#view-setup, #view-create, #view-wallet, #approval { --danger: #d4334a; --ok: #0c8a52; }
+#view-setup, #view-create, #view-wallet, #approval, #receipt { --danger: #d4334a; --ok: #0c8a52; }
 
 /* ---------------------------------------------------------------- wallet — Ledger-clean layer
    Calmer surfaces, one accent, generous whitespace, so the signed-in app reads like a product from

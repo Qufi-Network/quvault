@@ -104,6 +104,23 @@ export function createChain({ apiUrl, fetchImpl = globalThis.fetch }) {
         return { known: null, confirmed: false, blockHeight: null };
       }
     },
+
+    /*
+     * The whole transaction, so a receipt can be reconciled against the chain. Each input carries
+     * the value of the coin it spends (from its prevout), which is what the canonical transaction
+     * needs to be rebuilt and re-digested exactly as it was signed.
+     */
+    async transaction(txid) {
+      const tx = await call(`/tx/${txid}`);
+      return {
+        txid: tx.txid,
+        confirmed: Boolean(tx.status?.confirmed),
+        blockHeight: tx.status?.block_height ?? null,
+        feeSats: tx.fee ?? 0,
+        inputs: (tx.vin || []).map(input => ({ txid: input.txid, index: input.vout, value: input.prevout?.value ?? null })),
+        outputs: (tx.vout || []).map(output => ({ address: output.scriptpubkey_address ?? null, sats: output.value })),
+      };
+    },
   };
 }
 

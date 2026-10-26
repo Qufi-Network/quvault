@@ -1966,6 +1966,93 @@ function checkLineage(data) {
 
 /* ------------------------------------------------------------ receipt */
 
+/*
+ * Reconciling a receipt against the chain, computed HERE so it does not rest on the server's word.
+ *
+ * canonicalJson / canonicalTransaction mirror src/canonical.js exactly, and the digest mirrors
+ * src/veyns.js (base64url SHA-256 over the canonical bytes). The transaction is fetched through
+ * our own server (the CSP forbids the page calling an explorer), but the digest is recomputed in
+ * this browser and compared to the one the receipt committed to.
+ */
+function canonicalJson(value) {
+  const canon = v => {
+    if (Array.isArray(v)) return `[${v.map(item => canon(item) ?? 'null').join(',')}]`;
+    if (v && typeof v === 'object') {
+      const pairs = [];
+      for (const key of Object.keys(v).sort()) {
+        const text = canon(v[key]);
+        if (text !== undefined) pairs.push(`${JSON.stringify(key)}:${text}`);
+      }
+      return `{${pairs.join(',')}}`;
+    }
+    return JSON.stringify(v);
+  };
+  const text = canon(value);
+  if (text === undefined) throw new TypeError('There is no canonical form of undefined.');
+  return text;
+}
+
+function canonicalTransaction({ chain, network, from, plan }) {
+  return {
+    v: 1, chain, network, from,
+    inputs: [...plan.inputs]
+      .map(input => ({ txid: input.txid, index: input.index, value: input.value }))
+      .sort((a, b) => (a.txid === b.txid ? a.index - b.index : a.txid < b.txid ? -1 : 1)),
+    outputs: plan.outputs.map(output => ({ address: output.address, sats: output.sats })),
+    feeSats: plan.feeSats,
+  };
+}
+
+async function sha256Base64Url(text) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  let binary = '';
+  for (const byte of new Uint8Array(digest)) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+async function verifyReceiptOnChain(record, txid, resultEl) {
+  resultEl.hidden = false;
+  resultEl.className = 'verify-result';
+  resultEl.replaceChildren(el('p', { class: 'quiet small' }, 'Reading the transaction from the chain…'));
+  try {
+    const tx = await api(`/api/chain/tx/${txid}`);
+    if ((tx.inputs || []).some(i => i.value == null)) {
+      throw new Error('The chain has not filled in every input value yet — try again in a moment.');
+    }
+    const rebuilt = canonicalTransaction({
+      chain: record.chain || 'bitcoin',
+      network: record.network || 'testnet4',
+      from: record.vaultId,
+      plan: { inputs: tx.inputs, outputs: tx.outputs, feeSats: tx.feeSats },
+    });
+    const digest = await sha256Base64Url(canonicalJson(rebuilt));
+    const matches = digest === record.transactionHash;
+    const recipients = (tx.outputs || []).filter(o => o.address && o.address !== record.vaultId);
+    const paid = recipients.reduce((sum, o) => sum + o.sats, 0);
+    resultEl.className = `verify-result ${matches ? 'ok' : 'bad'}`;
+    resultEl.replaceChildren(
+      el('p', { class: 'verify-head' }, matches ? '✓ Verified against the chain' : '✗ Does not match the chain'),
+      el('ul', { class: 'verify-list' },
+        el('li', {}, 'ML-DSA-65 signature, palm approved — already checked in this browser'),
+        el('li', { class: matches ? 'ok' : 'bad' }, matches
+          ? 'The receipt’s transaction digest is the digest of this exact on-chain transaction'
+          : 'This on-chain transaction does not reproduce the receipt’s digest'),
+        el('li', {}, tx.confirmed
+          ? `Confirmed on-chain${tx.blockHeight ? ` at block ${tx.blockHeight.toLocaleString()}` : ''}`
+          : 'Seen by the network, waiting to confirm'),
+        recipients.length
+          ? el('li', {}, `Pays ${fmtSats(paid)} sats to ${recipients.map(r => shortId(r.address)).join(', ')}`)
+          : null),
+      el('p', { class: 'fine mono' }, `digest ${digest.slice(0, 14)}…  ·  receipt ${String(record.transactionHash).slice(0, 14)}…`),
+      el('a', { class: 'link', href: `https://mempool.space/testnet4/tx/${txid}`, target: '_blank', rel: 'noopener' }, 'Open on mempool.space'));
+  } catch (error) {
+    resultEl.className = 'verify-result bad';
+    resultEl.replaceChildren(
+      el('p', { class: 'verify-head' }, 'Could not verify'),
+      el('p', { class: 'quiet small' }, friendly(error)));
+  }
+}
+
 function showReceipt(receipt, txid) {
   if (!receipt || receipt.error) return;
   const record = receipt.authorization.record;
@@ -1991,6 +2078,12 @@ function showReceipt(receipt, txid) {
     ...(txid ? { txid } : {}),
   }));
   state.receipt = receipt;
+  // the chain verifier, offered only once there is a broadcast txid to reconcile against
+  const verifyResult = $('receipt-verify-result');
+  verifyResult.hidden = true;
+  verifyResult.replaceChildren();
+  $('receipt-verify').hidden = !txid;
+  $('receipt-verify').onclick = txid ? () => verifyReceiptOnChain(record, txid, verifyResult) : null;
   $('receipt').showModal();
 }
 

@@ -896,6 +896,18 @@ dialog::backdrop { background: rgba(3, 5, 10, .72); backdrop-filter: blur(3px); 
 .sheet-foot.end { justify-content: flex-end; }
 .sheet-foot .btn.sm, .sheet-foot .btn.small { height: 38px; padding: 0 18px; font-size: 14px; }
 
+/* the on-chain verifier panel inside the receipt */
+.verify-result { border-radius: 12px; padding: 12px 14px; font: 500 13px/1.5 var(--sans); border: 1px solid var(--hair); background: var(--surface-2); display: grid; gap: 7px; }
+.verify-result.ok { border-color: rgba(12, 138, 82, .4); background: rgba(12, 138, 82, .07); }
+.verify-result.bad { border-color: rgba(212, 51, 74, .4); background: rgba(212, 51, 74, .07); }
+.verify-head { margin: 0; font-weight: 700; font-size: 14px; letter-spacing: -.01em; }
+.verify-result.ok .verify-head { color: var(--ok); }
+.verify-result.bad .verify-head { color: var(--danger); }
+.verify-list { margin: 0; padding-left: 18px; display: grid; gap: 4px; color: var(--text-2); }
+.verify-list li.ok { color: var(--ok); }
+.verify-list li.bad { color: var(--danger); }
+.verify-result .fine.mono { margin: 0; font-family: var(--mono); font-size: 11px; color: var(--faint); overflow-wrap: anywhere; }
+
 .network-list { display: grid; gap: 7px; }
 .network-choice {
   display: flex;

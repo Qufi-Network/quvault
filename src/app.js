@@ -2300,6 +2300,21 @@ export function createApp(options) {
    * Erasing the vault and starting over. The palm statement names the address, what it holds
    * and what is destroyed, so nobody approves this without having read it.
    */
+  /*
+   * A read-only relay of one transaction from the chain API, so the page can reconcile a receipt
+   * against what was broadcast without talking to an explorer itself (the CSP forbids that). It
+   * returns public chain data only — nothing of this vault the chain does not already show.
+   */
+  async function chainTransaction({ params: [txid] }) {
+    try {
+      return await chain.transaction(txid);
+    } catch (error) {
+      const missing = error?.status === 404;
+      throw new HttpError(missing ? 404 : 502,
+        missing ? 'The network has not seen that transaction yet.' : 'Could not read that transaction from the network.');
+    }
+  }
+
   /** Everything an independent check of one authorisation needs, and nothing private. */
   async function getReceipt({ user, params: [id] }) {
     const op = await ownOperation(id, user);
@@ -3234,6 +3249,7 @@ export function createApp(options) {
     { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/broadcast$/, handler: broadcastSigned, auth: true, limit: RATE.unlock },
     { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/signature$/, handler: addSignature, auth: true, limit: RATE.unlock },
     { method: 'GET', path: /^\/api\/operations\/([\w-]{8,64})\/receipt$/, handler: getReceipt, auth: true },
+    { method: 'GET', path: /^\/api\/chain\/tx\/([0-9a-f]{64})$/, handler: chainTransaction, auth: true },
     { method: 'POST', path: '/api/policy', handler: requestPolicy, auth: true, limit: RATE.palm },
     { method: 'POST', path: '/api/recovery', handler: requestRecovery, auth: true, limit: RATE.palm },
     { method: 'POST', path: '/api/accounts/approval', handler: requestAccount, auth: true, limit: RATE.palm },

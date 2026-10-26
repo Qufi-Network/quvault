@@ -2818,6 +2818,8 @@
       <ul class="ticks" id="receipt-ticks"></ul>
       <dl class="details" id="receipt-details"></dl>
       <p class="fine">This record carries no biometric data. It says a palm approval covering this exact transaction was verified, and it is signed with ML-DSA-65 so anyone can check that for themselves.</p>
+      <button class="btn ghost sm" id="receipt-verify" type="button" hidden>Verify against the chain</button>
+      <div class="verify-result" id="receipt-verify-result" hidden></div>
       <footer class="sheet-foot">
         <button class="link" id="receipt-copy" type="button">Copy the record</button>
         <button class="btn brand sm" id="receipt-ok" type="button">Done</button>
