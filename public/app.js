@@ -943,6 +943,15 @@ function configureSendForm(account) {
 function renderAccountSend(account, data) {
   $('send-form').hidden = !account.canSend;
   if (account.canSend) configureSendForm(account);
+  // Say WHY there is nothing to spend, so "no confirmed coins" never reads as a bug while a
+  // balance sits visibly on the page, still confirming. The client knows the pending split; the
+  // server-side planSpend only sees confirmed coins, so the clear version belongs here.
+  const noSpendable = account.network === 'bitcoin' && account.canSend && !data.coins;
+  const pendingSats = data.balance?.pending || 0;
+  $('send-error').textContent = !noSpendable ? ''
+    : pendingSats
+      ? `${fmtSats(pendingSats)} sats are still confirming on the network — you can send once they confirm. On testnet4 a confirmation can take a while.`
+      : 'No coins here yet. Use Receive to add testnet4 coins, then you can send.';
   $('send-rule-note').textContent = account.canSend ? `This account: ${account.rulesText}.` : '';
   $('fee-note').textContent = account.family === 'evm'
     ? 'Gas is estimated for you at send time.'

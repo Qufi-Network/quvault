@@ -112,7 +112,7 @@ function inputVsize(lock) {
  */
 export function planSpend({ publicKey, publicKeys, required, utxos, toAddress, amountSats, feeRate }) {
   if (!isValidAddress(toAddress)) throw new WalletError('That is not a valid testnet4 address.');
-  if (!utxos.length) throw new WalletError('This wallet has no confirmed coins yet.');
+  if (!utxos.length) throw new WalletError('No confirmed coins to spend yet — coins need at least one confirmation on the network before they can be sent.');
   const lock = lockOf({ publicKey, publicKeys, required });
   const { script, address } = lock;
   const spendable = utxos.map(u => ({
