@@ -428,12 +428,18 @@ body:has(#view-signin:not([hidden])) header.top { display: none !important; }
 /* tabs row */
 #view-wallet [role="tablist"], #view-wallet .tabs { gap: 4px; }
 
-/* app header — QuVault brand, clean white (shown only in the signed-in app) */
-body:has(#view-signin[hidden]) header.top,
-body:has(#view-wallet:not([hidden])) header.top,
-body:has(#view-create:not([hidden])) header.top,
-body:has(#view-setup:not([hidden])) header.top { background: rgba(255, 255, 255, .92); backdrop-filter: blur(12px); border-bottom: 1px solid var(--line); color: var(--ink); }
-header.top .mark-quvault { height: 26px; width: auto; display: block; }
+/* app header — QuVault brand, clean white. The header is only ever shown inside the signed-in
+   app (it is display:none on the marketing view), so it can be styled unconditionally — no
+   :has() gate that could miss a view and fall back to the dark base. */
+header.top {
+  background: rgba(255, 255, 255, .96) !important;
+  backdrop-filter: saturate(140%) blur(14px);
+  -webkit-backdrop-filter: saturate(140%) blur(14px);
+  border-bottom: 1px solid var(--line) !important;
+  color: var(--ink);
+  padding: 14px clamp(18px, 4vw, 34px);
+}
+header.top .mark-quvault { height: 23px !important; width: auto; display: block; }
 header.top .who { display: inline-flex; align-items: center; gap: 12px; font-family: 'Inter', system-ui, sans-serif; }
 /* network chip — a quiet, capitalised testnet marker, not a heavy black pill */
 header.top .chip, header.top #network-chip {
@@ -456,3 +462,46 @@ header.top .link {
   transition: color .15s var(--ease), background-color .15s var(--ease), border-color .15s var(--ease);
 }
 header.top .link:hover { color: var(--ink); background: var(--wash); border-color: var(--line); }
+
+/* ───────────────────────────── dashboard — cutting-edge overview polish ───────────────────────────
+   All scoped to #view-wallet so only the signed-in dashboard changes, never the marketing page. */
+#view-wallet .pane-head .eyebrow { color: var(--blue); letter-spacing: .18em; }
+#view-wallet .pane-title { letter-spacing: -.032em; }
+
+/* balance hero: a calm premium card — faint blue wash, hairline edge, soft depth, crisp figure */
+#view-wallet .card.total {
+  position: relative;
+  padding: 26px 28px;
+  background:
+    radial-gradient(120% 150% at 100% 0%, rgba(21, 94, 239, .07), transparent 46%),
+    linear-gradient(180deg, #ffffff, #fbfcff);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, .9) inset, 0 22px 48px -34px rgba(13, 30, 70, .5);
+}
+#view-wallet .card.total::before {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px;
+  border-radius: 20px 20px 0 0;
+  background: linear-gradient(90deg, transparent, rgba(21, 94, 239, .55), transparent);
+  opacity: .55;
+}
+#view-wallet .card.total .amount {
+  color: var(--ink);
+  letter-spacing: -.035em;
+  font-size: clamp(32px, 4.2vw, 50px);
+}
+#view-wallet .card.total .amount .unit { color: var(--blue); opacity: .92; }
+#view-wallet .card.total .total-head .eyebrow { color: var(--faint, #6b7890); text-transform: uppercase; letter-spacing: .09em; }
+#view-wallet .chart-price { color: var(--ink); }
+
+/* segmented range control (Day / Week / Month / 3M): white pill on a hairline track */
+#view-wallet .ranges { background: #f3f6fc; border: 1px solid var(--line); border-radius: 12px; padding: 3px; gap: 2px; }
+#view-wallet .ranges .chip.pick { color: var(--body); border-radius: 9px; font-weight: 600; }
+#view-wallet .ranges .chip.pick:hover { color: var(--ink); }
+#view-wallet .ranges .chip.pick.on {
+  background: #fff; color: var(--blue-deep);
+  box-shadow: 0 1px 2px rgba(13, 30, 70, .12), 0 0 0 1px var(--line);
+}
+
+/* lane headings a touch tighter */
+#view-wallet .lane-head h2 { letter-spacing: -.02em; }

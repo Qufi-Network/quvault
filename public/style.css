@@ -819,12 +819,15 @@ select { padding: 0 10px; }
 
 dialog {
   width: min(540px, calc(100% - 28px));
+  max-height: min(90vh, 860px);
+  margin: auto;                 /* dead-centre in the viewport for showModal() */
   padding: 0;
   border: 0;
   border-radius: var(--r-xl);
   background: var(--surface);
   color: var(--text);
   box-shadow: var(--lift-3);
+  overflow: hidden;             /* keep the rounded corners; the sheet scrolls inside */
 }
 dialog::backdrop { background: rgba(3, 5, 10, .72); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); }
 
@@ -835,8 +838,8 @@ dialog::backdrop { background: rgba(3, 5, 10, .72); backdrop-filter: blur(3px); 
   @keyframes fade-in { from { opacity: 0; } }
 }
 
-.sheet { display: grid; gap: 13px; padding: 22px 24px 18px; }
-.sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.sheet { display: grid; gap: 13px; padding: 22px 24px 18px; max-height: min(90vh, 860px); overflow-y: auto; overscroll-behavior: contain; }
+.sheet-head { position: sticky; top: -1px; z-index: 2; margin: -22px -24px 0; padding: 18px 24px 12px; background: var(--surface); border-bottom: 1px solid var(--hair); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .sheet-head .icon-btn.close { margin: -4px -8px -4px 0; }
 .pulseline { display: flex; align-items: center; gap: 9px; }
 .pulseline::before {
