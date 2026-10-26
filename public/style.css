@@ -838,7 +838,7 @@ dialog::backdrop { background: rgba(3, 5, 10, .72); backdrop-filter: blur(3px); 
   @keyframes fade-in { from { opacity: 0; } }
 }
 
-.sheet { display: grid; gap: 13px; padding: 22px 24px 18px; max-height: min(90vh, 860px); overflow-y: auto; overscroll-behavior: contain; }
+.sheet { display: grid; gap: 13px; padding: 22px 24px 18px; max-height: min(92vh, 880px); overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
 .sheet-head { position: sticky; top: -1px; z-index: 2; margin: -22px -24px 0; padding: 18px 24px 12px; background: var(--surface); border-bottom: 1px solid var(--hair); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .sheet-head .icon-btn.close { margin: -4px -8px -4px 0; }
 .pulseline { display: flex; align-items: center; gap: 9px; }
@@ -851,20 +851,30 @@ dialog::backdrop { background: rgba(3, 5, 10, .72); backdrop-filter: blur(3px); 
   box-shadow: 0 0 0 4px var(--brand-tint);
 }
 .eyebrow.seal { color: var(--brand); }
-.statement { font: 600 clamp(20px, 3.4vw, 24px)/1.22 var(--sans); letter-spacing: -.03em; }
+.statement { font: 600 clamp(18px, 2.9vw, 22px)/1.25 var(--sans); letter-spacing: -.03em; overflow-wrap: anywhere; }
 .quorum { font-size: 13.5px; color: var(--brand); }
 
-.details { margin: 0; border-top: 1px solid var(--hair); }
+/* Two columns of fields on desktop so a long approval fits without scrolling; each cell stacks
+   its label over its value. Collapses to one column on a phone. */
+.details {
+  margin: 0;
+  border-top: 1px solid var(--hair);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 26px;
+}
 .details > div {
   display: grid;
-  grid-template-columns: 132px minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 3px;
   padding: 9px 0;
   border-bottom: 1px solid var(--hair);
   font-size: 13.5px;
+  min-width: 0;
 }
+@media (max-width: 560px) { .details { grid-template-columns: 1fr; } }
 .details dt { font: 500 11px/1.6 var(--sans); letter-spacing: .05em; text-transform: uppercase; color: var(--faint); }
-.details dd { margin: 0; font-family: var(--mono); font-size: 12.5px; color: var(--text-2); overflow-wrap: anywhere; }
+.details dd { margin: 0; font-family: var(--mono); font-size: 12.5px; color: var(--text-2); overflow-wrap: anywhere; min-width: 0; }
 
 .wait { display: grid; grid-template-columns: auto 1fr; gap: 8px 13px; align-items: center; }
 .wait p { font-size: 14px; color: var(--text-2); }
