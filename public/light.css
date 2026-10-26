@@ -437,8 +437,21 @@ header.top {
   -webkit-backdrop-filter: saturate(140%) blur(14px);
   border-bottom: 1px solid var(--line) !important;
   color: var(--ink);
-  padding: 14px clamp(18px, 4vw, 34px);
+  display: block;
+  padding: 0;
 }
+/* inner row mirrors .shell exactly (max-width 1340 / 28px), so the logo lines up with the
+   sidebar + content column at every width instead of hugging the window edge */
+header.top .top-in {
+  max-width: 1340px;
+  margin: 0 auto;
+  padding: 13px 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+@media (max-width: 860px) { header.top .top-in { padding: 11px 16px; } }
 header.top .mark-quvault { height: 23px !important; width: auto; display: block; }
 header.top .who { display: inline-flex; align-items: center; gap: 12px; font-family: 'Inter', system-ui, sans-serif; }
 /* network chip — a quiet, capitalised testnet marker, not a heavy black pill */
