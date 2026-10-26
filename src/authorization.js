@@ -117,6 +117,40 @@ function verificationFrom(evidence, transactionHash) {
   };
 }
 
+/**
+ * Maps a VERIFIED Veyns palm-decision's measurement claims to the evidence object this module
+ * consumes. Honest by construction: a check is only PASSED when Veyns said "pass", and the result
+ * is handed back ONLY when it is fully usable — a missing claim, a "fail", a "not_performed" or an
+ * absent attestation returns null, which `signAuthorizationV2` records as sensorEvidence: "none"
+ * with no partial scanner fields leaking into a record that claims nothing was measured.
+ *
+ * `bindingNonce` is the transaction the palm approved: the caller passes the operation's
+ * transactionHash, which is exactly what the receipt binds the evidence to. The caller must only
+ * pass claims from a token it has already verified AND whose action digest matches this operation.
+ */
+export function evidenceFromVeynsClaims(claims, bindingNonce) {
+  if (!claims || typeof claims !== 'object' || !bindingNonce) return null;
+  const verdict = value =>
+    value === 'pass' ? { result: SCANNER.PASSED, performed: true }
+    : value === 'fail' ? { result: SCANNER.FAILED, performed: true }
+    : { result: SCANNER.NOT_PERFORMED, performed: false };
+  const evidence = {
+    provider: typeof claims.veyns_provider === 'string' ? claims.veyns_provider : 'veyns',
+    pad: verdict(claims.veyns_pad),
+    biometric: verdict(claims.veyns_match),
+    // The attestation is carried, ES256-signed, inside the decision token the caller already
+    // verified, so a present attestation counts as performed here. A device-signed attestation a
+    // third party can check independently would be stronger; see VEYNS-PALM-EVIDENCE.md.
+    attestation: claims.veyns_attestation
+      ? { result: SCANNER.PASSED, performed: true, signature: String(claims.veyns_attestation) }
+      : { result: SCANNER.NOT_PERFORMED, performed: false },
+    scannerClass: claims.veyns_scanner_class ? String(claims.veyns_scanner_class) : null,
+    captureReference: claims.veyns_capture ? String(claims.veyns_capture) : null,
+    bindingNonce,
+  };
+  return evidenceIsUsable(evidence).ok ? evidence : null;
+}
+
 export function signAuthorizationV2(parts, keys, evidence = null) {
   const absent = V2_REQUIRED_PARTS.filter(name => !parts?.[name]);
   if (absent.length) {
