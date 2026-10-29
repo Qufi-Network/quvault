@@ -2003,13 +2003,6 @@ function canonicalTransaction({ chain, network, from, plan }) {
   };
 }
 
-async function sha256Base64Url(text) {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
-  let binary = '';
-  for (const byte of new Uint8Array(digest)) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
 async function verifyReceiptOnChain(record, txid, resultEl) {
   resultEl.hidden = false;
   resultEl.className = 'verify-result';
