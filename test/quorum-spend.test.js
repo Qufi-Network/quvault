@@ -28,9 +28,10 @@ async function signingKey(env, client, vaultOwnerId, phrase) {
   return key;
 }
 
-async function joins(env, owner, guest, label) {
+async function joins(env, owner, guest, label, approvers = [owner]) {
   const { operation } = ok(await owner.post('/api/invites/approval', { network: 'bitcoin', label }));
-  for (let i = 0; i < operation.required; i++) await palmApprove(env, owner, operation.id);
+  // Once a vault is shared, inviting another signer needs the quorum, not the owner alone.
+  for (let i = 0; i < operation.required; i++) await palmApprove(env, approvers[i], operation.id);
   const { invites } = ok(await owner.get('/api/invites'));
   const join = ok(await guest.post('/api/invites/join', { code: invites[0].code }));
   await palmApprove(env, guest, join.operation.id);
@@ -43,7 +44,7 @@ async function locked(env, required = 2) {
   const cara = await signedIn(env, 'sub-cara');
   for (const who of [alex, bea, cara]) await walletFor(env, who);
   await joins(env, alex, bea, 'Bea');
-  await joins(env, alex, cara, 'Cara');
+  await joins(env, alex, cara, 'Cara', [alex, bea]);
   await signingKey(env, alex, alex.id, PHRASES.alex);
   await signingKey(env, bea, alex.id, PHRASES.bea);
   await signingKey(env, cara, alex.id, PHRASES.cara);

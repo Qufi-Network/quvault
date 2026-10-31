@@ -28,9 +28,10 @@ async function signingKey(env, client, vaultOwnerId, phrase) {
 }
 
 /** Somebody joining a vault by invitation, the ordinary way. */
-async function joins(env, owner, guest, label) {
+async function joins(env, owner, guest, label, approvers = [owner]) {
   const { operation } = ok(await owner.post('/api/invites/approval', { network: 'bitcoin', label }));
-  for (let i = 0; i < operation.required; i++) await palmApprove(env, owner, operation.id);
+  // Once a vault is shared, inviting another signer needs the quorum, not the owner alone.
+  for (let i = 0; i < operation.required; i++) await palmApprove(env, approvers[i], operation.id);
   const { invites } = ok(await owner.get('/api/invites'));
   const join = ok(await guest.post('/api/invites/join', { code: invites[0].code }));
   await palmApprove(env, guest, join.operation.id);
@@ -45,7 +46,7 @@ async function vaultOfThree(env, { coins = 900_000 } = {}) {
   await walletFor(env, bea);
   await walletFor(env, cara);
   await joins(env, alex, bea, 'Bea');
-  await joins(env, alex, cara, 'Cara');
+  await joins(env, alex, cara, 'Cara', [alex, bea]);
 
   const keys = {
     alex: await signingKey(env, alex, alex.id, PHRASES.alex),
@@ -111,10 +112,11 @@ test('a threshold the chain cannot keep is refused before anybody approves it', 
   const env = await start(t);
   const { alex } = await vaultOfThree(env);
 
-  for (const required of [0, 4, 2.5, 'two', null]) {
+  // One signature is no longer a valid quorum either: a shared vault's floor is two.
+  for (const required of [0, 1, 4, 2.5, 'two', null]) {
     const attempt = await alex.post('/api/accounts/lock', { required });
     assert.equal(attempt.status, 400, `required=${required} should not be allowed`);
-    assert.match(attempt.body.error, /between one and 3/);
+    assert.match(attempt.body.error, /between 2 and 3/);
   }
 
   // A vault with nobody else in it has no quorum to lock to.
@@ -128,11 +130,12 @@ test('a threshold the chain cannot keep is refused before anybody approves it', 
 
 test('a lock that cannot be sent leaves the account exactly as it was', async t => {
   const env = await start(t);
-  const { alex } = await vaultOfThree(env);
+  const { alex, bea } = await vaultOfThree(env);
   const before = ok(await alex.get('/api/wallet')).accounts[0].address;
 
   const asked = ok(await alex.post('/api/accounts/lock', { required: 2 }));
   await palmApprove(env, alex, asked.operation.id);
+  await palmApprove(env, bea, asked.operation.id);
 
   env.world.chain.broadcastError = 'min relay fee not met';
   await assert.rejects(() => signAndSend(env, alex, asked.operation.id));
@@ -144,13 +147,14 @@ test('a lock that cannot be sent leaves the account exactly as it was', async t 
 
 test('an account with no coins locks without a transaction', async t => {
   const env = await start(t);
-  const { alex } = await vaultOfThree(env, { coins: 0 });
+  const { alex, bea } = await vaultOfThree(env, { coins: 0 });
 
   const asked = ok(await alex.post('/api/accounts/lock', { required: 2 }));
   assert.equal(asked.plan, null);
   assert.match(asked.operation.statement, /^Lock my Bitcoin to 2 of 3 on the chain$/);
 
   await palmApprove(env, alex, asked.operation.id);
+  await palmApprove(env, bea, asked.operation.id);
   const account = ok(await alex.get('/api/wallet')).accounts[0];
   assert.equal(account.quorum.required, 2, 'there was nothing to move, so it is simply locked');
   assert.equal(env.world.log.broadcast.length, 0, 'and nothing was broadcast');

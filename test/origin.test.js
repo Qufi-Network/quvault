@@ -61,7 +61,9 @@ test('the page never asks for a script from anywhere else', async t => {
   }
 
   const client = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
-  assert.doesNotMatch(client, /veyns\.js/, 'the Veyns SDK must not be loaded');
+  // A real load puts the SDK's file in a string — a URL or a src — not in a comment that
+  // mentions the server's own src/veyns.js. Match the former, so documentation does not trip it.
+  assert.doesNotMatch(client, /[`'"][^`'"\n]*veyns\.js/, 'the Veyns SDK must not be loaded');
   assert.doesNotMatch(client, /window\.veyns/, 'nor called');
   assert.doesNotMatch(client, /createElement\(['"]script['"]\)/, 'and no script is injected at all');
 });

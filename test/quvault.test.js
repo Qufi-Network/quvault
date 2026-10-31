@@ -258,7 +258,7 @@ test('a withdrawal is planned, signed only after the palm scan, and broadcast ex
   assert.equal(env.world.log.broadcast.length, 1, 'polling again does not send it twice');
 });
 
-test('a bigger amount needs two palms, from two different people', async t => {
+test('a shared vault needs two different palms for any amount', async t => {
   const env = await start(t);
   const alex = await signedIn(env, 'sub-alex');
   const bob = await signedIn(env, 'sub-bob');
@@ -272,10 +272,13 @@ test('a bigger amount needs two palms, from two different people', async t => {
   assert.deepEqual(after.members.map(m => m.label).sort(), ['Bob', 'Owner']);
   assert.deepEqual(after.policy.rules, [{ upToSats: 100_000, approvals: 1 }, { upToSats: null, approvals: 2 }]);
 
-  // Small: one palm is enough.
+  // A shared vault never moves on one palm: even an amount the ladder would wave through on a
+  // single approval still needs the other person. The two-signer floor overrides the ladder.
   const small = ok(await alex.post('/api/withdrawals', { to: DEST, amount: 50_000 }));
-  assert.equal(small.operation.required, 1);
-  assert.equal((await palmApprove(env, alex, small.operation.id)).operation.status, 'running');
+  assert.equal(small.operation.required, 2, 'a shared vault needs both people, whatever the amount');
+  assert.equal((await palmApprove(env, alex, small.operation.id)).operation.status, 'collecting', 'one palm is not enough');
+  assert.equal((await alex.post(`/api/operations/${small.operation.id}/unlock`, {})).status, 409, 'and nothing is signable yet');
+  assert.equal((await palmApprove(env, bob, small.operation.id)).operation.status, 'running', 'the other person completes it');
   await signAndSend(env, alex, small.operation.id);
   assert.equal(env.world.log.broadcast.length, 1);
 
@@ -297,6 +300,28 @@ test('a bigger amount needs two palms, from two different people', async t => {
   const sent = await signAndSend(env, alex, big.operation.id);
   assert.equal(env.world.log.broadcast.length, 2);
   assert.equal(ok(await bob.get('/api/wallet')).history[0].txid, sent.txid, 'the approver sees it too');
+});
+
+test('a shared vault never spends on one palm, even if the rules say one approval', async t => {
+  const env = await start(t);
+  const alex = await signedIn(env, 'sub-alex');
+  const bob = await signedIn(env, 'sub-bob');
+  await walletFor(env, alex);
+  env.world.chain.utxos = [{ txid: 'f'.repeat(64), vout: 0, value: 500_000 }];
+
+  // Bob is added as a signer, with a stored rule that asks for a single approval. Once a vault
+  // is shared, the floor overrides that rule: no spend can ever go out on one palm.
+  await setRules(env, alex, { add: [{ code: bob.id, label: 'Bob', client: bob }], rules: [{ upToSats: null, approvals: 1 }] });
+
+  const spend = ok(await alex.post('/api/withdrawals', { to: DEST, amount: 10_000 }));
+  assert.equal(spend.operation.required, 2, 'the floor requires both signers, whatever the rule says');
+  assert.equal((await palmApprove(env, alex, spend.operation.id)).operation.status, 'collecting', 'one palm is never enough');
+  assert.equal((await alex.post(`/api/operations/${spend.operation.id}/unlock`, {})).status, 409, 'and nothing is signable');
+  assert.equal(env.world.log.broadcast.length, 0, 'nothing is ever sent on a single palm');
+
+  assert.equal((await palmApprove(env, bob, spend.operation.id)).operation.status, 'running', 'both signers make it signable');
+  await signAndSend(env, alex, spend.operation.id);
+  assert.equal(env.world.log.broadcast.length, 1, 'with both palms, it goes');
 });
 
 test('only approvers can approve, and the rules cannot be weakened alone', async t => {

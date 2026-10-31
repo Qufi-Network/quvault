@@ -815,6 +815,14 @@ export function createApp(options) {
     return [...ids];
   }
 
+  /**
+   * A shared vault must never move on a single palm. Once anyone else signs for an account, no
+   * one approver can spend it or change it alone — whatever the amount rules or the on-chain
+   * threshold say. This floor is a hard invariant, applied everywhere `required` is derived, so
+   * it cannot be lowered by a policy, an amount, or a choice made at lock time.
+   */
+  const quorumFloor = signerCount => (signerCount > 1 ? 2 : 1);
+
   /** Who may approve for one account, and what a movement of `sats` from it needs. */
   async function quorumFor(walletOwnerId, networkId, sats) {
     const [wallet, members, account] = await Promise.all([
@@ -823,13 +831,15 @@ export function createApp(options) {
     const policy = policyOfAccount(account, wallet);
     const signers = signersOf(account, members);
     const { approvals, rule } = requiredFor(policy, sats);
-    return { wallet, account, members, signers, policy, required: Math.min(approvals, Math.max(1, signers.length)), rule };
+    const required = Math.min(Math.max(1, signers.length), Math.max(approvals, quorumFloor(signers.length)));
+    return { wallet, account, members, signers, policy, required, rule };
   }
 
   /** What it takes to change an account's signers or thresholds: its own quorum, as it stands now. */
   async function changeQuorum(walletOwnerId, networkId) {
     const { policy, signers, members, account, wallet } = await quorumFor(walletOwnerId, networkId, 0);
-    return { required: requiredToChange(policy, signers.length), policy, signers, members, account, wallet };
+    const required = Math.min(Math.max(1, signers.length), Math.max(requiredToChange(policy, signers.length), quorumFloor(signers.length)));
+    return { required, policy, signers, members, account, wallet };
   }
 
   async function newOperation({ walletOwnerId, user, kind, statement, details, payload = null, required = 1, networkId = null }) {
@@ -2206,8 +2216,10 @@ export function createApp(options) {
     if (signers.length < 2) throw new HttpError(409, 'A quorum needs at least two signers.');
 
     const required = Number(body.required);
-    if (!Number.isInteger(required) || required < 1 || required > signers.length) {
-      throw new HttpError(400, `Choose between one and ${signers.length} signatures.`);
+    // A quorum on the chain must never be spendable by one signature: the floor is two.
+    const floor = quorumFloor(signers.length);
+    if (!Number.isInteger(required) || required < floor || required > signers.length) {
+      throw new HttpError(400, `Choose between ${floor} and ${signers.length} signatures.`);
     }
 
     const keys = signers.map(m => m.public_key);
@@ -2235,7 +2247,7 @@ export function createApp(options) {
     }
 
     const policy = policyOfAccount(account, wallet);
-    const palms = Math.min(requiredToChange(policy, signers.length), signers.length);
+    const palms = Math.min(signers.length, Math.max(requiredToChange(policy, signers.length), quorumFloor(signers.length)));
     const bound = plan ? bindPlan(wallet, plan) : null;
     const statement = plan
       ? `Lock my Bitcoin to ${required} of ${signers.length} on the chain and move ${toBtc(plan.sentSats)} tBTC to it`
@@ -2594,11 +2606,18 @@ export function createApp(options) {
     if (!account) throw new HttpError(409, 'That account no longer exists.');
     const signers = [...new Set([...signersOf(account, members), joiner.id])];
 
+    // A vault that was a personal one (its rules untouched) becomes a shared one the moment a
+    // second signer joins, and its default is that everyone signs: no spend without all of them.
+    // The owner can loosen this later to any m-of-n, but never below the two-signer floor.
+    const current = account.policy ? JSON.parse(account.policy) : DEFAULT_POLICY;
+    const untouched = current.rules?.length === 1 && current.rules[0].upToSats === null && Number(current.rules[0].approvals) <= 1;
+    const nextPolicy = untouched ? { rules: [{ upToSats: null, approvals: signers.length }] } : current;
+
     await transaction(async q => {
       const used = await q('useInvite', joiner.id, time, payload.code);
       if (!used.count) throw new HttpError(409, 'That invitation was already used.');
       await q('insertMember', op.wallet_user_id, joiner.id, payload.label, false, time);
-      await q('setAccountPolicy', account.policy ?? JSON.stringify(DEFAULT_POLICY), JSON.stringify(signers), op.wallet_user_id, payload.network);
+      await q('setAccountPolicy', JSON.stringify(nextPolicy), JSON.stringify(signers), op.wallet_user_id, payload.network);
     });
     await assignPalmId(op.wallet_user_id, joiner.id);
     return { txid: null };
