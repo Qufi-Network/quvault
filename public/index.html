@@ -2384,6 +2384,7 @@
     <button class="btn brand wide lg" id="create-wallet" type="button">Create vault with a palm scan</button>
     <p class="error" id="create-error" role="alert"></p>
     <p class="fine">Invited to sign for someone else? <button class="link" id="join-vault-empty" type="button">Enter their invitation code</button></p>
+    <p class="fine">Recovering a Palm vault for someone who can no longer act? <button class="link" id="door-open-empty" type="button">Open the recovery door</button></p>
     <div id="create-pending"></div>
   </main>
 
@@ -2467,6 +2468,18 @@
           <p class="error" id="chain-error" role="alert"></p>
         </div>
 
+        <section class="lane no-top" id="refresh-lane" hidden>
+          <div class="card notice">
+            <div class="notice-body">
+              <p class="eyebrow">Recovery clock</p>
+              <h2 id="refresh-title">Time to refresh your vault</h2>
+              <p class="quiet" id="refresh-what"></p>
+              <p class="error" id="refresh-error" role="alert"></p>
+            </div>
+            <button class="btn brand" id="refresh-go" type="button">Refresh now</button>
+          </div>
+        </section>
+
         <section class="lane" id="pending-lane" hidden>
           <header class="lane-head"><h2>Waiting for approval</h2><p class="quiet">Each signer scans their own palm.</p></header>
           <div class="requests" id="pending"></div>
@@ -2475,6 +2488,11 @@
         <section class="lane">
           <header class="lane-head"><h2>Accounts</h2><p class="quiet" id="accounts-note"></p></header>
           <div class="accounts" id="accounts"></div>
+        </section>
+
+        <section class="lane" id="signs-for-lane" hidden>
+          <header class="lane-head"><h2>Vaults you sign for</h2><p class="quiet">If an owner can no longer act, the other signers can carry on from here.</p></header>
+          <div class="accounts" id="signs-for"></div>
         </section>
 
         <section class="lane">
@@ -2574,6 +2592,16 @@
               <button class="btn ghost sm" id="alerts-off" type="button" hidden>Turn off on this device</button>
             </div>
             <p class="error" id="alerts-error" role="alert"></p>
+          </section>
+
+          <section class="card stack">
+            <header class="card-head"><h2>Inheritance</h2></header>
+            <p class="quiet">Print the inheritance sheet for a vault locked to the palm and keep it with your will, apart from your twelve words. If the palm is ever gone, the recovery door moves the coins with the vault description and the signers' words, once the recovery delay has passed.</p>
+            <div class="row">
+              <button class="btn ghost sm" id="sheet-open" type="button">Inheritance sheet</button>
+              <button class="btn ghost sm" id="door-open" type="button">Recovery door</button>
+            </div>
+            <p class="error" id="inheritance-error" role="alert"></p>
           </section>
 
           <section class="card stack danger-card">
@@ -2741,8 +2769,18 @@
                 <code id="chain-previous-value"></code>
               </div>
               <div class="seg" id="chain-threshold" role="group" aria-label="Signatures on the chain" hidden></div>
+              <div class="stack tight" id="chain-delay-wrap" hidden>
+                <p class="quiet small">If the palm signer is ever gone, how long before the signers alone can move the coins?</p>
+                <div class="seg" id="chain-delay" role="group" aria-label="Recovery delay"></div>
+              </div>
+              <p class="warn-note" id="chain-warning" hidden></p>
+              <div class="kv" id="chain-clock" hidden>
+                <span>Recovery path</span>
+                <b id="chain-clock-value"></b>
+              </div>
               <p class="fine" id="chain-note"></p>
               <div class="row" id="chain-actions"></div>
+              <div class="row wrap" id="vault-tools" hidden></div>
               <p class="error" id="lock-error" role="alert"></p>
             </section>
           </section>
@@ -2821,6 +2859,117 @@
         <button class="btn brand sm" type="submit">Create invitation with a palm scan</button>
       </footer>
     </form>
+  </dialog>
+
+  <dialog id="move" aria-labelledby="move-title">
+    <form class="sheet" id="move-form">
+      <header class="sheet-head">
+        <p class="eyebrow" id="move-title">Replace a signer</p>
+        <button class="icon-btn close" id="move-cancel" type="button" aria-label="Close">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 5.5 9 9M14.5 5.5l-9 9"/></svg>
+        </button>
+      </header>
+      <p class="fine" id="move-explains">Choose who signs for the vault from now on. The signers are written into the address, so every coin moves to a new palm vault, approved and signed by the vault as it is today.</p>
+      <div class="member-rows" id="move-rows"></div>
+      <button class="link" id="move-invite" type="button">+ Invite someone new first</button>
+      <p class="quiet small">Signatures needed</p>
+      <div class="seg" id="move-threshold" role="group" aria-label="Signatures needed"></div>
+      <p class="quiet small">Recovery delay</p>
+      <div class="seg" id="move-delay" role="group" aria-label="Recovery delay"></div>
+      <p class="warn-note" id="move-warning" hidden></p>
+      <p class="error" id="move-error" role="alert"></p>
+      <footer class="sheet-foot end">
+        <button class="btn ghost sm" id="move-close" type="button">Cancel</button>
+        <button class="btn brand sm" type="submit">Ask for palm approvals</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="pay" aria-labelledby="pay-title">
+    <form class="sheet" id="pay-form">
+      <header class="sheet-head">
+        <p class="eyebrow" id="pay-title">Send from a vault you sign for</p>
+        <button class="icon-btn close" id="pay-cancel" type="button" aria-label="Close">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 5.5 9 9M14.5 5.5l-9 9"/></svg>
+        </button>
+      </header>
+      <p class="fine" id="pay-explains"></p>
+      <div class="field-row">
+        <label for="pay-to">To</label>
+        <input id="pay-to" placeholder="tb1…" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="field-row">
+        <label for="pay-amount">Amount in satoshis</label>
+        <input id="pay-amount" inputmode="numeric" placeholder="50000" autocomplete="off">
+      </div>
+      <label class="check-row"><input type="checkbox" id="pay-max"> Send everything</label>
+      <p class="error" id="pay-error" role="alert"></p>
+      <footer class="sheet-foot end">
+        <button class="btn ghost sm" id="pay-close" type="button">Cancel</button>
+        <button class="btn brand sm" type="submit">Ask for palm approvals</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="heir-sheet" class="wide" aria-labelledby="heir-sheet-title">
+    <div class="sheet">
+      <header class="sheet-head no-print">
+        <p class="eyebrow" id="heir-sheet-title">Inheritance sheet</p>
+        <button class="icon-btn close" id="heir-sheet-cancel" type="button" aria-label="Close">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 5.5 9 9M14.5 5.5l-9 9"/></svg>
+        </button>
+      </header>
+      <div class="heir-sheet" id="heir-sheet-body"></div>
+      <p class="error" id="heir-sheet-error" role="alert"></p>
+      <footer class="sheet-foot end no-print">
+        <button class="btn ghost sm" id="heir-sheet-close" type="button">Close</button>
+        <button class="btn brand sm" id="heir-sheet-print" type="button">Print</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <dialog id="door" aria-labelledby="door-title">
+    <div class="sheet">
+      <header class="sheet-head">
+        <p class="eyebrow" id="door-title">Recovery door</p>
+        <button class="icon-btn close" id="door-cancel" type="button" aria-label="Close">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 5.5 9 9M14.5 5.5l-9 9"/></svg>
+        </button>
+      </header>
+      <p class="fine">Every Palm vault has a second way out. Once its coins have sat unmoved for the recovery delay, the signers' twelve words alone can move them, without a palm. Bitcoin itself checks the delay. The words are used on this device only and never sent.</p>
+      <div class="field-row">
+        <label for="door-descriptor">Vault description, from the inheritance sheet</label>
+        <textarea id="door-descriptor" rows="4" spellcheck="false" autocomplete="off"></textarea>
+      </div>
+      <div class="row"><button class="btn ghost sm" id="door-look" type="button">Look up the vault</button></div>
+      <div class="stack tight" id="door-vault" hidden>
+        <div class="kv"><span>Address</span><code id="door-address"></code></div>
+        <div class="kv"><span>Signers needed</span><b id="door-required"></b></div>
+        <div class="kv"><span>Recovery delay</span><b id="door-delay"></b></div>
+        <div class="kv"><span>Coins</span><b id="door-coins"></b></div>
+        <p class="warn-note" id="door-state"></p>
+        <div class="stack tight" id="door-send" hidden>
+          <div id="door-words"></div>
+          <div class="field-row">
+            <label for="door-to">Send everything that is ready to</label>
+            <input id="door-to" placeholder="tb1…" autocomplete="off" spellcheck="false">
+          </div>
+          <div class="row"><button class="btn ghost sm" id="door-prepare" type="button">Prepare the transaction</button></div>
+          <div class="stack tight" id="door-review" hidden>
+            <div class="kv"><span>Sending</span><b id="door-amount"></b></div>
+            <div class="kv"><span>Network fee</span><b id="door-fee"></b></div>
+            <div class="kv"><span>To</span><code id="door-dest"></code></div>
+            <p class="warn-note">Check the address character by character. A Bitcoin payment cannot be taken back.</p>
+            <div class="row"><button class="btn brand sm" id="door-go" type="button">Sign on this device and send</button></div>
+          </div>
+        </div>
+      </div>
+      <p class="error" id="door-error" role="alert"></p>
+      <p class="fine ok-note" id="door-sent" hidden></p>
+      <footer class="sheet-foot end">
+        <button class="btn ghost sm" id="door-close" type="button">Close</button>
+      </footer>
+    </div>
   </dialog>
 
   <dialog id="invite-code" aria-labelledby="invite-code-title">

@@ -552,3 +552,38 @@ header.top .link:hover { color: var(--ink); background: var(--wash); border-colo
 .address-form select, .address-form input { height: 38px; padding: 0 10px; border: 1px solid var(--line-2); border-radius: 9px; font: inherit; font-size: 14px; background: #fff; color: var(--ink); min-width: 0; }
 @media (max-width: 760px) { .address-form { grid-template-columns: 1fr; } }
 .mono.wrap { word-break: break-all; }
+
+/* recovery clock, replacing a signer, sending from a vault you sign for */
+.warn-note { margin: 0; padding: 10px 12px; border-radius: 10px; background: #fff6e5; color: #8a5300; font-size: 13.5px; line-height: 1.5; }
+.member-row.pick { cursor: pointer; }
+.member-row.pick input { width: 18px; height: 18px; accent-color: var(--blue); flex: none; margin: 0; }
+.check-row { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--ink); margin: 4px 0; }
+.check-row input { width: 16px; height: 16px; accent-color: var(--blue); margin: 0; }
+.row.wrap { flex-wrap: wrap; }
+#vault-tools a.btn { text-decoration: none; }
+
+/* the inheritance sheet and the recovery door, inside the signed in app */
+dialog.wide { width: min(780px, calc(100vw - 32px)); max-width: none; }
+.heir-sheet { display: grid; gap: 14px; }
+.heir-sheet h2 { margin: 0; }
+.heir-logo { height: 30px; width: auto; display: block; }
+.heir-grid { display: grid; grid-template-columns: 1fr 200px; gap: 16px; align-items: start; }
+.heir-qr svg { width: 100%; height: auto; display: block; border: 1px solid #e2e8f4; border-radius: 8px; background: #fff; }
+.heir-code { display: block; padding: 10px 12px; border-radius: 8px; background: #f3f6fd; color: #06152e; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.print-only { display: none !important; }
+.heir-steps { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 14px; color: inherit; }
+.ok-note { color: #067647; font-weight: 600; }
+#door textarea { width: 100%; font: 13px/1.45 'IBM Plex Mono', ui-monospace, monospace; }
+@media (max-width: 640px) {
+  .heir-grid { grid-template-columns: 1fr; }
+  .heir-qr { max-width: 220px; }
+}
+@media print {
+  body.print-heir-sheet > *:not(#heir-sheet) { display: none !important; }
+  body.print-heir-sheet #heir-sheet { position: static; inset: auto; margin: 0; width: auto; max-width: none; max-height: none; overflow: visible; border: 0; box-shadow: none; animation: none; color: #000; background: #fff; }
+  body.print-heir-sheet #heir-sheet::backdrop { display: none; }
+  body.print-heir-sheet .no-print { display: none !important; }
+  body.print-heir-sheet #heir-sheet .print-only { display: block !important; }
+  body.print-heir-sheet #heir-sheet, body.print-heir-sheet #heir-sheet * { color: #111 !important; border-color: #d5dbe8 !important; }
+  body.print-heir-sheet #heir-sheet .sheet { overflow: visible; max-height: none; }
+}

@@ -390,6 +390,56 @@ export function signQuorum(mnemonic, { psbt, plan, index, address, transactionHa
   }
 }
 
+/**
+ * The recovery door, signed on this device.
+ *
+ * Each set of twelve words is searched for the signing branch whose key the vault names, since a
+ * signer's key for a vault sits on a branch of its own, and the key found signs every input
+ * through the recovery path. The words go no further than this function, and the keys are wiped
+ * as soon as they have signed. What comes back is the transaction with signatures added.
+ */
+export function signRecovery(psbt, phrases, vaultKeys, { maxBranch = 64 } = {}) {
+  const wanted = new Set(vaultKeys.map(key => String(key).toLowerCase()));
+  const tx = btc.Transaction.fromPSBT(base64nopadDecode(psbt), { allowUnknownInputs: true });
+  const used = [];
+  for (const phrase of phrases) {
+    const words = String(phrase ?? '').trim().toLowerCase().split(/\s+/).join(' ');
+    if (!validateMnemonic(words, wordlist)) {
+      throw new Error('One of those is not a valid set of twelve words. Check the spelling and the order.');
+    }
+    const seed = mnemonicToSeedSync(words);
+    let base;
+    try {
+      base = HDKey.fromMasterSeed(seed).derive(COSIGN_PATH(0).replace(/\/0$/, ''));
+    } finally {
+      seed.fill(0);
+    }
+    let node = null;
+    for (let index = 0; index < maxBranch && !node; index++) {
+      const child = base.deriveChild(index);
+      if (wanted.has(toHexKey(child.publicKey.subarray(1)))) node = child;
+      else child.wipePrivateData();
+    }
+    base.wipePrivateData();
+    if (!node) throw new Error('One set of words does not hold a key for this vault.');
+    const key = toHexKey(node.publicKey.subarray(1));
+    if (used.includes(key)) {
+      node.wipePrivateData();
+      throw new Error('The same twelve words were entered twice.');
+    }
+    try {
+      // Taproot's default sighash only, so every signature covers every output.
+      tx.sign(node.privateKey, [btc.SigHash.DEFAULT]);
+    } catch {
+      throw new Error('Those words hold a key for this vault, but it could not sign this transaction.');
+    } finally {
+      node.wipePrivateData();
+    }
+    used.push(key);
+  }
+  return { psbt: base64nopadEncode(tx.toPSBT()), signedWith: used.length };
+}
+
 const toHexKey = bytes => hex.encode(bytes);
 const base64nopadEncode = bytes => btoa(String.fromCharCode(...bytes));
 const base64nopadDecode = text => Uint8Array.from(atob(text), c => c.charCodeAt(0));

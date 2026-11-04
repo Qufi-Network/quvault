@@ -672,6 +672,14 @@ const SCHEMA = [
     created_at BIGINT NOT NULL
   )`,
   'CREATE INDEX IF NOT EXISTS push_subscriptions_user ON push_subscriptions (user_id)',
+
+  /* ============================================== v27 — refresh reminders
+   *
+   * Which reminder a palm vault's signers were last sent, as "<height the recovery path opens
+   * at>:<stage>". A refresh moves the coins, the opening height changes, and the reminders
+   * start again from the first.
+   */
+  'ALTER TABLE accounts ADD COLUMN IF NOT EXISTS reminded TEXT',
 ];
 
 /**

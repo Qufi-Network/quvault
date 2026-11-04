@@ -40,6 +40,8 @@ const app = createApp({
       operatorControlled: env.QUVAULT_ANCHOR_OPERATOR_CONTROLLED === 'true',
     })
     : undefined,
+  // Vercel sends this as a bearer token on its scheduled reminder run, when it is set.
+  cronSecret: env.CRON_SECRET || '',
   network: env.BITCOIN_NETWORK || 'testnet4',
   chainApi: env.CHAIN_API || 'https://mempool.space/testnet4/api',
   requirePalmSignin: env.REQUIRE_PALM_SIGNIN === 'true',

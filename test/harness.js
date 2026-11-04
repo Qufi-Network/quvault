@@ -30,7 +30,7 @@ export function mockWorld(clock) {
   const jwk = { ...publicKey.export({ format: 'jwk' }), kid: 'k1', alg: 'ES256', use: 'sig' };
   const requests = new Map();
   const log = { created: [], acks: [], cancelled: [], broadcast: [], push: [] };
-  const chain = { utxos: [], feeRate: 2, broadcastError: null, pending: 0, unreachable: false, confirmBroadcasts: true };
+  const chain = { utxos: [], feeRate: 2, broadcastError: null, pending: 0, unreachable: false, confirmBroadcasts: true, tip: 100 };
   const b64 = value => Buffer.from(JSON.stringify(value)).toString('base64url');
   const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
@@ -57,7 +57,8 @@ export function mockWorld(clock) {
        * that differently from a negative answer — and must.
        */
       if (chain.unreachable) throw new TypeError('fetch failed');
-      if (rest.endsWith('/utxo')) return json(200, chain.utxos.map(u => ({ ...u, status: { confirmed: true, block_height: 100 } })));
+      if (rest.endsWith('/utxo')) return json(200, chain.utxos.map(u => ({ ...u, status: { confirmed: true, block_height: u.height ?? 100 } })));
+      if (rest === '/blocks/tip/height') return new Response(String(chain.tip), { status: 200 });
       if (rest.endsWith('/txs')) return json(200, []);
       /*
        * Transaction status, for reconciling an uncertain broadcast. The mock answers from what

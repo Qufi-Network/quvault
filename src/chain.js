@@ -50,6 +50,13 @@ export function createChain({ apiUrl, fetchImpl = globalThis.fetch }) {
       };
     },
 
+    /** The height of the newest block, which is what a relative timelock is counted against. */
+    async tipHeight() {
+      const height = Number(await call('/blocks/tip/height', { asText: true }));
+      if (!Number.isInteger(height) || height < 0) throw new ChainError('The Bitcoin service sent an unreadable block height.');
+      return height;
+    },
+
     /** Confirmed coins only: unconfirmed change would make a spend unreliable. */
     async spendableUtxos(address) {
       const utxos = await call(`/address/${address}/utxo`);

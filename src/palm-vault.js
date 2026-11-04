@@ -37,6 +37,15 @@ export const MAX_DELAY = 0xffff;
 /** About one year of blocks. */
 export const DEFAULT_RECOVERY_DELAY = 52560;
 export const PATHS = ['normal', 'recovery'];
+/** Bitcoin makes about 144 blocks a day. */
+export const BLOCKS_PER_DAY = 144;
+/**
+ * The recovery delays a vault can be made with, in days. Shorter is a faster inheritance and less
+ * time to stop a thief who has the twelve words; longer is the reverse.
+ */
+export const RECOVERY_CHOICES = [90, 180, 365];
+export const delayForDays = days => days * BLOCKS_PER_DAY;
+export const daysOfDelay = blocks => Math.round(blocks / BLOCKS_PER_DAY);
 
 const P2TR_DUST = 330;
 const SCHNORR_SIG = 64; // SIGHASH_DEFAULT: no sighash byte
@@ -177,6 +186,59 @@ function descriptorOf({ palmKey, keys, required, delay }) {
   const body = `tr(${hex.encode(NUMS_KEY)},{and_v(v:pk(${hex.encode(palmKey)}),multi_a(${required},${list})),`
     + `and_v(v:older(${delay}),multi_a(${required},${list}))})`;
   return `${body}#${descriptorChecksum(body)}`;
+}
+
+const DESCRIPTOR = /^tr\(([0-9a-f]{64}),\{and_v\(v:pk\(([0-9a-f]{64})\),multi_a\((\d{1,2}),([0-9a-f,]+)\)\),and_v\(v:older\((\d{1,5})\),multi_a\((\d{1,2}),([0-9a-f,]+)\)\)\}\)#([a-z0-9]{8})$/;
+
+/**
+ * The vault a descriptor describes, from the descriptor alone: what an heir with the inheritance
+ * sheet has. Only a palm vault exactly as this module writes it is read, and it is rebuilt and
+ * written out again and must come back character for character, so a descriptor that reads but
+ * means something else is refused rather than half understood.
+ */
+export function palmVaultFromDescriptor(descriptor, network = NETWORK) {
+  const text = String(descriptor ?? '').trim().replace(/\s+/g, '').toLowerCase();
+  const m = text.match(DESCRIPTOR);
+  if (!m) throw new WalletError('That is not a Palm vault description. Copy it exactly as the inheritance sheet shows it.');
+  const [, internal, palmKey, requiredA, listA, delay, requiredB, listB, checksum] = m;
+  if (descriptorChecksum(text.slice(0, -9)) !== checksum) {
+    throw new WalletError('That vault description has a typing mistake in it: its checksum does not match.');
+  }
+  if (internal !== hex.encode(NUMS_KEY) || requiredA !== requiredB || listA !== listB) {
+    throw new WalletError('That is not a Palm vault description.');
+  }
+  const vault = palmVaultOf({
+    palmKey, signerKeys: listA.split(','), required: Number(requiredA), delay: Number(delay), network,
+  });
+  if (vault.descriptor !== text) throw new WalletError('That vault description is not written the way a Palm vault is.');
+  return vault;
+}
+
+/**
+ * When the recovery path opens for each coin. A coin can be spent through it in the first block
+ * whose height is at least the coin's height plus the delay (BIP68), so with the chain at `tip`
+ * the next block is tip + 1, and a coin is ready when that block would be late enough.
+ */
+export function recoveryClock(vault, utxos, tip) {
+  const coins = (utxos ?? []).filter(coin => Number.isInteger(coin.height) && coin.height > 0).map(coin => {
+    const opensAt = coin.height + vault.delay;
+    const blocksLeft = Math.max(0, opensAt - (tip + 1));
+    return {
+      txid: coin.txid, vout: coin.vout, value: coin.value, height: coin.height,
+      opensAt, blocksLeft, daysLeft: Math.ceil(blocksLeft / BLOCKS_PER_DAY), ready: blocksLeft === 0,
+    };
+  }).sort((a, b) => a.opensAt - b.opensAt);
+  const next = coins[0] ?? null;
+  return {
+    tip,
+    delay: vault.delay,
+    delayDays: daysOfDelay(vault.delay),
+    coins,
+    nextOpensAt: next?.opensAt ?? null,
+    blocksLeft: next?.blocksLeft ?? null,
+    daysLeft: next?.daysLeft ?? null,
+    readySats: coins.filter(c => c.ready).reduce((sum, c) => sum + c.value, 0),
+  };
 }
 
 /* ------------------------------------------------------------- planning a spend */

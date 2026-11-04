@@ -7,13 +7,15 @@
  * not on this list. They still exist in the wallet module, which is where the phrase stays.
  *
  * `revealPhrase` is the single exception: showing someone their own recovery words is what
- * that screen is for. Nothing else in this file ever holds a secret.
+ * that screen is for. `signRecovery` is the other side of it: on the recovery door an heir types
+ * the words in, and they go straight from the boxes into the wallet module and are cleared.
+ * Nothing else in this file ever holds a secret.
  */
 import {
   checkAuthorization, checkChain, clearRecord, fromBase64, loadRecord, planDigest,
   createVaultKey, browserSigner, cosignerPublicKeyFor, deriveAccountFor,
   restoreVaultKey, revealPhrase, pinAttestationRoot,
-  signEvidenceCheckpoint, pinCheckpoint, checkpointDisagreement,
+  signEvidenceCheckpoint, pinCheckpoint, checkpointDisagreement, signRecovery,
 } from '/vendor/wallet.js';
 
 const $ = id => document.getElementById(id);
@@ -806,6 +808,8 @@ function renderWallet(data) {
   renderRequests($('pending'), data.pending);
   $('pending-lane').hidden = data.pending.length === 0;
   renderAlerts(data);
+  renderRefreshBanner(data);
+  renderSignsFor(data);
   renderHistory(chainHistory || [], data.history || []);
   paintFiat();
 }
@@ -1326,7 +1330,9 @@ const BUSY = {
   reset: 'Erasing the vault…', attestation: 'Replacing the authorisation key…',
   signing: 'Making your signing key…', lock: 'Locking to the chain…',
 };
-const busyText = op => BUSY[op.kind] || 'Working…';
+const busyText = op => (op.details?.action === 'refresh the vault' ? 'Refreshing the vault…'
+  : op.details?.action === 'replace signers' ? 'Moving the vault…'
+    : BUSY[op.kind] || 'Working…');
 
 function renderHistory(chain, operations) {
   const rows = operations.filter(op => op.kind !== 'create').map(op => el('li', {},
@@ -1594,11 +1600,42 @@ function drawChainLock(account) {
     }, `${m} of ${signers.length}`)));
   }
 
+  /* how long the recovery path waits, chosen before locking */
+  const keysAllReady = !locked && owner && ready === signers.length && ready > 0;
+  const choosing = keysAllReady && palmOffered;
+  const choices = state.config?.recoveryChoices || [90, 180, 365];
+  const days = state.chainDelay ?? 365;
+  $('chain-delay-wrap').hidden = !choosing;
+  if (choosing) {
+    $('chain-delay').replaceChildren(...choices.map(choice => el('button', {
+      class: `seg-item${days === choice ? ' on' : ''}`,
+      type: 'button',
+      'aria-pressed': days === choice ? 'true' : 'false',
+      onclick: () => { state.chainDelay = choice; drawChainLock(account); },
+    }, choice === 365 ? 'About a year' : `${choice} days`)));
+  }
+  const required = signers.length === 1 ? 1 : wanted;
+  $('chain-warning').hidden = !(choosing && required === signers.length);
+  if (!$('chain-warning').hidden) $('chain-warning').textContent = warningFor(required, signers.length, days);
+
+  /* once locked: the clock, and what can be done about it */
+  $('chain-clock').hidden = !palmLocked;
+  $('vault-tools').hidden = !palmLocked;
+  if (palmLocked) {
+    $('chain-clock-value').textContent = clockText(locked.palm);
+    $('vault-tools').replaceChildren(
+      button('Refresh now', 'btn ghost sm', () => startRefresh(null, $('lock-error'))),
+      button('Replace a signer', 'btn ghost sm', () => openMove(null)),
+      button('Inheritance sheet', 'btn ghost sm', () => openHeirSheet(null, $('lock-error'))),
+      button('Recovery door', 'btn ghost sm', () => openDoor(locked.palm.descriptor)),
+    );
+  }
+
   if (palmLocked) {
     // The descriptor is the backup: with it and the recovery phrases, any Taproot wallet can find
     // these coins, and after the delay the signers alone can move them.
     $('chain-note').replaceChildren(
-      `If the palm signer is ever gone, the signers alone can move the coins after about ${locked.palm.recoveryDelayDays} days. Keep this with your recovery phrase: `,
+      `If the palm signer is ever gone, the signers alone can move the coins after about ${locked.palm.recoveryDelayDays} days. Print the inheritance sheet and keep it with your recovery phrase. It holds this vault description: `,
       el('code', { class: 'mono wrap' }, locked.palm.descriptor),
     );
   } else {
@@ -1617,7 +1654,7 @@ function drawChainLock(account) {
     // The palm vault is the recommended lock: Bitcoin then needs the palm as well as the keys.
     const solo = signers.length === 1;
     const label = solo ? 'Make Bitcoin require my palm' : `Lock to ${wanted} of ${signers.length} and the palm`;
-    actions.push(button(label, 'btn brand sm', () => startLock(account, solo ? 1 : wanted, true)));
+    actions.push(button(label, 'btn brand sm', () => startLock(account, solo ? 1 : wanted, true, days)));
   }
   if (keysReady && signers.length >= 2) {
     actions.push(button(`Lock to ${wanted} of ${signers.length} without the palm`, palmOffered ? 'btn ghost sm' : 'btn brand sm',
@@ -1625,6 +1662,383 @@ function drawChainLock(account) {
   }
   $('chain-actions').replaceChildren(...actions);
 }
+
+/* ------------------------------------- the recovery clock, refresh, replacing a signer */
+
+/** What a vault's recovery path is doing right now, in words. */
+function clockText(palm) {
+  const clock = palm?.clock;
+  if (!clock) return `opens about ${palm?.recoveryDelayDays ?? 365} days after each deposit`;
+  if (clock.nextOpensAt === null) return `closed; it opens about ${clock.delayDays} days after each deposit`;
+  if (clock.blocksLeft === 0) return 'open now for the oldest coins, until the vault is refreshed';
+  return `opens in about ${clock.daysLeft} day${clock.daysLeft === 1 ? '' : 's'} for the oldest coin`;
+}
+
+/** Said before anyone locks or moves a vault where every signer is needed. */
+function warningFor(required, count, days) {
+  return count === 1
+    ? `If you die, these coins can only be moved after about ${days} days, and only with your twelve words. Keep them where your family can find them, or add a second signer.`
+    : `Every signer is needed. If any one of you dies, normal spending stops, and after about ${days} days the coins can move again only with that person's twelve words. Choosing ${count - 1} of ${count} avoids this.`;
+}
+
+/** The banner on the overview when a vault's recovery path is close to opening, or open. */
+function renderRefreshBanner(data) {
+  const due = [];
+  const own = (data.accounts || []).find(account => account.network === 'bitcoin')?.quorum?.palm;
+  if (own?.clock?.refreshDue) due.push({ ownerId: null, label: 'your vault', palm: own });
+  for (const vault of data.signsFor || []) {
+    if (vault.holdsKey && vault.palm?.clock?.refreshDue) due.push({ ownerId: vault.ownerId, label: `${vault.ownerLabel}’s vault`, palm: vault.palm });
+  }
+  $('refresh-lane').hidden = due.length === 0;
+  if (!due.length) return;
+  const first = due[0];
+  $('refresh-title').textContent = first.palm.clock.blocksLeft === 0
+    ? `The recovery path of ${first.label} is open`
+    : `Time to refresh ${first.label}`;
+  $('refresh-what').textContent = `Its recovery path ${clockText(first.palm)}. Once it is open, the signers' twelve words alone could move the coins, without a palm. A refresh sends them back into the same vault with a palm approval, and the clock starts again at about ${first.palm.recoveryDelayDays} days.`;
+  $('refresh-error').textContent = '';
+  $('refresh-go').onclick = () => startRefresh(first.ownerId, $('refresh-error'));
+}
+
+async function startRefresh(ownerId, errorNode = null) {
+  if (errorNode) errorNode.textContent = '';
+  try {
+    const { operation } = await api('/api/vault/refresh/approval', ownerId ? { vaultOwnerId: ownerId } : {});
+    openApproval(operation, 'Refreshing the vault…');
+  } catch (error) {
+    if (errorNode) errorNode.textContent = friendly(error);
+    else toast(friendly(error));
+  }
+}
+
+/** Vaults this person signs for and does not own: enough to carry on if the owner cannot. */
+function renderSignsFor(data) {
+  const vaults = data.signsFor || [];
+  $('signs-for-lane').hidden = vaults.length === 0;
+  $('signs-for').replaceChildren(...vaults.map(signedVaultCard));
+}
+
+function signedVaultCard(vault) {
+  const palm = vault.palm;
+  const rule = !vault.locked ? 'not locked to the chain yet'
+    : `${vault.required} of ${vault.keyCount}${palm ? ' and the palm' : ''} on the chain`;
+  const tools = el('div', { class: 'row wrap' });
+  if (vault.holdsKey && vault.locked) tools.append(button('Send', 'btn brand sm', () => openPay(vault)));
+  if (vault.holdsKey && palm) {
+    tools.append(
+      button('Refresh', 'btn ghost sm', () => startRefresh(vault.ownerId)),
+      button('Replace a signer', 'btn ghost sm', () => openMove(vault.ownerId)),
+      button('Invite someone', 'btn ghost sm', () => openInviteFor(vault)),
+      button('Inheritance sheet', 'btn ghost sm', () => openHeirSheet(vault.ownerId)),
+    );
+  }
+  return el('article', { class: 'account-card' },
+    el('header', {},
+      el('span', { class: 'account-mark big' }, MARKS.bitcoin),
+      el('div', {}, el('b', {}, `${vault.ownerLabel}’s vault`), el('small', {}, rule)),
+      el('span', { class: 'chip soft' }, vault.holdsKey ? 'you hold a key' : 'you approve')),
+    el('p', { class: 'account-balance' }, vault.amount === null ? 'unknown' : btc(vault.amount), el('span', { class: 'unit' }, 'tBTC')),
+    palm ? el('p', { class: 'quiet small rule-line' }, `Recovery path ${clockText(palm)}.`) : null,
+    el('p', { class: 'account-address' }, vault.address),
+    tools);
+}
+
+/* replacing a signer: choose the people, the threshold and the delay of the new vault */
+
+function openMove(ownerId) {
+  const data = state.data;
+  let members;
+  let keyHolders;
+  let required;
+  let days;
+  if (ownerId) {
+    const vault = (data.signsFor || []).find(item => item.ownerId === ownerId);
+    if (!vault) return;
+    ({ members, keyHolders, required } = vault);
+    days = vault.palm.recoveryDelayDays;
+  } else {
+    const account = (data.accounts || []).find(item => item.network === 'bitcoin');
+    if (!account?.quorum?.palm) return;
+    members = data.members;
+    keyHolders = members.filter(m => m.signingKey && account.quorum.keys.includes(m.signingKey)).map(m => m.id);
+    required = account.quorum.required;
+    days = account.quorum.palm.recoveryDelayDays;
+  }
+  const choices = state.config?.recoveryChoices || [90, 180, 365];
+  state.move = { ownerId, members, selected: new Set(keyHolders), required, days: choices.includes(days) ? days : 365 };
+  $('move-error').textContent = '';
+  drawMove();
+  $('move').showModal();
+}
+
+function drawMove() {
+  const move = state.move;
+  const count = move.members.filter(m => move.selected.has(m.id)).length;
+  const floor = count > 1 ? 2 : 1;
+  move.required = Math.min(Math.max(move.required, floor), Math.max(count, 1));
+
+  $('move-rows').replaceChildren(...move.members.map(member => el('label', { class: 'member-row pick' },
+    el('input', {
+      type: 'checkbox',
+      checked: move.selected.has(member.id),
+      onchange: event => {
+        if (event.target.checked) move.selected.add(member.id);
+        else move.selected.delete(member.id);
+        drawMove();
+      },
+    }),
+    el('span', { class: 'avatar' }, initials(member.label)),
+    el('span', { class: 'member-who' },
+      el('b', {}, member.label),
+      el('small', {}, member.signingKey ? 'has a signing key' : 'needs a signing key before joining')))));
+
+  $('move-threshold').replaceChildren(...(count ? Array.from({ length: count - floor + 1 }, (_, i) => floor + i) : []).map(m => el('button', {
+    class: `seg-item${move.required === m ? ' on' : ''}`,
+    type: 'button',
+    'aria-pressed': move.required === m ? 'true' : 'false',
+    onclick: () => { move.required = m; drawMove(); },
+  }, `${m} of ${count}`)));
+
+  const choices = state.config?.recoveryChoices || [90, 180, 365];
+  $('move-delay').replaceChildren(...choices.map(choice => el('button', {
+    class: `seg-item${move.days === choice ? ' on' : ''}`,
+    type: 'button',
+    'aria-pressed': move.days === choice ? 'true' : 'false',
+    onclick: () => { move.days = choice; drawMove(); },
+  }, choice === 365 ? 'About a year' : `${choice} days`)));
+
+  $('move-warning').hidden = !(count && move.required === count);
+  if (!$('move-warning').hidden) $('move-warning').textContent = warningFor(move.required, count, move.days);
+}
+
+const closeMove = () => $('move').close();
+$('move-cancel').addEventListener('click', closeMove);
+$('move-close').addEventListener('click', closeMove);
+$('move-invite').addEventListener('click', () => {
+  const ownerId = state.move?.ownerId;
+  closeMove();
+  if (ownerId) {
+    openInviteFor((state.data.signsFor || []).find(vault => vault.ownerId === ownerId));
+  } else {
+    openAccount('bitcoin', 'rules');
+    $('add-member').click();
+  }
+});
+$('move-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const move = state.move;
+  $('move-error').textContent = '';
+  try {
+    const { operation } = await api('/api/vault/move/approval', {
+      ...(move.ownerId ? { vaultOwnerId: move.ownerId } : {}),
+      signers: [...move.selected],
+      required: move.required,
+      recoveryDays: move.days,
+    });
+    closeMove();
+    openApproval(operation, 'Moving the vault…');
+  } catch (error) {
+    $('move-error').textContent = friendly(error);
+  }
+});
+
+/* inviting someone into a vault this person signs for */
+
+function openInviteFor(vault) {
+  if (!vault) return;
+  state.inviteFor = vault.ownerId;
+  $('invite-error').textContent = '';
+  $('invite-name').value = '';
+  $('invite-explains').textContent = `An invitation to ${vault.ownerLabel}’s vault. It takes ${vault.required} palm approval${vault.required === 1 ? '' : 's'} from the people whose keys it is locked to. You will get a code to send them; once they join and make a signing key, replace a signer to bring them in.`;
+  $('invite').showModal();
+  $('invite-name').focus();
+}
+
+/* sending from a vault this person signs for */
+
+function openPay(vault) {
+  state.pay = vault;
+  $('pay-error').textContent = '';
+  $('pay-to').value = '';
+  $('pay-amount').value = '';
+  $('pay-amount').disabled = false;
+  $('pay-max').checked = false;
+  $('pay-explains').textContent = `From ${vault.ownerLabel}’s vault. ${vault.required} of the ${vault.keyCount} signers approve with their palms and sign${vault.palm ? ', then the palm key signs' : ''}.`;
+  $('pay').showModal();
+}
+
+const closePay = () => $('pay').close();
+$('pay-cancel').addEventListener('click', closePay);
+$('pay-close').addEventListener('click', closePay);
+$('pay-max').addEventListener('change', () => { $('pay-amount').disabled = $('pay-max').checked; });
+$('pay-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  $('pay-error').textContent = '';
+  const max = $('pay-max').checked;
+  const amount = max ? 'max' : Number($('pay-amount').value.trim());
+  if (!max && (!Number.isInteger(amount) || amount <= 0)) {
+    $('pay-error').textContent = 'Enter a whole number of satoshis, or choose to send everything.';
+    return;
+  }
+  try {
+    const { operation } = await api('/api/withdrawals', { vaultOwnerId: state.pay.ownerId, to: $('pay-to').value.trim(), amount });
+    closePay();
+    openApproval(operation, 'Sending…');
+  } catch (error) {
+    $('pay-error').textContent = friendly(error);
+  }
+});
+
+/* ------------------------------------------ inheritance sheet and recovery door */
+
+/** The inheritance sheet for a palm vault: your own, or one you sign for. Printable. */
+async function openHeirSheet(ownerId = null, errorNode = null) {
+  if (errorNode) errorNode.textContent = '';
+  let sheet;
+  try {
+    sheet = await api('/api/vault/inheritance', ownerId ? { vaultOwnerId: ownerId } : {});
+  } catch (error) {
+    if (errorNode) errorNode.textContent = friendly(error);
+    else toast(friendly(error));
+    return;
+  }
+  const names = sheet.signers.map(signer => signer.label).join(', ');
+  const count = sheet.signers.length;
+  const days = sheet.recoveryDelayDays;
+  const row = (label, value, mono = false) => el('div', { class: 'kv' }, el('span', {}, label), el(mono ? 'code' : 'b', {}, value));
+  const qr = el('div', { class: 'heir-qr' });
+  // A QR code this server drew from the vault description; no outside content.
+  if (sheet.descriptorQr) qr.innerHTML = sheet.descriptorQr;
+  const printed = new Date(sheet.printedAt * 1000).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
+
+  $('heir-sheet-body').replaceChildren(
+    // The printed sheet carries the logo; on screen the sheet's own heading says what it is.
+    el('img', { class: 'heir-logo print-only', src: '/palm-logo.png', alt: 'Palm' }),
+    el('h2', {}, 'How to recover this Palm vault'),
+    el('p', { class: 'quiet small' }, `Printed ${printed}. If the vault is changed later, print a new one.`),
+    el('section', { class: 'stack tight' },
+      row('Address', sheet.address, true),
+      row('Network', sheet.network === 'testnet4' ? 'Bitcoin testnet4' : `Bitcoin ${sheet.network}`),
+      row('Signers', names),
+      row('Normal spending', count === 1 ? `${names}, with a palm approval` : `${sheet.required} of the ${count} signers, each with a palm approval`),
+      row('Recovery path', `${sheet.required === 1 ? 'One signer’s' : `${sheet.required} signers’`} twelve words alone, once the coins have sat unmoved for about ${days} days (${sheet.recoveryDelayBlocks.toLocaleString('en-US')} blocks)`)),
+    el('div', { class: 'heir-grid' },
+      el('div', { class: 'stack tight' },
+        el('b', {}, 'Vault description'),
+        el('p', { class: 'quiet small' }, 'Everything a wallet needs to find these coins. It is public information: on its own it cannot move anything.'),
+        el('code', { class: 'mono wrap heir-code' }, sheet.descriptor)),
+      qr),
+    el('b', {}, 'What to do'),
+    el('ol', { class: 'heir-steps' },
+      el('li', {}, count === 1
+        ? `While ${names} can still use Palm, nothing here is needed.`
+        : `While ${sheet.required} of the signers can still use Palm, they carry on as normal, and can replace a signer who cannot.`),
+      el('li', {}, `Otherwise, find the twelve words of ${sheet.required === 1 ? 'the signer' : `${sheet.required} of the signers`}, and wait until the coins have sat unmoved for about ${days} days. A refresh or a deposit restarts that wait for those coins.`),
+      el('li', {}, `Sign in to Palm at ${sheet.palmAt} with your own palm. On the first screen or under Security, open the recovery door, paste the vault description, enter the words, and choose where the coins go. The words stay on that device.`),
+      el('li', {}, 'Any wallet that reads output descriptors, such as Bitcoin Core or Sparrow, can do the same with the description above and the same words.')),
+    el('p', { class: 'warn-note' }, 'Keep this sheet apart from the twelve words, and tell the people you trust where both are. Together, and after the delay, they can move the coins. Without the words, nothing can.'),
+  );
+  $('heir-sheet-error').textContent = '';
+  $('heir-sheet').showModal();
+}
+
+const closeHeirSheet = () => $('heir-sheet').close();
+$('heir-sheet-cancel').addEventListener('click', closeHeirSheet);
+$('heir-sheet-close').addEventListener('click', closeHeirSheet);
+$('heir-sheet-print').addEventListener('click', () => {
+  // Only the sheet prints: the rest of the page is hidden for the length of the print.
+  document.body.classList.add('print-heir-sheet');
+  window.print();
+});
+window.addEventListener('afterprint', () => document.body.classList.remove('print-heir-sheet'));
+$('sheet-open').addEventListener('click', () => openHeirSheet(null, $('inheritance-error')));
+
+/*
+ * The recovery door. The server gets the public vault description and hands back an unsigned
+ * transaction; the words are used by the wallet module, on this device, and the boxes are
+ * emptied the moment the signatures exist.
+ */
+const door = { looked: null, planned: null };
+const doorDescriptor = () => $('door-descriptor').value.replace(/\s+/g, '');
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+function openDoor(descriptor = '') {
+  door.looked = null;
+  door.planned = null;
+  $('door-descriptor').value = descriptor;
+  $('door-vault').hidden = true;
+  $('door-error').textContent = '';
+  $('door-sent').hidden = true;
+  $('door').showModal();
+  if (descriptor) $('door-look').click();
+}
+
+const closeDoor = () => {
+  for (const box of document.querySelectorAll('#door-words textarea')) box.value = '';
+  $('door').close();
+};
+$('door-cancel').addEventListener('click', closeDoor);
+$('door-close').addEventListener('click', closeDoor);
+$('door-open').addEventListener('click', () => openDoor());
+$('door-open-empty').addEventListener('click', () => openDoor());
+
+$('door-look').addEventListener('click', async () => {
+  $('door-error').textContent = '';
+  $('door-vault').hidden = true;
+  try {
+    const looked = await api('/api/recovery-door/plan', { descriptor: doorDescriptor() });
+    door.looked = looked;
+    const { clock } = looked;
+    const total = clock.coins.reduce((sum, coin) => sum + coin.value, 0);
+    $('door-address').textContent = looked.address;
+    $('door-required').textContent = `${looked.required} of ${looked.keys.length}`;
+    $('door-delay').textContent = `about ${looked.recoveryDelayDays} days after each deposit`;
+    $('door-coins').textContent = clock.coins.length ? `${plural(clock.coins.length, 'coin')}, ${btc(total)} tBTC` : 'none confirmed';
+    $('door-state').textContent = clock.readySats
+      ? `${btc(clock.readySats)} tBTC can use the recovery path now.`
+      : clock.coins.length
+        ? `The recovery path opens in about ${plural(clock.daysLeft, 'day')} for the oldest coin. While a signer can still use Palm, they can move the coins normally instead.`
+        : 'There are no confirmed coins in this vault.';
+    $('door-words').replaceChildren(...Array.from({ length: looked.required }, (_, i) => el('div', { class: 'field-row' },
+      el('label', { for: `door-words-${i}` }, looked.required === 1 ? 'The signer’s twelve words' : `Signer ${i + 1}: twelve words`),
+      el('textarea', { id: `door-words-${i}`, rows: '2', spellcheck: 'false', autocomplete: 'off', autocapitalize: 'none' }))));
+    $('door-review').hidden = true;
+    $('door-send').hidden = clock.readySats === 0;
+    $('door-vault').hidden = false;
+  } catch (error) {
+    $('door-error').textContent = friendly(error);
+  }
+});
+
+$('door-prepare').addEventListener('click', async () => {
+  $('door-error').textContent = '';
+  $('door-review').hidden = true;
+  try {
+    door.planned = await api('/api/recovery-door/plan', { descriptor: doorDescriptor(), to: $('door-to').value.trim() });
+    const { plan } = door.planned;
+    $('door-amount').textContent = `${btc(plan.outputs.reduce((sum, o) => sum + o.sats, 0))} tBTC from ${plural(plan.inputs.length, 'coin')}`;
+    $('door-fee').textContent = `${btc(plan.feeSats)} tBTC`;
+    $('door-dest').textContent = plan.outputs[0].address;
+    $('door-review').hidden = false;
+  } catch (error) {
+    $('door-error').textContent = friendly(error);
+  }
+});
+
+$('door-go').addEventListener('click', async () => {
+  $('door-error').textContent = '';
+  const boxes = [...document.querySelectorAll('#door-words textarea')];
+  try {
+    const { psbt } = signRecovery(door.planned.psbt, boxes.map(box => box.value), door.looked.keys);
+    for (const box of boxes) box.value = '';
+    const { txid } = await api('/api/recovery-door/send', { descriptor: doorDescriptor(), psbt });
+    $('door-vault').hidden = true;
+    $('door-sent').textContent = `Sent. Transaction ${shortId(txid)} is on the network.`;
+    $('door-sent').hidden = false;
+  } catch (error) {
+    $('door-error').textContent = friendly(error);
+  }
+});
 
 async function startSigningKey(account) {
   $('lock-error').textContent = '';
@@ -1638,10 +2052,10 @@ async function startSigningKey(account) {
   void account;
 }
 
-async function startLock(account, required, palm = false) {
+async function startLock(account, required, palm = false, recoveryDays = 365) {
   $('chain-error').textContent = '';
   try {
-    const asked = await api('/api/accounts/lock', { required, palm });
+    const asked = await api('/api/accounts/lock', palm ? { required, palm, recoveryDays } : { required, palm });
     openApproval(asked.operation, palm ? 'Locking to the palm on the chain…' : 'Locking to the chain…');
   } catch (error) {
     $('chain-error').textContent = friendly(error);
@@ -1771,6 +2185,7 @@ $('discard-settings').addEventListener('click', () => {
 $('add-member').addEventListener('click', () => {
   const account = accountNow();
   if (!account) return;
+  state.inviteFor = null;
   $('invite-error').textContent = '';
   $('invite-name').value = '';
   $('invite-explains').textContent =
@@ -1791,7 +2206,9 @@ $('invite-form').addEventListener('submit', async event => {
     return;
   }
   try {
-    const { operation } = await api('/api/invites/approval', { network: state.account, label });
+    const { operation } = await api('/api/invites/approval', state.inviteFor
+      ? { network: 'bitcoin', label, vaultOwnerId: state.inviteFor }
+      : { network: state.account, label });
     $('invite').close();
     openApproval(operation, 'Creating the invitation…');
   } catch (error) {
@@ -2385,6 +2802,19 @@ async function settled(current, operation) {
       const account = await device.create(operation);
       toast(`Wallet ready: ${account.address.slice(0, 12)}…`);
     } else if (operation.kind === 'withdraw') {
+      // A vault moved to new signers while empty has nothing to sign: it is already done.
+      if (operation.status === 'done') {
+        toast(operation.details?.action === 'replace signers' ? 'The vault has its new signers.' : 'Done.');
+        return refresh().catch(() => {});
+      }
+      // Coins the chain guards: this person's signature goes on now, while the palm is fresh.
+      await refresh();
+      const fresh = (state.data?.pending || []).find(op => op.id === operation.id);
+      if (fresh?.needsSignature) return addSignature(fresh);
+      if (fresh?.signatures) {
+        toast('Approved. Waiting for the other signers.');
+        return;
+      }
       // A co-signer completes the quorum; only the vault owner's device can sign the coins away.
       if (operation.walletOwner !== state.data?.me?.id || !device.holdsKeyFor(state.data?.wallet)) {
         toast('Approved. The vault owner’s device will sign and send it.');

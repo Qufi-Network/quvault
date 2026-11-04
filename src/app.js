@@ -14,7 +14,8 @@ import {
   multisigAddressOf, multisigOf, psbtForPlan, signersOfPsbt, combinePsbts, finalizePsbt, signatureCount, NETWORK,
 } from './bitcoin.js';
 import {
-  palmVaultOf, planPalmSpend, palmVaultPsbt, palmSignersOf, combinePalmPsbts, finalizePalmPsbt, DEFAULT_RECOVERY_DELAY,
+  palmVaultOf, planPalmSpend, palmVaultPsbt, palmSignersOf, combinePalmPsbts, finalizePalmPsbt,
+  palmVaultFromDescriptor, palmPathOf, recoveryClock, RECOVERY_CHOICES, delayForDays, daysOfDelay,
 } from './palm-vault.js';
 import { createPalmSigner, PalmRefused } from './palm-signer.js';
 import { DEFAULT_POLICY, PolicyError, describePolicy, requiredFor, requiredToChange, validatePolicy } from './policy.js';
@@ -160,6 +161,14 @@ const SQL = {
                         palm_vault_id = $5, palm_key = $6, recovery_delay = $7, descriptor = $8,
                         previous_address = COALESCE(previous_address, address)
                       WHERE wallet_user_id = $9 AND network = $10`,
+  // A palm vault moving to new signers: guarded on the address it is moving from, so a move
+  // can land once and only on the vault it was approved for.
+  moveAccountToPalm: `UPDATE accounts SET address = $1, public_key = $2, required = $3, quorum_keys = $4, lock_kind = 'palm',
+                        palm_vault_id = $5, palm_key = $6, recovery_delay = $7, descriptor = $8, previous_address = $9,
+                        policy = $10, signers = $11, reminded = NULL
+                      WHERE wallet_user_id = $12 AND network = 'bitcoin' AND address = $9`,
+  palmAccounts: `SELECT * FROM accounts WHERE network = 'bitcoin' AND lock_kind = 'palm' AND required IS NOT NULL`,
+  setReminded: `UPDATE accounts SET reminded = $1 WHERE wallet_user_id = $2 AND network = 'bitcoin'`,
   lockAccountToQuorum: `UPDATE accounts SET address = $1, public_key = $2, required = $3, quorum_keys = $4,
                           previous_address = COALESCE(previous_address, address)
                         WHERE wallet_user_id = $5 AND network = $6`,
@@ -197,7 +206,9 @@ const SQL = {
   openOperationsFor: `SELECT * FROM operations WHERE wallet_user_id = ANY($1) AND status IN ('collecting', 'running') ORDER BY seq`,
   closedOperationsFor: `SELECT * FROM operations WHERE wallet_user_id = ANY($1) AND status IN ('done', 'failed', 'cancelled')
                         ORDER BY seq DESC LIMIT 12`,
-  openOperationOfKind: `SELECT * FROM operations WHERE wallet_user_id = $1 AND kind = $2 AND status = 'collecting' ORDER BY seq DESC LIMIT 1`,
+  // Only the asker's own earlier request is replaced: one signer cannot cancel another's by asking.
+  openOperationOfKind: `SELECT * FROM operations WHERE wallet_user_id = $1 AND kind = $2 AND started_by = $3 AND status = 'collecting'
+                        ORDER BY seq DESC LIMIT 1`,
   startRunning: `UPDATE operations SET status = 'running' WHERE id = $1 AND status = 'collecting'`,
   finishOperation: 'UPDATE operations SET status = $1, txid = $2, error = $3, closed_at = $4 WHERE id = $5',
   setOperationTxid: 'UPDATE operations SET txid = $1 WHERE id = $2 AND txid IS NULL',
@@ -317,6 +328,9 @@ export function createApp(options) {
     walletSeed = '',
     // Absent by default, and absent in an ordinary deployment. See `legacyVault()`.
     legacySeed = '',
+    // What Vercel's scheduler sends as a bearer token, when CRON_SECRET is set. Optional: without
+    // it the reminder run is still harmless, because it runs at most once an hour whoever asks.
+    cronSecret = '',
     network = 'testnet4',
     chainApi = 'https://mempool.space/testnet4/api',
     requirePalmSignin = false,
@@ -765,6 +779,37 @@ export function createApp(options) {
     return kept.length ? kept : roster;
   };
 
+  /**
+   * The people whose keys an account is locked to on the chain. Somebody can be on the roster
+   * and not here: invited after the lock, they can approve changes but their key cannot sign
+   * for these coins, so their palm must not count towards moving them either.
+   */
+  const keyHoldersOf = (account, members) => {
+    const keys = account?.required ? JSON.parse(account.quorum_keys) : [];
+    return members.filter(m => m.public_key && keys.includes(m.public_key));
+  };
+
+  /**
+   * The vault a request is about. Your own by default. Someone else's only when its Bitcoin is
+   * locked to the chain and your key is one of the ones it is locked to: then the chain needs
+   * the same signatures and palms whoever asks, and asking is how the others carry on when the
+   * owner can no longer.
+   */
+  async function signerVault(user, ownerId) {
+    const id = String(ownerId || user.id);
+    const [wallet, account, members] = await Promise.all([
+      one('walletOf', id), one('accountOn', id, 'bitcoin'), all('membersOf', id),
+    ]);
+    if (!wallet) throw new HttpError(id === user.id ? 409 : 404, id === user.id ? 'Create the wallet first.' : 'Vault not found.');
+    if (id !== user.id) {
+      if (!members.some(m => m.member_id === user.id)) throw new HttpError(404, 'Vault not found.');
+      if (!keyHoldersOf(account, members).some(m => m.member_id === user.id)) {
+        throw new HttpError(403, 'Only someone whose key this vault is locked to can ask for that.');
+      }
+    }
+    return { ownerId: id, wallet, account, members };
+  }
+
   /* --------------------------------------------------------------- views */
 
   /**
@@ -1012,7 +1057,11 @@ export function createApp(options) {
   /** What it takes to change an account's signers or thresholds: its own quorum, as it stands now. */
   async function changeQuorum(walletOwnerId, networkId) {
     const { policy, signers, members, account, wallet } = await quorumFor(walletOwnerId, networkId, 0);
-    const required = Math.min(Math.max(1, signers.length), Math.max(requiredToChange(policy, signers.length), quorumFloor(signers.length)));
+    let required = Math.min(Math.max(1, signers.length), Math.max(requiredToChange(policy, signers.length), quorumFloor(signers.length)));
+    // Once the chain keeps the threshold, the people who could move every coin are the most any
+    // change can ask for. Asking for more would let one signer who has died block the others
+    // from replacing them, and protects nothing those same people could not take anyway.
+    if (account?.required) required = Math.min(required, Math.max(account.required, quorumFloor(signers.length)));
     return { required, policy, signers, members, account, wallet };
   }
 
@@ -1022,7 +1071,7 @@ export function createApp(options) {
     const id = randomId(16);
     const time = now();
     const replaced = await transaction(async q => {
-      const previous = (await q('openOperationOfKind', walletOwnerId, kind)).rows[0];
+      const previous = (await q('openOperationOfKind', walletOwnerId, kind, user.id)).rows[0];
       let closed = [];
       if (previous) {
         await q('cancelOperation', 'Replaced by a newer request.', time, previous.id);
@@ -1335,6 +1384,11 @@ export function createApp(options) {
           await query('finishOperation', 'done', null, null, time, op.id);
           return;
         }
+        if (op.kind === 'withdraw' && stored?.move) {
+          await applyMove(op);
+          await query('finishOperation', 'done', null, null, time, op.id);
+          return;
+        }
       }
       const { txid } = op.kind === 'create' ? await createWallet(op, decisionId)
         : op.kind === 'policy' ? await applyPolicy(op)
@@ -1374,6 +1428,7 @@ export function createApp(options) {
       vaultReady: Boolean(walletSeed),
       // Bitcoin palm vaults: the palm signer runs here, so it needs the seed and the Veyns backend.
       palmVault: Boolean(walletSeed && backendSecret),
+      recoveryChoices: RECOVERY_CHOICES,
       // The key browsers check alerts against. Public by design; the private half derives from WALLET_SEED.
       vapidPublicKey: vapid()?.publicKey ?? null,
       // Authorisation records are signed by the owner's vault; this server only verifies them.
@@ -1476,6 +1531,7 @@ export function createApp(options) {
       pending: await Promise.all(open.map(withApprovals)),
       history: await Promise.all(closed.map(withApprovals)),
       addressBook: (await all('addressBookOf', user.id)).map(a => ({ network: a.network, address: a.address, name: a.name, addedAt: a.added_at })),
+      signsFor: (await Promise.all(visible.filter(id => id !== user.id).map(id => signedVaultView(id, user)))).filter(Boolean),
       alerts: (await one('pushCountOf', user.id)).n,
     };
 
@@ -1865,9 +1921,10 @@ export function createApp(options) {
     const decisions = approvals
       .filter(a => a.status === 'approved' && !a.invalidated_at && a.decision_token)
       .map(a => a.decision_token);
-    // The Veyns subjects of the people who sign for this account, in both forms Veyns uses.
+    // The Veyns subjects of the people whose keys this vault is locked to, in both forms Veyns
+    // uses. Nobody else's palm counts towards moving these coins.
     const subjects = [];
-    for (const memberId of signersOf(account, await all('membersOf', op.wallet_user_id))) {
+    for (const { member_id: memberId } of keyHoldersOf(account, await all('membersOf', op.wallet_user_id))) {
       const person = await one('userById', memberId);
       // One person, in both forms Veyns may name them by: they count once, however named.
       if (person?.sub) subjects.push([person.sub, approvalSubject(person.sub)]);
@@ -1951,6 +2008,14 @@ export function createApp(options) {
     }
     try {
       const txid = await chain.broadcast(finished.hex);
+      // A move to new signers: the account follows its coins to the new vault.
+      if (plan.move) {
+        try {
+          await applyMove(op);
+        } catch (error) {
+          log.error(error);
+        }
+      }
       await query('finishOperation', 'done', txid, null, now(), op.id);
       return { signatures, required: account.required, txid };
     } catch (error) {
@@ -2323,11 +2388,7 @@ export function createApp(options) {
           previousAddress: row.previous_address,
           // A palm vault: Bitcoin itself needs the palm key too, and the signers alone only after
           // the delay. The descriptor is everything another wallet needs to find these coins.
-          palm: row.lock_kind === 'palm' ? {
-            recoveryDelayBlocks: row.recovery_delay,
-            recoveryDelayDays: Math.round((row.recovery_delay * 10) / (60 * 24)),
-            descriptor: row.descriptor,
-          } : null,
+          palm: row.lock_kind === 'palm' ? await palmView(row) : null,
         } : null,
         amount,
         formatted: amount === null ? null : format(amount, row.network),
@@ -2611,6 +2672,11 @@ export function createApp(options) {
       throw new HttpError(400, `Choose between ${floor} and ${signers.length} signatures.`);
     }
 
+    const days = body.recoveryDays === undefined || body.recoveryDays === null ? 365 : Number(body.recoveryDays);
+    if (palm && !RECOVERY_CHOICES.includes(days)) {
+      throw new HttpError(400, `Choose a recovery delay of ${RECOVERY_CHOICES.join(', ')} days.`);
+    }
+
     const keys = signers.map(m => m.public_key);
     let quorumAddress;
     let palmVault = null;
@@ -2620,7 +2686,7 @@ export function createApp(options) {
         const signer = await palmSigner();
         const palmVaultId = randomId(16);
         const palmKey = signer.publicKeyFor(palmVaultId);
-        const made = palmVaultOf({ palmKey, signerKeys: keys, required, delay: DEFAULT_RECOVERY_DELAY, network: NETWORK });
+        const made = palmVaultOf({ palmKey, signerKeys: keys, required, delay: delayForDays(days), network: NETWORK });
         palmVault = { kind: 'palm', palmVaultId, palmKey, delay: made.delay, descriptor: made.descriptor };
         quorumAddress = made.address;
       } else {
@@ -2666,7 +2732,8 @@ export function createApp(options) {
         ? 'from now on Bitcoin itself refuses any spend from this account without a palm approval'
         : 'from now on this account is spent by signatures, not by one key',
       ...(palm ? {
-        recovery: `if the palm signer is ever gone, the signers alone can move the coins after ${palmVault.delay} blocks, about a year`,
+        recovery: `if the palm signer is ever gone, the signers alone can move the coins after about ${days} days`,
+        ...lockWarning(required, signers.length, days),
       } : {}),
       ...(plan ? {
         amount_sats: plan.sentSats,
@@ -2948,18 +3015,22 @@ export function createApp(options) {
    */
   async function requestInvite({ user, body }) {
     requirePalmReady();
-    const wallet = await one('walletOf', user.id);
+    // Usually the owner. Anyone whose key a locked vault is locked to may also invite, so that
+    // when the owner can no longer, the others can still bring someone in to replace them.
+    const ownerId = body.vaultOwnerId && String(body.vaultOwnerId) !== user.id
+      ? (await signerVault(user, body.vaultOwnerId)).ownerId : user.id;
+    const wallet = await one('walletOf', ownerId);
     if (!wallet) throw new HttpError(409, 'Create the vault first.');
     const networkId = String(body.network ?? 'bitcoin');
     const network = NETWORKS[networkId];
     if (!network) throw new HttpError(400, 'That is not one of the networks here.');
-    const account = await one('accountOn', user.id, networkId);
+    const account = await one('accountOn', ownerId, networkId);
     if (!account) throw new HttpError(409, `This vault has no ${network.label} account.`);
     const label = String(body.label ?? '').replace(/\s+/g, ' ').trim().slice(0, 40);
     if (!label) throw new HttpError(400, 'Give the person a name so the others know who they are.');
 
-    const { required, signers } = await changeQuorum(user.id, networkId);
-    const statement = `Invite ${label} to approve for my ${network.label} account`;
+    const { required, signers } = await changeQuorum(ownerId, networkId);
+    const statement = `Invite ${label} to approve for ${ownerId === user.id ? 'my' : 'the'} ${network.label} account`;
     const details = {
       action: 'invite a signer',
       network: `${network.label} ${network.chain}`,
@@ -2969,7 +3040,7 @@ export function createApp(options) {
       expires: '7 days',
     };
     const op = await newOperation({
-      walletOwnerId: user.id, user, kind: 'invite', statement, details,
+      walletOwnerId: ownerId, user, kind: 'invite', statement, details,
       payload: { network: networkId, label }, required, networkId,
     });
     return { operation: operationView(op, [], user) };
@@ -3406,6 +3477,13 @@ export function createApp(options) {
 
   async function requestWithdrawal({ user, body }) {
     requirePalmReady();
+    // Any signer may propose a payment from a vault the chain guards: the chain still needs the
+    // same signatures, and the palms behind them, whoever asked.
+    if (body.vaultOwnerId && String(body.vaultOwnerId) !== user.id) {
+      if (body.network && body.network !== 'bitcoin') throw new HttpError(409, 'Only the owner can send from that account.');
+      const { ownerId, account } = await signerVault(user, body.vaultOwnerId);
+      return bitcoinWithdrawal({ user, ownerId, account, body });
+    }
     const wallet = await one('walletOf', user.id);
     if (!wallet) throw new HttpError(409, 'Create the wallet first.');
     // A legacy vault's key is on the server, so a spend from one would be a spend this server
@@ -3431,19 +3509,24 @@ export function createApp(options) {
     }
 
     const account = await one('accountOn', user.id, 'bitcoin');
+    return bitcoinWithdrawal({ user, ownerId: user.id, account, body });
+  }
+
+  /** A payment from a vault's Bitcoin account, asked for by its owner or, once it is locked, by any signer. */
+  async function bitcoinWithdrawal({ user, ownerId, account, body }) {
     // A shared vault must be locked to the chain before it can send. Until it is, its coins sit
     // behind the owner's single key and the quorum is only a rule this server keeps — so a lost
     // phrase, or this server, could move them alone. Inviting and receiving work unlocked;
     // sending does not. Locking sweeps the coins into the m-of-n script and is a different op.
     if (!account?.required) {
-      const signers = signersOf(account, await all('membersOf', user.id));
+      const signers = signersOf(account, await all('membersOf', ownerId));
       if (signers.length > 1) {
         throw new HttpError(409,
           'This vault has more than one signer, so it must be locked to the chain before it can send. '
           + 'Lock it to a quorum first: until then its coins are guarded only by a rule here, not by Bitcoin.');
       }
     }
-    const lock = lockOfAccount(account, wallet);
+    const lock = lockOfAccount(account, await one('walletOf', ownerId));
 
     const to = String(body.to ?? '').trim();
     if (!isValidAddress(to)) throw new HttpError(400, `That is not a valid ${network} address.`);
@@ -3462,14 +3545,14 @@ export function createApp(options) {
     }
 
     const leaving = plan.sentSats + plan.feeSats;
-    const ladder = await quorumFor(user.id, 'bitcoin', leaving);
+    const ladder = await quorumFor(ownerId, 'bitcoin', leaving);
     // An account the chain guards has one threshold, because a script cannot read the amount
     // being sent. That threshold is the number of signatures, and every signature costs a palm.
     const { signers, rule } = ladder;
     const required = lock.required ?? ladder.required;
     // The digest of the exact transaction is part of what the palm approves, not a note beside it.
     const bound = bindPlan(lock, plan);
-    const destination = await describeDestination(user.id, 'bitcoin', to);
+    const destination = await describeDestination(ownerId, 'bitcoin', to);
     const statement = `Send ${toBtc(plan.sentSats)} tBTC to ${destination.phrase}`;
     const details = {
       action: 'withdraw',
@@ -3481,11 +3564,13 @@ export function createApp(options) {
       fee_rate: `${plan.feeRate} sat/vB`,
       spends: plan.inputs.map(i => `${i.txid}:${i.index}`).join(' '),
       change_sats: plan.changeSats,
-      approvals_required: `${required} of ${signers.length} signer${signers.length === 1 ? '' : 's'}`,
+      approvals_required: lock.required
+        ? `${required} of ${lock.publicKeys.length} signer${lock.publicKeys.length === 1 ? '' : 's'}${lock.kind === 'palm' ? ' and the palm' : ''}`
+        : `${required} of ${signers.length} signer${signers.length === 1 ? '' : 's'}`,
       transaction_hash: bound.digest,
     };
     const op = await newOperation({
-      walletOwnerId: user.id, user, kind: 'withdraw', statement, details,
+      walletOwnerId: ownerId, user, kind: 'withdraw', statement, details,
       payload: { ...plan, transactionHash: bound.digest }, required, networkId: 'bitcoin',
     });
     await appendEvidence(EVIDENCE.PROPOSAL_CREATED, {
@@ -3496,6 +3581,370 @@ export function createApp(options) {
     // A quorum starts collecting signatures from the unsigned transaction itself.
     if (lock.required) await query('setPsbt', unsignedFor(lock, plan), op.id);
     return { operation: operationView(op, [], user), plan, rule, transactionHash: bound.digest };
+  }
+
+  /* ------------------------------------------ refresh, replacing a signer, inheritance */
+
+  /** Shown before anyone locks or moves a vault where every signer is needed. */
+  const lockWarning = (required, count, days) => (required < count ? {} : {
+    warning: count === 1
+      ? `if you die, these coins can only be moved after about ${days} days, and only with your twelve words`
+      : `every signer is needed, so if any one of you dies normal spending stops; after about ${days} days the coins can move again, but only with that person's twelve words`,
+  });
+
+  /**
+   * Every coin in a palm vault, moved to a palm vault: back into itself (a refresh, which
+   * restarts every recovery clock) or into a new one (new signers, threshold or delay). Either
+   * way it is an ordinary palm vault spend, so the vault's own signers sign, their palms approve,
+   * and the palm key signs last, all through the path every payment takes.
+   */
+  async function palmMoveRequest({ user, ownerId, account, toAddress, statementOf, details, move = null, feeRate }) {
+    const lock = lockOfAccount(account);
+    let plan = null;
+    try {
+      const [utxos, suggested] = await Promise.all([chain.spendableUtxos(lock.address), chain.feeRate()]);
+      const rate = Number(feeRate) > 0 ? Number(feeRate) : suggested;
+      if (utxos.length) plan = planPalmSpend({ vault: lock.vault, utxos, toAddress, amountSats: 'max', feeRate: rate });
+    } catch (error) {
+      if (error instanceof WalletError || error instanceof ChainError) throw new HttpError(400, error.message);
+      throw error;
+    }
+    if (!plan && !move) throw new HttpError(409, 'There are no confirmed coins in this vault to refresh.');
+    const moved = plan ? plan.outputs.reduce((sum, output) => sum + output.sats, 0) : 0;
+    const bound = plan ? bindPlan(lock, plan) : null;
+    const keys = lock.publicKeys.length;
+    const fullDetails = {
+      ...details,
+      approvals_required: `${lock.required} of ${keys} signer${keys === 1 ? '' : 's'} and the palm`,
+      ...(plan ? {
+        amount_sats: moved,
+        fee_sats: plan.feeSats,
+        fee_rate: `${plan.feeRate} sat/vB`,
+        spends: plan.inputs.map(i => `${i.txid}:${i.index}`).join(' '),
+        transaction_hash: bound.digest,
+      } : { amount_sats: 0 }),
+    };
+    const op = await newOperation({
+      walletOwnerId: ownerId, user, kind: 'withdraw', statement: statementOf(plan ? toBtc(moved) : null), details: fullDetails,
+      payload: { ...(plan ?? {}), transactionHash: bound?.digest ?? null, ...(move ? { move } : {}) },
+      required: lock.required, networkId: 'bitcoin',
+    });
+    if (plan) {
+      await appendEvidence(EVIDENCE.PROPOSAL_CREATED, {
+        actor: user.id, subjectKind: 'operation', subjectId: op.id,
+        userId: user.id, vaultId: lock.address, kind: 'withdraw', network, chain: 'bitcoin',
+        transactionHash: bound.digest, threshold: lock.required, sats: moved, address: toAddress,
+      });
+      await query('setPsbt', unsignedFor(lock, plan), op.id);
+    }
+    return { operation: operationView(op, [], user), plan };
+  }
+
+  /** Sends a palm vault's coins straight back into it, so every recovery clock starts again. */
+  async function requestRefresh({ user, body }) {
+    requirePalmReady();
+    const { ownerId, account } = await signerVault(user, body.vaultOwnerId);
+    if (account?.lock_kind !== 'palm' || !account.required) {
+      throw new HttpError(409, 'Only a vault locked to the palm has a recovery clock to restart.');
+    }
+    const days = daysOfDelay(account.recovery_delay);
+    const mine = ownerId === user.id;
+    return palmMoveRequest({
+      user, ownerId, account, toAddress: account.address, feeRate: body.feeRate,
+      statementOf: amount => `Refresh ${mine ? 'my' : 'the'} vault: move ${amount} tBTC back into it, so its recovery clock starts again`,
+      details: {
+        action: 'refresh the vault',
+        network,
+        to: account.address,
+        to_is: 'this same vault',
+        effect: `the coins come straight back here, and the recovery path stays closed for about ${days} more days`,
+      },
+    });
+  }
+
+  /**
+   * A palm vault with different signers, a different threshold or a different delay. The
+   * signers are part of the address, so this is a new vault and every coin moves to it, approved
+   * and signed by the vault as it stands. Anyone whose key it is locked to can ask, so the
+   * others can carry on when one of them, the owner included, never can again.
+   */
+  async function requestMove({ user, body }) {
+    requirePalmReady();
+    const { ownerId, account, members } = await signerVault(user, body.vaultOwnerId);
+    if (account?.lock_kind !== 'palm' || !account.required) {
+      throw new HttpError(409, 'Replacing a signer moves a palm vault. Lock this account to the palm first.');
+    }
+    const lock = lockOfAccount(account);
+    const ids = [...new Set((Array.isArray(body.signers) ? body.signers : []).map(String))];
+    const chosen = ids.map(id => members.find(m => m.member_id === id));
+    if (!ids.length || chosen.some(m => !m)) throw new HttpError(400, 'Choose the new signers from the people on this vault.');
+    const without = chosen.filter(m => !m.public_key);
+    if (without.length) {
+      throw new HttpError(409, `Everyone in the new vault needs a signing key first. Still waiting for: ${without.map(m => m.label).join(', ')}.`);
+    }
+    const required = Number(body.required);
+    const floor = quorumFloor(chosen.length);
+    if (!Number.isInteger(required) || required < floor || required > chosen.length) {
+      throw new HttpError(400, `Choose between ${floor} and ${chosen.length} signatures.`);
+    }
+    const days = body.recoveryDays === undefined || body.recoveryDays === null
+      ? daysOfDelay(account.recovery_delay) : Number(body.recoveryDays);
+    if (!RECOVERY_CHOICES.includes(days)) throw new HttpError(400, `Choose a recovery delay of ${RECOVERY_CHOICES.join(', ')} days.`);
+    const delay = delayForDays(days);
+    const keys = chosen.map(m => m.public_key);
+    const same = keys.length === lock.publicKeys.length && keys.every(key => lock.publicKeys.includes(key));
+    if (same && required === lock.required && delay === account.recovery_delay) {
+      throw new HttpError(409, 'That is the vault as it already is. Change a signer, the number of signatures or the delay.');
+    }
+
+    let made;
+    let palmVaultId;
+    let palmKey;
+    try {
+      const signer = await palmSigner();
+      palmVaultId = randomId(16);
+      palmKey = signer.publicKeyFor(palmVaultId);
+      made = palmVaultOf({ palmKey, signerKeys: keys, required, delay, network: NETWORK });
+    } catch (error) {
+      if (error instanceof HttpError) throw error;
+      throw new HttpError(400, error instanceof WalletError ? error.message : 'Those keys do not make a vault.');
+    }
+    const names = list => (list.length ? list.join(', ') : 'nobody');
+    const leaving = keyHoldersOf(account, members).filter(m => !keys.includes(m.public_key)).map(m => m.label);
+    const joining = chosen.filter(m => !lock.publicKeys.includes(m.public_key)).map(m => m.label);
+    const who = names(chosen.map(m => m.label));
+    const rule = chosen.length === 1 ? 'and the palm' : `${required} of ${chosen.length} and the palm`;
+    const move = {
+      kind: 'palm', palmVaultId, palmKey, keys, required, delay,
+      address: made.address, descriptor: made.descriptor, signers: chosen.map(m => m.member_id), from: account.address,
+    };
+    return palmMoveRequest({
+      user, ownerId, account, toAddress: made.address, feeRate: body.feeRate, move,
+      statementOf: amount => (amount === null
+        ? `Change who signs for the vault to ${who}, ${rule}`
+        : `Move the vault to ${who}, ${rule}, and send ${amount} tBTC to it`),
+      details: {
+        action: 'replace signers',
+        network,
+        signers: chosen.map(m => m.label).join(', '),
+        leaving: names(leaving),
+        joining: names(joining),
+        new_rule: `${required} of ${chosen.length} signature${chosen.length === 1 ? '' : 's'} and the palm`,
+        recovery: `the signers alone, after about ${days} days`,
+        ...lockWarning(required, chosen.length, days),
+        to: made.address,
+        effect: 'the vault becomes a new palm vault with these signers; every coin moves there and the old address is retired',
+      },
+    });
+  }
+
+  /** Points the account at the vault a move was approved for, once its coins are on their way. */
+  async function applyMove(op) {
+    const { move } = JSON.parse(op.payload);
+    const made = palmVaultOf({
+      palmKey: move.palmKey, signerKeys: move.keys, required: move.required, delay: move.delay, network: NETWORK,
+    });
+    if (made.address !== move.address) throw new HttpError(500, 'The new palm vault no longer matches the one that was approved.');
+    const policy = { rules: [{ upToSats: null, approvals: move.required }] };
+    const moved = await query('moveAccountToPalm', move.address, Buffer.from(made.leaves.normal.script).toString('hex'),
+      move.required, JSON.stringify(move.keys), move.palmVaultId, move.palmKey, move.delay, move.descriptor,
+      move.from, JSON.stringify(policy), JSON.stringify(move.signers), op.wallet_user_id);
+    if (moved.count !== 1) throw new HttpError(409, 'This vault has already moved.');
+    await pruneRoster(op.wallet_user_id);
+  }
+
+  /** What one palm vault shows about its recovery path: the delay, the description, the clock. */
+  async function palmView(row) {
+    const view = {
+      recoveryDelayBlocks: row.recovery_delay,
+      recoveryDelayDays: daysOfDelay(row.recovery_delay),
+      descriptor: row.descriptor,
+      clock: null,
+    };
+    try {
+      const lock = lockOfAccount(row);
+      const [utxos, tip] = await Promise.all([chain.spendableUtxos(row.address), tipHeight()]);
+      const { coins, ...clock } = recoveryClock(lock.vault, utxos, tip);
+      view.clock = { ...clock, coinCount: coins.length, refreshDue: clock.daysLeft !== null && clock.daysLeft <= 60 };
+    } catch (error) {
+      if (!(error instanceof ChainError)) throw error;
+    }
+    return view;
+  }
+
+  // The chain's height moves every ten minutes or so; one look a minute is plenty for a clock.
+  let tipCache = { at: 0, height: null };
+  async function tipHeight() {
+    if (tipCache.height !== null && now() - tipCache.at < 60) return tipCache.height;
+    const height = await chain.tipHeight();
+    tipCache = { at: now(), height };
+    return height;
+  }
+
+  /** A vault this person signs for but does not own, as much as they need to act on it. */
+  async function signedVaultView(ownerId, user) {
+    const [members, account] = await Promise.all([all('membersOf', ownerId), one('accountOn', ownerId, 'bitcoin')]);
+    const me = members.find(m => m.member_id === user.id);
+    if (!me || !account) return null;
+    const holders = keyHoldersOf(account, members);
+    return {
+      ownerId,
+      ownerLabel: members.find(m => m.is_owner)?.label || 'the owner',
+      address: account.address,
+      explorer: chain.explorerAddress(account.address),
+      locked: Boolean(account.required),
+      required: account.required ?? null,
+      keyCount: account.required ? JSON.parse(account.quorum_keys).length : null,
+      holdsKey: holders.some(m => m.member_id === user.id),
+      keyHolders: holders.map(m => m.member_id),
+      members: members.map(memberView),
+      amount: await chain.balance(account.address).then(b => b.confirmed + b.pending).catch(() => null),
+      palm: account.lock_kind === 'palm' && account.required ? await palmView(account) : null,
+    };
+  }
+
+  /** Everything an inheritance sheet prints. Only for someone on the vault. */
+  async function inheritanceSheet({ user, body }) {
+    const ownerId = String(body.vaultOwnerId || user.id);
+    const [members, account] = await Promise.all([all('membersOf', ownerId), one('accountOn', ownerId, 'bitcoin')]);
+    if (ownerId !== user.id && !members.some(m => m.member_id === user.id)) throw new HttpError(404, 'Vault not found.');
+    if (account?.lock_kind !== 'palm' || !account.required) {
+      throw new HttpError(409, 'An inheritance sheet is for a vault locked to the palm.');
+    }
+    const holders = keyHoldersOf(account, members);
+    return {
+      address: account.address,
+      network,
+      required: account.required,
+      signers: holders.map(m => ({ label: m.label, owner: m.is_owner })),
+      recoveryDelayBlocks: account.recovery_delay,
+      recoveryDelayDays: daysOfDelay(account.recovery_delay),
+      descriptor: account.descriptor,
+      descriptorQr: await QRCode.toString(account.descriptor, { type: 'svg', margin: 1, errorCorrectionLevel: 'L' }).catch(() => null),
+      palmAt: publicOrigin,
+      printedAt: now(),
+    };
+  }
+
+  /* ----------------------------------------------- the recovery door, for heirs
+   *
+   * Inside the signed in app only. An heir signs in to Palm with their own palm, and needs no
+   * vault of their own to use it. Nothing secret reaches this server: the page sends the public
+   * vault description and gets back an unsigned transaction, signs it on the device with the
+   * twelve words, and sends back signatures. Bitcoin checks the delay itself, so this cannot
+   * open the recovery path a block early for anyone.
+   */
+  const readVault = descriptor => {
+    try {
+      return palmVaultFromDescriptor(descriptor, NETWORK);
+    } catch (error) {
+      if (error instanceof WalletError) throw new HttpError(400, error.message);
+      throw error;
+    }
+  };
+
+  async function recoveryDoorPlan({ body }) {
+    const vault = readVault(body.descriptor);
+    let utxos;
+    let tip;
+    let suggested;
+    try {
+      [utxos, tip, suggested] = await Promise.all([chain.spendableUtxos(vault.address), tipHeight(), chain.feeRate()]);
+    } catch (error) {
+      if (error instanceof ChainError) throw new HttpError(502, error.message);
+      throw error;
+    }
+    const clock = recoveryClock(vault, utxos, tip);
+    const view = {
+      address: vault.address,
+      explorer: chain.explorerAddress(vault.address),
+      required: vault.required,
+      keys: vault.keys.map(key => Buffer.from(key).toString('hex')),
+      recoveryDelayBlocks: vault.delay,
+      recoveryDelayDays: daysOfDelay(vault.delay),
+      clock,
+      feeRate: suggested,
+      plan: null,
+      psbt: null,
+    };
+    const to = String(body.to ?? '').trim();
+    if (!to) return view;
+    if (!isValidAddress(to)) throw new HttpError(400, `That is not a valid ${network} address.`);
+    const ready = utxos.filter(u => clock.coins.some(c => c.ready && c.txid === u.txid && c.vout === u.vout));
+    if (!ready.length) {
+      throw new HttpError(409, clock.coins.length
+        ? `No coins can use the recovery path yet. The first opens in about ${clock.daysLeft} days.`
+        : 'This vault has no confirmed coins.');
+    }
+    try {
+      const feeRate = Number(body.feeRate) > 0 ? Number(body.feeRate) : suggested;
+      view.plan = planPalmSpend({ vault, utxos: ready, toAddress: to, amountSats: 'max', feeRate, path: 'recovery' });
+      view.psbt = palmVaultPsbt(vault, view.plan, { path: 'recovery' });
+    } catch (error) {
+      if (error instanceof WalletError) throw new HttpError(400, error.message);
+      throw error;
+    }
+    return view;
+  }
+
+  async function recoveryDoorSend({ body }) {
+    const vault = readVault(body.descriptor);
+    const psbt = String(body.psbt ?? '');
+    let finished;
+    try {
+      if (palmPathOf(vault, psbt) !== 'recovery') throw new WalletError('That transaction does not use this vault’s recovery path.');
+      finished = finalizePalmPsbt(vault, psbt);
+    } catch (error) {
+      if (error instanceof WalletError) throw new HttpError(400, error.message);
+      throw error;
+    }
+    try {
+      const txid = await chain.broadcast(finished.hex);
+      return { txid, explorer: chain.explorerTx(txid) };
+    } catch (error) {
+      if (!(error instanceof ChainError)) throw error;
+      const early = /BIP68|non-final/i.test(error.message);
+      throw new HttpError(early ? 409 : 502, early ? 'Bitcoin says these coins are not old enough to use the recovery path yet.' : error.message);
+    }
+  }
+
+  /* ---------------------------------------------------------- refresh reminders
+   *
+   * Once a day the scheduler asks, and every palm vault whose recovery path opens within 60, 30
+   * or 7 days, or has opened, gets one alert to each signer per step. The alert carries nothing;
+   * the app shows the clock. At most one run an hour, whoever calls, so calling it more often
+   * than the scheduler does cannot make this server ask the chain service for more.
+   */
+  const reminderStage = days => (days <= 0 ? 4 : days <= 7 ? 3 : days <= 30 ? 2 : days <= 60 ? 1 : 0);
+
+  async function sendReminders({ headers }) {
+    if (cronSecret && headers?.authorization !== `Bearer ${cronSecret}`) throw new HttpError(401, 'Not allowed.');
+    const hour = Math.floor(now() / 3600);
+    let hits = 1;
+    try {
+      ({ hits } = (await query('bumpRateLimit', `reminders:${hour}`, (hour + 2) * 3600)).rows[0]);
+    } catch (error) {
+      log.error(error);
+    }
+    if (Number(hits) > 1) return { ran: false, reason: 'already ran this hour' };
+    const rows = await all('palmAccounts');
+    let reminded = 0;
+    for (const row of rows) {
+      try {
+        const lock = lockOfAccount(row);
+        const clock = recoveryClock(lock.vault, await chain.spendableUtxos(row.address), await tipHeight());
+        if (clock.nextOpensAt === null) continue;
+        const stage = reminderStage(clock.daysLeft);
+        const [at, last] = String(row.reminded ?? '').split(':').map(Number);
+        if (stage <= (at === clock.nextOpensAt ? last : 0)) continue;
+        await pushTo(keyHoldersOf(row, await all('membersOf', row.wallet_user_id)).map(m => m.member_id));
+        await query('setReminded', `${clock.nextOpensAt}:${stage}`, row.wallet_user_id);
+        reminded++;
+      } catch (error) {
+        log.warn(`Reminder skipped: ${error.message}`);
+      }
+    }
+    return { ran: true, vaults: rows.length, reminded };
   }
 
   async function ownOperation(id, user) {
@@ -3532,6 +3981,13 @@ export function createApp(options) {
         ]);
         if (!signersOf(account, members).includes(user.id)) {
           throw new HttpError(403, 'You are not a signer on that account.');
+        }
+        // Coins the chain guards move on the signatures of the keys they are locked to, and each
+        // signer signs only after their own palm: a palm from anyone else could never be followed
+        // by a signature, so it is not asked for.
+        if (op.kind === 'withdraw' && op.network === 'bitcoin' && account?.required
+          && !keyHoldersOf(account, members).some(m => m.member_id === user.id)) {
+          throw new HttpError(403, 'Your key is not one of the ones this vault is locked to, so your palm cannot count towards moving its coins.');
         }
       }
     } else if (op.wallet_user_id !== user.id) {
@@ -3696,6 +4152,12 @@ export function createApp(options) {
     { method: 'POST', path: '/api/accounts/lock', handler: requestLock, auth: true, limit: RATE.spend },
     { method: 'POST', path: '/api/addresses/approval', handler: requestAddressName, auth: true, limit: RATE.palm },
     { method: 'POST', path: '/api/vault/freeze', handler: freezeVault, auth: true, limit: RATE.write },
+    { method: 'POST', path: '/api/vault/refresh/approval', handler: requestRefresh, auth: true, limit: RATE.spend },
+    { method: 'POST', path: '/api/vault/move/approval', handler: requestMove, auth: true, limit: RATE.spend },
+    { method: 'POST', path: '/api/vault/inheritance', handler: inheritanceSheet, auth: true, limit: RATE.upstream },
+    { method: 'POST', path: '/api/recovery-door/plan', handler: recoveryDoorPlan, auth: true, limit: RATE.spend },
+    { method: 'POST', path: '/api/recovery-door/send', handler: recoveryDoorSend, auth: true, limit: RATE.unlock },
+    { method: 'GET', path: '/api/cron/reminders', handler: sendReminders },
     { method: 'POST', path: '/api/vault/unfreeze/approval', handler: requestUnfreeze, auth: true, limit: RATE.palm },
     { method: 'POST', path: '/api/push/subscribe', handler: subscribePush, auth: true, limit: RATE.write },
     { method: 'POST', path: '/api/push/unsubscribe', handler: unsubscribePush, auth: true, limit: RATE.write },
@@ -3805,6 +4267,7 @@ export function createApp(options) {
         body: req.method === 'POST' ? await readJson(req) : {},
         setCookie: (name, value, maxAge) => outCookies.push(cookieString(name, value, maxAge)),
         user,
+        headers: req.headers,
       };
       sendJson(res, 200, await route.handler(ctx), outCookies);
     } catch (error) {
