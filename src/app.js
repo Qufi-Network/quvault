@@ -1869,7 +1869,8 @@ export function createApp(options) {
     const subjects = [];
     for (const memberId of signersOf(account, await all('membersOf', op.wallet_user_id))) {
       const person = await one('userById', memberId);
-      if (person?.sub) subjects.push(person.sub, approvalSubject(person.sub));
+      // One person, in both forms Veyns may name them by: they count once, however named.
+      if (person?.sub) subjects.push([person.sub, approvalSubject(person.sub)]);
     }
     let signed;
     try {

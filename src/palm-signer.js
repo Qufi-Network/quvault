@@ -24,6 +24,9 @@ import { canonicalTransaction } from './canonical.js';
 import { transactionDigest, actionDigest } from './veyns.js';
 import { palmVaultOf, planOfPalmPsbt, palmPathOf, signPalmPsbt } from './palm-vault.js';
 import { NETWORK } from './bitcoin.js';
+import {
+  NATIVE, normalTransfer, evmTransferDigest, eip712TransferDigest, eip712CancelDigest, addressOfKey, signDigest,
+} from './palm-wallet.js';
 
 export class PalmRefused extends Error {}
 
@@ -123,7 +126,35 @@ export function createPalmSigner({
     const expected = actionDigest(action.statement, action.details);
 
     // 2. The palms: enough different signers, each bound to exactly this action.
-    const subjects = new Set((policy?.signerSubs ?? []).map(String));
+    const { approvedBy, requestIds } = checkPalms({
+      decisions, expected, subjects: policy?.signerSubs, transactionKey: digest, required: vault.required,
+    });
+
+    // 3. Sign. Only now is the key made, and it is wiped as soon as it has been used.
+    const key = privateKeyFor(String(vaultId));
+    try {
+      const signed = signPalmPsbt(psbt, key);
+      for (const id of requestIds) counted.set(id, digest);
+      return { psbt: signed, approvedBy: [...approvedBy].sort(), transactionHash: digest, palmKey };
+    } finally {
+      key.fill(0);
+    }
+  }
+
+  /**
+   * Enough palm approvals from different people who sign for this vault, each a Veyns decision
+   * verified here with a pinned key, each approving exactly `expected`, each counted towards
+   * `transactionKey` only. Returns who approved and the request ids, or refuses.
+   */
+  function checkPalms({ decisions, expected, subjects: subjectList, transactionKey, required }) {
+    // Each entry is one person: a subject, or a list of the forms Veyns may name them by. Two
+    // forms of one person are still one person, so they can never count as two signers.
+    const personOf = new Map();
+    for (const entry of subjectList ?? []) {
+      const aliases = (Array.isArray(entry) ? entry : [entry]).map(String);
+      for (const alias of aliases) personOf.set(alias, aliases[0]);
+    }
+    const digest = transactionKey;
     const approvedBy = new Set();
     const requestIds = [];
     const reasons = [];
@@ -145,7 +176,7 @@ export function createPalmSigner({
                 : typeof claims.request_nonce !== 'string' || !claims.request_nonce ? 'a decision carries no request nonce'
                   : typeof claims.auth_time !== 'number' || claims.auth_time > time + leeway || claims.auth_time < time - maxAgeSeconds
                     ? 'a palm scan is too old, or dated in the future'
-                    : !subjects.has(String(claims.sub)) ? 'a decision is from someone who does not sign for this vault'
+                    : !personOf.has(String(claims.sub)) ? 'a decision is from someone who does not sign for this vault'
                       : counted.has(claims.request_id) && counted.get(claims.request_id) !== digest
                         ? 'a decision has already been counted towards a different transaction'
                         : null;
@@ -153,24 +184,99 @@ export function createPalmSigner({
         reasons.push(why);
         continue;
       }
-      approvedBy.add(String(claims.sub));
+      approvedBy.add(personOf.get(String(claims.sub)));
       requestIds.push(claims.request_id);
     }
-    if (approvedBy.size < vault.required) {
+    if (approvedBy.size < required) {
       const detail = reasons.length ? ` (${[...new Set(reasons)].join('; ')})` : '';
-      refuse(`needs ${vault.required} palm approval${vault.required === 1 ? '' : 's'} from different signers and has ${approvedBy.size}${detail}`);
+      refuse(`needs ${required} palm approval${required === 1 ? '' : 's'} from different signers and has ${approvedBy.size}${detail}`);
     }
+    return { approvedBy, requestIds };
+  }
 
-    // 3. Sign. Only now is the key made, and it is wiped as soon as it has been used.
-    const key = privateKeyFor(String(vaultId));
+  /* ------------------------------------------------------- Ethereum and BSC */
+
+  // A Palm Wallet's palm key: its own derivation, so no Bitcoin vault and no wallet share a key.
+  const evmKeyFor = vaultId => privateKeyFor(`evm:${vaultId}`);
+
+  /** The address a Palm Wallet names as its palm signer. */
+  const palmAddressFor = vaultId => {
+    const key = evmKeyFor(String(vaultId));
     try {
-      const signed = signPalmPsbt(psbt, key);
+      return addressOfKey(key);
+    } finally {
+      key.fill(0);
+    }
+  };
+
+  /**
+   * Signs the palm key's part of a Palm Wallet transfer, or throws PalmRefused.
+   *
+   * `wallet` = { address, chainId, threshold, signerSubs }: the wallet as it was made, and the
+   * Veyns subjects of the people who sign for it. `transfer` = { token, to, amount, nonce }.
+   * The hash the palms approved is recomputed from the transfer itself, and the payee, amount,
+   * asset, wallet and chain in what they read must all be this transfer's: the signer will not
+   * sign a payment that differs from the one a person was shown.
+   */
+  function signEvmTransfer({ vaultId, wallet, transfer, action, decisions }) {
+    let t;
+    let digest;
+    try {
+      t = normalTransfer(transfer);
+      digest = evmTransferDigest({ chainId: wallet?.chainId, wallet: wallet?.address, transfer: t });
+    } catch (error) {
+      refuse(String(error.message).replace(/\.$/, '').toLowerCase());
+    }
+    const details = action?.details ?? {};
+    if (details.transaction_hash !== digest) refuse('the approved action names a different transfer');
+    const lower = value => String(value ?? '').toLowerCase();
+    const approvedToken = details.token === undefined || details.token === 'native' ? NATIVE : lower(details.token);
+    if (lower(details.to) !== t.to) refuse('the approved payee is not this transfer\'s');
+    if (String(details.amount_units ?? '') !== t.amount) refuse('the approved amount is not this transfer\'s');
+    if (approvedToken !== t.token) refuse('the approved asset is not this transfer\'s');
+    if (lower(details.wallet) !== lower(wallet.address)) refuse('the approval is for a different wallet');
+    if (String(details.chain_id ?? '') !== String(wallet.chainId)) refuse('the approval is for a different chain');
+
+    const required = Number(wallet.threshold);
+    if (!Number.isInteger(required) || required < 1) refuse('the wallet names no threshold');
+    const { approvedBy, requestIds } = checkPalms({
+      decisions, expected: actionDigest(action.statement, details), subjects: wallet.signerSubs, transactionKey: digest, required,
+    });
+
+    const key = evmKeyFor(String(vaultId));
+    try {
+      const signature = signDigest(eip712TransferDigest({ chainId: wallet.chainId, wallet: wallet.address, transfer: t }), key);
       for (const id of requestIds) counted.set(id, digest);
-      return { psbt: signed, approvedBy: [...approvedBy].sort(), transactionHash: digest, palmKey };
+      return { signature, palmAddress: addressOfKey(key), approvedBy: [...approvedBy].sort(), transactionHash: digest };
     } finally {
       key.fill(0);
     }
   }
 
-  return { publicKeyFor, sign };
+  /**
+   * Signs a cancellation of a scheduled recovery: the palm path stopping a transfer the signers
+   * scheduled without it. One palm approval of this exact cancellation is enough, because a
+   * cancellation can only stop money moving.
+   */
+  function signEvmCancel({ vaultId, wallet, id, nonce, action, decisions }) {
+    const scheduledId = lower(id);
+    if (!/^0x[0-9a-f]{64}$/.test(scheduledId) || !/^(0|[1-9][0-9]{0,77})$/.test(String(nonce))) refuse('that is not a scheduled transfer');
+    const digest = transactionDigest({ v: 1, kind: 'palm-wallet-cancel', chainId: String(wallet.chainId), wallet: lower(wallet.address), id: scheduledId, nonce: String(nonce) });
+    const details = action?.details ?? {};
+    if (details.transaction_hash !== digest) refuse('the approved action names a different cancellation');
+    const { approvedBy, requestIds } = checkPalms({
+      decisions, expected: actionDigest(action.statement, details), subjects: wallet.signerSubs, transactionKey: digest, required: 1,
+    });
+    const key = evmKeyFor(String(vaultId));
+    try {
+      const signature = signDigest(eip712CancelDigest({ chainId: wallet.chainId, wallet: wallet.address, id: scheduledId, nonce }), key);
+      for (const requestId of requestIds) counted.set(requestId, digest);
+      return { signature, approvedBy: [...approvedBy].sort(), transactionHash: digest };
+    } finally {
+      key.fill(0);
+    }
+  }
+  const lower = value => String(value ?? '').toLowerCase();
+
+  return { publicKeyFor, sign, palmAddressFor, signEvmTransfer, signEvmCancel };
 }

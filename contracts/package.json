@@ -1,0 +1,17 @@
+{
+  "name": "palm-wallet-contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Palm Wallet: an Ethereum and BSC smart contract wallet that will not move funds without a palm.",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-ethers": "^3.0.8",
+    "@openzeppelin/contracts": "^5.2.0",
+    "chai": "^4.4.1",
+    "ethers": "^6.13.4",
+    "hardhat": "^2.22.17"
+  }
+}

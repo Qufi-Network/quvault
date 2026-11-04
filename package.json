@@ -16,7 +16,8 @@
     "audit": "node scripts/audit.js",
     "inventory": "node scripts/legacy-inventory.js",
     "verify:evidence": "node scripts/verify-evidence.js",
-    "proof:palm-vault": "node scripts/palm-vault-proof.js"
+    "proof:palm-vault": "node scripts/palm-vault-proof.js",
+    "test:contracts": "cd contracts && npx hardhat test"
   },
   "dependencies": {
     "@noble/curves": "^1.9.7",
