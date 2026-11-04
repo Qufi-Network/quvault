@@ -1,43 +1,33 @@
-# Palm
+# Palm Vault
 
-A digital asset vault where every payment needs a palm approval. Approvals go through Veyns
-and are tied to the exact transaction being signed.
+Palm Vault is a vault for digital assets where nothing moves without a palm scan. It is a
+standalone product built on Veyns palm authentication.
 
-Runs on Bitcoin testnet4. Keys are created and kept in the browser, never on the server.
+## What it does
 
-## Run locally
+- **Every payment needs a palm approval.** You see exactly what you are approving, the amount,
+  the destination and the fee, and confirm it with a palm scan in the Veyns app.
+- **The approval is tied to that exact transaction.** If anything about it changes after you
+  approve, the vault refuses to sign.
+- **Your keys stay with you.** They are created and kept in your own browser, backed by a
+  recovery phrase. Palm Vault's servers never hold them.
+- **Vaults can be shared.** Invite cosigners and choose how many palms must approve, for
+  example 2 of 3. On Bitcoin a shared vault is locked to the chain, so the network itself
+  enforces the rule and no single person can move funds alone.
+- **Every approval leaves a receipt.** It records who approved which transaction, is signed
+  with post quantum cryptography, and anyone can check it.
 
-```bash
-npm install
-npm run keygen
-cp .env.example .env
-npm run build:client
-npm start
-```
+## How a payment works
 
-Then open http://localhost:4970.
+1. Enter the amount and where it is going.
+2. Palm Vault prepares the exact transaction.
+3. You, and any cosigners the vault needs, approve it with a palm scan.
+4. Your browser signs it, the payment is sent, and a receipt is issued.
 
-## Settings
+## Networks
 
-Put these in `.env`:
+Bitcoin, with sending also available on Ethereum and BNB Smart Chain.
 
-- `VEYNS_CLIENT_ID` and `VEYNS_BACKEND_SECRET` from the Veyns console
-- `WALLET_SEED` printed by `npm run keygen`
-- `QUVAULT_DATABASE_URL` is optional; without it a local database is used
+## Status
 
-## Tests
-
-```bash
-npm test
-npm run audit
-npm run proof:palm-vault   # needs bitcoind installed
-```
-
-## Deploy
-
-Deploys to Vercel. Add a Postgres database, register the site address in the Veyns console,
-and set the settings above.
-
-## Docs
-
-Design and security notes are in the other `.md` files in this folder.
+Palm Vault currently runs on test networks only.
