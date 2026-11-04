@@ -61,14 +61,18 @@ body:has(#view-signin:not([hidden])) header.top { display: none !important; }
 .qv-nav { position: sticky; top: 0; z-index: 50; background: rgba(255, 255, 255, .8); backdrop-filter: blur(16px); border-bottom: 1px solid var(--line); }
 .qv-nav-in { max-width: calc(var(--wrap) + 2 * var(--gutter)); margin: 0 auto; padding: 13px var(--gutter); display: flex; align-items: center; gap: 24px; }
 .qv-brand { display: inline-flex; align-items: center; text-decoration: none; flex: none; }
-.qv-brand-logo { height: 34px; width: auto; display: block; }
+.qv-brand-logo { height: 44px; width: auto; display: block; }
 .qv-links { display: flex; gap: 28px; margin-left: auto; }
 .qv-links a { color: var(--body); font-size: 14px; font-weight: 500; text-decoration: none; transition: color .15s var(--ease); }
 .qv-links a:hover { color: var(--ink); }
 .qv-demo { margin-left: 8px; display: inline-flex; align-items: center; gap: 7px; height: 42px; padding: 0 20px; border-radius: 9px; background: var(--blue); color: #fff; font-size: 14px; font-weight: 600; text-decoration: none; box-shadow: 0 12px 26px -14px rgba(21, 94, 239, .8); transition: transform .18s var(--ease); }
 .qv-demo:hover { transform: translateY(-1px); }
 .qv-burger { display: none; width: 42px; height: 42px; border: 1px solid var(--line-2); border-radius: 9px; background: #fff; cursor: pointer; flex-direction: column; gap: 5px; align-items: center; justify-content: center; }
-.qv-burger span { width: 18px; height: 2px; background: var(--ink); border-radius: 2px; }
+.qv-burger span { width: 18px; height: 2px; background: var(--ink); border-radius: 2px; transition: transform .2s var(--ease); }
+/* open, the two bars cross into a close mark: their centres sit 7px apart, so each moves 3.5px */
+.qv-burger[aria-expanded="true"] span:first-child { transform: translateY(3.5px) rotate(45deg); }
+.qv-burger[aria-expanded="true"] span:last-child { transform: translateY(-3.5px) rotate(-45deg); }
+.qv-menu { display: none; }
 
 /* ---------------------------------------------------------------- hero */
 #view-signin .en-hero {
@@ -302,13 +306,16 @@ body:has(#view-signin:not([hidden])) header.top { display: none !important; }
 .qv-footer-in { max-width: var(--wrap); margin: 0 auto; }
 .qv-footer-top { display: flex; align-items: center; justify-content: space-between; gap: 24px; flex-wrap: wrap; padding-bottom: 26px; border-bottom: 1px solid var(--line); }
 .qv-footer-brand { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
-.qv-footer-logo { height: 30px; width: auto; }
+.qv-footer-logo { height: 40px; width: auto; }
 .qv-footer-brand p { margin: 0; display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; font-weight: 600; }
 .qv-footer-veyns { height: 16px; width: auto; }
 .qv-footer-nav { display: flex; gap: 22px; flex-wrap: wrap; }
 .qv-footer-nav a { color: var(--body); font-size: 14px; text-decoration: none; }
 .qv-footer-nav a:hover { color: var(--ink); }
 .qv-footer-note { margin: 24px 0 0; max-width: 72ch; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.qv-footer-legal { margin: 18px 0 0; color: var(--muted); font-size: 12.5px; line-height: 1.7; }
+.qv-footer-legal a { color: inherit; text-decoration: none; }
+.qv-footer-legal a:hover { color: var(--ink); }
 
 /* request-a-demo messaging modal */
 .qd-modal { position: fixed; inset: 0; z-index: 2000; display: grid; place-items: center; padding: 20px; }
@@ -341,7 +348,17 @@ body:has(#view-signin:not([hidden])) header.top { display: none !important; }
 /* responsive */
 @media (max-width: 960px) {
   .qv-links, .qv-demo { display: none; }
-  .qv-burger { display: flex; }
+  /* the links carried margin-left:auto; with them hidden, the burger takes it to stay top right */
+  .qv-burger { display: flex; margin-left: auto; }
+  .qv-menu:not([hidden]) {
+    display: grid; position: absolute; top: 100%; left: 0; right: 0;
+    max-height: calc(100dvh - 72px); overflow-y: auto;
+    padding: 6px var(--gutter) 22px; background: #fff;
+    border-bottom: 1px solid var(--line); box-shadow: 0 28px 44px -28px rgba(6, 21, 46, .28);
+  }
+  .qv-menu a { display: flex; align-items: center; min-height: 54px; border-bottom: 1px solid var(--line); color: var(--ink); font-size: 16px; font-weight: 500; text-decoration: none; }
+  .qv-menu a:active { color: var(--blue); }
+  .qv-menu-demo { display: flex; align-items: center; justify-content: center; gap: 8px; height: 50px; margin-top: 18px; border: 0; border-radius: 10px; background: var(--blue); color: #fff; font: inherit; font-size: 15px; font-weight: 600; cursor: pointer; }
   #view-signin .en-hero { display: block; min-height: auto; padding: clamp(28px, 6vh, 56px) 0 clamp(40px, 8vh, 64px); text-align: center; }
   #view-signin .en-hero::after { -webkit-mask-image: radial-gradient(90% 50% at 50% 24%, #000, transparent 78%); mask-image: radial-gradient(90% 50% at 50% 24%, #000, transparent 78%); }
   .qv-hero-art { position: static; width: auto; max-width: 440px; margin: 0 auto 6px; display: block; }
@@ -452,7 +469,7 @@ header.top .top-in {
   gap: 20px;
 }
 @media (max-width: 860px) { header.top .top-in { padding: 11px 16px; } }
-header.top .mark-quvault { height: 23px !important; width: auto; display: block; }
+header.top .mark-quvault { height: 32px !important; width: auto; display: block; }
 header.top .who { display: inline-flex; align-items: center; gap: 12px; font-family: 'Inter', system-ui, sans-serif; }
 /* network chip — a quiet, capitalised testnet marker, not a heavy black pill */
 header.top .chip, header.top #network-chip {

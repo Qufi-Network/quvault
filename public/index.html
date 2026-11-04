@@ -3,15 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Veyns — Human Gated Security</title>
-  <meta name="description" content="Veyns Quantum Vault. Human gated security and biometric verification for digital assets — always know who signed the transaction.">
-  <link rel="icon" href="/veyns-symbol-white.png" type="image/png">
+  <title>Palm — Human Gated Security</title>
+  <meta name="description" content="Palm. Human gated security and biometric verification for digital assets — always know who signed the transaction.">
+  <link rel="icon" href="/palm-mark.png" type="image/png">
   <link rel="manifest" href="/manifest.webmanifest">
   <meta name="theme-color" content="#ffffff">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="Veyns">
+  <meta name="apple-mobile-web-app-title" content="Palm">
   <link rel="apple-touch-icon" href="/icon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -49,8 +49,8 @@
 
   <header class="top">
     <div class="top-in">
-      <a class="mark" href="/" aria-label="QuVault">
-        <img class="mark-quvault" src="/quvault-logo.png" alt="QuVault" width="600" height="160">
+      <a class="mark" href="/" aria-label="Palm">
+        <img class="mark-quvault" src="/palm-logo.png" alt="Palm" width="578" height="180">
       </a>
       <div class="who" id="who" hidden>
         <span class="chip" id="network-chip"></span>
@@ -66,7 +66,7 @@
 
   <main id="view-setup" class="view narrow" hidden>
     <p class="eyebrow">Setup</p>
-    <h1>QuVault needs a few things</h1>
+    <h1>Palm needs a few things</h1>
     <ol class="steps" id="setup-steps"></ol>
     <p class="fine">Restart or redeploy after setting them.</p>
   </main>
@@ -79,9 +79,8 @@
   -->
   <header class="vx-nav" id="marketing-top" hidden>
     <div class="vx-nav-in">
-      <a class="vx-brand" href="#home" aria-label="Veyns home">
-        <img src="/veyns-lockup-white.png" width="480" height="99" alt="Veyns">
-        <span class="vx-brand-sub">Quantum Vault</span>
+      <a class="vx-brand" href="#home" aria-label="Palm home">
+        <img src="/palm-logo-white.png" width="578" height="180" alt="Palm">
       </a>
       <button class="vx-burger" id="nav-toggle" type="button" aria-expanded="false" aria-controls="marketing-nav" aria-label="Menu">
         <span></span><span></span><span></span>
@@ -104,19 +103,27 @@
     <!-- dark cinematic marketing nav -->
     <header class="qv-nav" id="qv-nav">
       <div class="qv-nav-in">
-        <a class="qv-brand" href="#home" aria-label="QuVault">
-          <img class="qv-brand-logo" src="/quvault-logo.png" alt="QuVault">
+        <a class="qv-brand" href="#home" aria-label="Palm">
+          <img class="qv-brand-logo" src="/palm-logo.png" alt="Palm">
         </a>
         <nav class="qv-links">
-          <a href="#home">QuVault</a>
+          <a href="#home">Palm</a>
           <a href="#tech">Technology</a>
           <a href="#uses">Use Cases</a>
           <a href="#security">Security</a>
           <a href="#how">How it works</a>
         </nav>
         <a class="qv-demo" href="#demo">Request a Demo<span aria-hidden="true">→</span></a>
-        <button class="qv-burger" id="qv-burger" type="button" aria-label="Menu"><span></span><span></span></button>
+        <button class="qv-burger" id="qv-burger" type="button" aria-label="Menu" aria-controls="qv-menu" aria-expanded="false"><span></span><span></span></button>
       </div>
+      <nav class="qv-menu" id="qv-menu" aria-label="Menu" hidden>
+        <a href="#home">Palm</a>
+        <a href="#tech">Technology</a>
+        <a href="#uses">Use Cases</a>
+        <a href="#security">Security</a>
+        <a href="#how">How it works</a>
+        <button class="qv-menu-demo" type="button" data-qd-open>Request a Demo<span aria-hidden="true">→</span></button>
+      </nav>
     </header>
 
     <!-- ============================================ hero (the one dark section) -->
@@ -145,7 +152,7 @@
               <svg class="qv-btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 11a7 7 0 0 1 14 0v2"/><path d="M8.5 11a3.5 3.5 0 0 1 7 0v3.6"/><path d="M12 11v6.6"/><path d="M5 14.6v1.8"/><path d="M19 15v1.6"/></svg>
               Sign in with your palm
             </button>
-            <button class="qv-btn ghost" id="signin-browser" type="button" hidden disabled>Explore QuVault</button>
+            <button class="qv-btn ghost" id="signin-browser" type="button" hidden disabled>Explore Palm</button>
           </div>
           <p class="vx-error" id="signin-error" role="alert"></p>
         </div>
@@ -183,7 +190,7 @@
       <div class="qv-value-in">
         <p class="qv-label">The value proposition</p>
         <h2>Stronger control for a<br>digital asset economy.</h2>
-        <p class="qv-value-lead">QuVault combines biometric identity, quantum wrapped keys and independent verification to give institutions stronger control, governance and transparency over digital assets.</p>
+        <p class="qv-value-lead">Palm combines biometric identity, quantum wrapped keys and independent verification to give institutions stronger control, governance and transparency over digital assets.</p>
         <ul class="qv-pillars">
           <li>Human gated security</li>
           <li>Institutional control</li>
@@ -192,10 +199,10 @@
       </div>
     </section>
 
-    <!-- how QuVault works -->
+    <!-- how Palm works -->
     <section class="qv-how" id="how">
       <div class="qv-how-in">
-        <p class="qv-label">How QuVault works</p>
+        <p class="qv-label">How Palm works</p>
         <h2>From access to accountability.</h2>
         <ol class="qv-steps">
           <li><span class="qv-step-head"><span class="qv-step-fx"><canvas class="qv-glx" data-fx="send" data-light aria-hidden="true"></canvas></span><span class="qv-step-n">01</span></span><h3>Action requested</h3><p>A transaction is initiated — a transfer, settlement or other high value action.</p></li>
@@ -214,7 +221,7 @@
         <div class="qv-veyns-text">
           <p class="qv-label">Veyns biometric layer</p>
           <h2>Your assets.<br>Your identity.<br>Your authority.</h2>
-          <p>Veyns powers the human gated authorisation layer within QuVault, connecting biometric identity to controlled digital asset access and institutional approval workflows.</p>
+          <p>Veyns powers the human gated authorisation layer within Palm, connecting biometric identity to controlled digital asset access and institutional approval workflows.</p>
           <p class="qv-powered"><span>Powered by</span><img src="/veyns-lockup-black.png" alt="Veyns"></p>
         </div>
         <div class="qv-veyns-art">
@@ -275,7 +282,7 @@
       <canvas class="qv-blocks qv-final-gl" aria-hidden="true"></canvas>
       <div class="qv-final-in">
         <h2>Move from access<br>to accountability.</h2>
-        <p>Explore how QuVault, powered by Veyns, can support stronger authorisation, institutional governance and verifiable digital asset security.</p>
+        <p>Explore how Palm, powered by Veyns, can support stronger authorisation, institutional governance and verifiable digital asset security.</p>
         <a class="qv-btn primary lg" href="#home">Request an institutional demo<span aria-hidden="true">→</span></a>
       </div>
     </section>
@@ -289,7 +296,7 @@
           <span class="qd-ava" aria-hidden="true"></span>
           <div>
             <p class="qd-title" id="qd-title">Request a demo</p>
-            <p class="qd-sub">QuVault · powered by Veyns</p>
+            <p class="qd-sub">Palm · powered by Veyns</p>
           </div>
           <span class="qd-dot" aria-hidden="true"></span>
         </div>
@@ -314,11 +321,11 @@
       <div class="qv-footer-in">
         <div class="qv-footer-top">
           <div class="qv-footer-brand">
-            <img class="qv-footer-logo" src="/quvault-logo.png" alt="QuVault">
+            <img class="qv-footer-logo" src="/palm-logo.png" alt="Palm">
             <p>Powered by <img class="qv-footer-veyns" src="/veyns-lockup-black.png" alt="Veyns"></p>
           </div>
           <nav class="qv-footer-nav">
-            <a href="#home">QuVault</a>
+            <a href="#home">Palm</a>
             <a href="#tech">Technology</a>
             <a href="#uses">Use Cases</a>
             <a href="#security">Security</a>
@@ -327,7 +334,8 @@
             <a href="https://qufi.network" target="_blank" rel="noopener noreferrer">qufi.network</a>
           </nav>
         </div>
-        <p class="qv-footer-note">QuVault is the institutional digital asset vault within the QuFi Quantum Verification Network, powered by Veyns for human gated biometric authorisation. QuFi QPL is coming soon.</p>
+        <p class="qv-footer-note">Palm is a post quantum secured, digital asset vault within the ATL ecosystem. Powered by Palm/Vein technology for human gated biometric authorization. QuFi QPL is coming soon.</p>
+        <p class="qv-footer-legal">&copy; 2026 <a href="https://atl.ae" target="_blank" rel="noopener noreferrer">ATL</a> · All rights reserved<br>Singapore | United Arab Emirates</p>
       </div>
     </footer>
 
@@ -372,7 +380,7 @@
       <div class="en-wrap">
         <div class="en-split">
           <div>
-            <p class="en-eyebrow" data-reveal>The Veyns approach</p>
+            <p class="en-eyebrow" data-reveal>The Palm approach</p>
             <h2 data-reveal>Security is more<br>than protecting<br><em>the key.</em></h2>
           </div>
           <div class="en-prose" data-reveal>
@@ -380,7 +388,7 @@
             <p>Organizations need to control who can authorize transactions, what they can
               authorize, under which conditions, and how those decisions can be verified
               afterwards.</p>
-            <p>Veyns brings those controls together in one architecture.</p>
+            <p>Palm brings those controls together in one architecture.</p>
           </div>
         </div>
 
@@ -486,7 +494,7 @@
             <div class="en-prose" data-reveal>
               <p>Critical financial actions should be connected to the people authorized to
                 perform them.</p>
-              <p>Veyns uses verified human presence as one component of a broader security
+              <p>Palm uses verified human presence as one component of a broader security
                 architecture — not as the whole of it.</p>
             </div>
           </div>
@@ -534,7 +542,7 @@
           <div class="en-prose" data-reveal>
             <p>Digital assets and the records around them may need to stay secure for years or
               decades.</p>
-            <p>Veyns is built on modern post quantum primitives, with the agility to move as those
+            <p>Palm is built on modern post quantum primitives, with the agility to move as those
               primitives move.</p>
           </div>
         </div>
@@ -585,7 +593,7 @@
 
           <ol class="home-boundary" id="home-boundary">
             <li><b>Application</b><small>Asks for an operation</small></li>
-            <li><b>Veyns control plane</b><small>Decides whether it may happen</small></li>
+            <li><b>Palm control plane</b><small>Decides whether it may happen</small></li>
             <li class="home-boundary-line"><span>Cryptographic trust boundary</span></li>
             <li><b>Key material</b><small>Sealed with ML-KEM-768 and X25519</small></li>
             <li><b>Signature</b><small>Returns. The key does not.</small></li>
@@ -739,12 +747,12 @@
         <div class="home-learn" data-reveal>
           <div>
             <h2>See how the<br><em>security model works.</em></h2>
-            <p class="en-prose">Explore the architecture behind Veyns Quantum Vault, layer by
+            <p class="en-prose">Explore the architecture behind Palm, layer by
               layer, with every claim marked for what it actually is.</p>
           </div>
           <div class="home-learn-cta">
             <a class="vx-btn solid lg" href="#technology">Explore the technology<svg class="vx-chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.6 4.8 5.6 5.2-5.6 5.2"/></svg></a>
-            <a class="vx-btn line lg" href="#about">About Veyns<svg class="vx-chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.6 4.8 5.6 5.2-5.6 5.2"/></svg></a>
+            <a class="vx-btn line lg" href="#about">About Palm<svg class="vx-chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.6 4.8 5.6 5.2-5.6 5.2"/></svg></a>
           </div>
         </div>
       </div>
@@ -758,7 +766,7 @@
           <div class="en-cta-copy">
             <p class="en-eyebrow light">Enterprise access</p>
             <h2>Build the next generation<br>of <em>digital asset security.</em></h2>
-            <p class="en-cta-lede">Talk with the Veyns team about institutional custody, treasury,
+            <p class="en-cta-lede">Talk with the Palm team about institutional custody, treasury,
               digital assets and post quantum security.</p>
             <div class="en-cta-row">
               <button class="vx-btn solid lg" id="home-access" type="button" disabled>Request enterprise access<svg class="vx-chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.6 4.8 5.6 5.2-5.6 5.2"/></svg></button>
@@ -778,8 +786,7 @@
       <div class="en-wrap">
         <div class="en-foot-top">
           <div class="en-foot-brand">
-            <img src="/veyns-lockup-black.png" width="480" height="99" alt="Veyns">
-            <p class="home-foot-sub">Quantum Vault</p>
+            <img src="/palm-logo.png" width="578" height="180" alt="Palm">
             <p>Security infrastructure for a more trusted financial future.</p>
             <ul class="en-social">
               <li><a href="#home" aria-label="LinkedIn"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3.2" y="3.2" width="13.6" height="13.6" rx="2.4"/><path d="M6.8 8.6v5M6.8 6.6v.1M10.2 13.6v-5M13.4 13.6v-2.8a2.2 2.2 0 0 0-3.2-1.9"/></svg></a></li>
@@ -791,7 +798,7 @@
           <div class="en-foot-cols">
             <div>
               <h3>Product</h3>
-              <a href="#home-architecture">Quantum Vault</a>
+              <a href="#home-architecture">Palm</a>
               <a href="#home-architecture">Security architecture</a>
               <a href="#controls">Policy engine</a>
               <a href="#technology">Technology</a>
@@ -827,7 +834,7 @@
         </div>
 
         <div class="en-foot-bottom">
-          <small>&copy; 2026 Veyns. All rights reserved.</small>
+          <small>&copy; 2026 <a href="https://atl.ae" target="_blank" rel="noopener noreferrer">ATL</a> · All rights reserved<br>Singapore | United Arab Emirates</small>
           <nav class="en-foot-legal">
             <a href="#contact">Privacy</a>
             <a href="#contact">Terms</a>
@@ -863,10 +870,10 @@
 
       <div class="en-hero-in">
         <div class="en-hero-copy">
-          <p class="en-eyebrow light" data-reveal>About Veyns</p>
+          <p class="en-eyebrow light" data-reveal>About Palm</p>
           <h1 data-reveal>Security infrastructure<br>for a more trusted<br><em>financial future.</em></h1>
           <div class="en-hero-lede" data-reveal>
-            <p>Veyns builds institutional security infrastructure for organizations protecting and
+            <p>Palm builds institutional security infrastructure for organizations protecting and
               controlling digital assets.</p>
             <p>We combine human authorization, programmable policy controls and post quantum
               cryptography to create a stronger foundation for digital asset operations.</p>
@@ -895,10 +902,10 @@
             <h2 data-reveal>Enable a safer,<br>more open <em>financial system.</em></h2>
           </div>
           <div class="en-prose" data-reveal>
-            <p>Veyns exists to help institutions protect, authorize and manage digital value with
+            <p>Palm exists to help institutions protect, authorize and manage digital value with
               confidence.</p>
             <p>As computing power evolves, today's security assumptions will not remain sufficient
-              forever. Veyns brings together human authorization, programmable policy controls and
+              forever. Palm brings together human authorization, programmable policy controls and
               post quantum cryptography to create a stronger foundation for digital asset
               operations.</p>
           </div>
@@ -945,7 +952,7 @@
             <p class="en-eyebrow" data-reveal>Our story</p>
             <h2 data-reveal>Built by experts.<br>Driven by a <em>bigger purpose.</em></h2>
             <div class="en-prose" data-reveal>
-              <p>Veyns was created around a simple belief: digital assets can only reach their full
+              <p>Palm was created around a simple belief: digital assets can only reach their full
                 potential when the infrastructure protecting them is designed for the world ahead.</p>
               <p>The company brings together expertise across security, cryptography, digital assets
                 and financial infrastructure.</p>
@@ -969,7 +976,7 @@
             </div>
             <div class="en-col" data-depth="2">
               <figure class="en-plate mark" data-plate="3">
-                <img src="/veyns-symbol-white.png" width="220" height="146" alt="">
+                <img src="/palm-mark.png" width="256" height="256" alt="">
               </figure>
               <figure class="en-plate mid" data-plate="4"><span>Evidence</span></figure>
             </div>
@@ -993,7 +1000,7 @@
           <div class="en-prose" data-reveal>
             <p>Security is not simply a cryptographic problem. It is the combination of people,
               processes and technology.</p>
-            <p>Veyns connects human authorization, programmable policy controls and post quantum
+            <p>Palm connects human authorization, programmable policy controls and post quantum
               cryptography into a single architecture. Select a layer to see what it does.</p>
           </div>
         </div>
@@ -1029,7 +1036,7 @@
 
           <div class="en-arch-core" id="arch-core">
             <span class="en-core-glow" aria-hidden="true"></span>
-            <img src="/veyns-symbol-white.png" alt="Veyns" width="220" height="146">
+            <img src="/palm-mark.png" alt="Palm" width="256" height="256">
           </div>
 
           <p class="en-arch-out"><span class="en-ico sm"><svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="11"/><path d="M5 16h22M16 5c3 3.4 4.6 7 4.6 11S19 24.6 16 27c-3-2.4-4.6-6-4.6-11S13 8.4 16 5z"/></svg></span>A more secure financial future</p>
@@ -1058,7 +1065,7 @@
           is a technology page a security team stops reading.
         -->
         <div class="en-tech" id="tech">
-          <ul class="en-tech-tabs" id="tech-tabs" role="tablist" aria-label="Veyns technology">
+          <ul class="en-tech-tabs" id="tech-tabs" role="tablist" aria-label="Palm technology">
             <li><button type="button" role="tab" id="tech-tab-human" aria-controls="tech-panel" aria-selected="true" data-tech="human"><span class="en-num">01</span>Human</button></li>
             <li><button type="button" role="tab" id="tech-tab-policy" aria-controls="tech-panel" aria-selected="false" tabindex="-1" data-tech="policy"><span class="en-num">02</span>Policy</button></li>
             <li><button type="button" role="tab" id="tech-tab-crypto" aria-controls="tech-panel" aria-selected="false" tabindex="-1" data-tech="crypto"><span class="en-num">03</span>Cryptography</button></li>
@@ -1119,7 +1126,7 @@
             <h2 data-reveal>Built for a<br><em>global financial system.</em></h2>
           </div>
           <div class="en-prose" data-reveal>
-            <p>Digital assets operate across borders, networks and institutions. Veyns is designed
+            <p>Digital assets operate across borders, networks and institutions. Palm is designed
               around the infrastructure required to protect and control digital value wherever it
               moves.</p>
           </div>
@@ -1144,7 +1151,7 @@
         <p class="en-eyebrow centred" data-reveal>Our belief</p>
         <h2 class="en-statement" data-reveal>Technology is only as strong<br>as the <em>trust behind it.</em></h2>
         <p class="en-prose centred" data-reveal>We believe security should be verifiable, transparent
-          and governed by design. By combining people, policy and cryptography, Veyns helps
+          and governed by design. By combining people, policy and cryptography, Palm helps
           organizations create a stronger foundation for the future of digital finance.</p>
         <blockquote class="en-quote" data-reveal>
           Give organizations the control they need to move digital value with confidence.
@@ -1292,7 +1299,7 @@
           <div class="en-prose" data-reveal>
             <p>Digital assets can create a more efficient, transparent and accessible financial
               system.</p>
-            <p>Veyns provides the security infrastructure required to make that future possible.</p>
+            <p>Palm provides the security infrastructure required to make that future possible.</p>
           </div>
         </div>
       </div>
@@ -1306,7 +1313,7 @@
           <div class="en-cta-copy">
             <p class="en-eyebrow light">Let's build together</p>
             <h2>Build a more<br><em>secure financial future.</em></h2>
-            <p class="en-cta-lede">Talk to the Veyns team about institutional security, digital
+            <p class="en-cta-lede">Talk to the Palm team about institutional security, digital
               assets and the future of cryptographic infrastructure.</p>
             <div class="en-cta-row">
               <button class="vx-btn solid lg" id="about-demo" type="button">Book a demo<svg class="vx-chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.6 4.8 5.6 5.2-5.6 5.2"/></svg></button>
@@ -1326,7 +1333,7 @@
       <div class="en-wrap">
         <div class="en-foot-top">
           <div class="en-foot-brand">
-            <img src="/veyns-lockup-black.png" width="480" height="99" alt="Veyns">
+            <img src="/palm-logo.png" width="578" height="180" alt="Palm">
             <p>Security infrastructure for a more trusted financial future.</p>
             <ul class="en-social">
               <li><a href="#about-top" aria-label="LinkedIn"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3.2" y="3.2" width="13.6" height="13.6" rx="2.4"/><path d="M6.8 8.6v5M6.8 6.6v.1M10.2 13.6v-5M13.4 13.6v-2.8a2.2 2.2 0 0 0-3.2-1.9"/></svg></a></li>
@@ -1338,7 +1345,7 @@
           <div class="en-foot-cols">
             <div>
               <h3>Product</h3>
-              <a href="#about-technology">Quantum Vault</a>
+              <a href="#about-technology">Palm</a>
               <a href="#approach">Policy engine</a>
               <a href="#about-technology">Key protection</a>
               <a href="#about-technology">Technology</a>
@@ -1374,7 +1381,7 @@
         </div>
 
         <div class="en-foot-bottom">
-          <small>&copy; 2026 Veyns. All rights reserved.</small>
+          <small>&copy; 2026 <a href="https://atl.ae" target="_blank" rel="noopener noreferrer">ATL</a> · All rights reserved<br>Singapore | United Arab Emirates</small>
           <nav class="en-foot-legal">
             <a href="#about-contact">Privacy</a>
             <a href="#about-contact">Terms</a>
@@ -1483,7 +1490,7 @@
           <p class="en-eyebrow light" data-reveal>Technology</p>
           <h1 data-reveal>The infrastructure<br>for trust in a<br><em>post quantum world.</em></h1>
           <div class="en-hero-lede" data-reveal>
-            <p>Veyns combines human authorization, programmable policy controls and post quantum
+            <p>Palm combines human authorization, programmable policy controls and post quantum
               cryptography into a single architecture for institutional digital assets.</p>
           </div>
           <div class="en-hero-cta" data-reveal>
@@ -1507,7 +1514,7 @@
             <h2 data-reveal>A unified architecture<br>for <em>institutional security.</em></h2>
           </div>
           <div class="en-prose" data-reveal>
-            <p>Veyns provides a programmable security layer between institutional applications and
+            <p>Palm provides a programmable security layer between institutional applications and
               digital asset networks.</p>
             <p>The architecture combines human authorization, policy enforcement and post quantum
               cryptography to control how transactions are authorized and executed. Each block says
@@ -1716,7 +1723,7 @@
             <h2 data-reveal>Built for today.<br>Ready for <em>tomorrow.</em></h2>
           </div>
           <div class="en-prose" data-reveal>
-            <p>Veyns is designed around modern cryptographic primitives with a focus on long term
+            <p>Palm is designed around modern cryptographic primitives with a focus on long term
               cryptographic resilience and algorithmic agility. Each card says whether the
               primitive is in the running system.</p>
           </div>
@@ -1802,7 +1809,7 @@
             <li><button type="button" data-zone="app" aria-pressed="false">
               <b>Enterprise environment</b><small>Treasury, custody, applications</small></button></li>
             <li><button type="button" data-zone="plane" aria-pressed="false">
-              <b>Veyns control plane</b><small>Identity, policy, authorization</small></button></li>
+              <b>Palm control plane</b><small>Identity, policy, authorization</small></button></li>
             <li class="tech-boundary-row"><span class="tech-boundary">Cryptographic trust boundary</span></li>
             <li><button type="button" data-zone="keys" aria-pressed="false">
               <b>Key material</b><small>Sealed, unsealed only to sign</small></button></li>
@@ -1908,7 +1915,7 @@
             <h2 data-reveal>Designed to fit<br>existing <em>infrastructure.</em></h2>
           </div>
           <div class="en-prose" data-reveal>
-            <p>Veyns speaks to an identity provider over OpenID Connect and to a chain over its own
+            <p>Palm speaks to an identity provider over OpenID Connect and to a chain over its own
               adapter. Everything else below is an interface the architecture defines rather than a
               connector that ships today.</p>
           </div>
@@ -1957,7 +1964,7 @@
           <div class="en-cta-copy">
             <p class="en-eyebrow light">Technology that builds trust</p>
             <h2>See the security<br><em>architecture in action.</em></h2>
-            <p class="en-cta-lede">Explore how Veyns integrates programmable authorization and post
+            <p class="en-cta-lede">Explore how Palm integrates programmable authorization and post
               quantum cryptography into institutional digital asset infrastructure.</p>
             <div class="en-cta-row">
               <button class="vx-btn solid lg" id="tech-demo" type="button">Book a technical demo<svg class="vx-chev" viewBox="0 0 20 20" aria-hidden="true"><path d="m7.6 4.8 5.6 5.2-5.6 5.2"/></svg></button>
@@ -1977,7 +1984,7 @@
       <div class="en-wrap">
         <div class="en-foot-top">
           <div class="en-foot-brand">
-            <img src="/veyns-lockup-black.png" width="480" height="99" alt="Veyns">
+            <img src="/palm-logo.png" width="578" height="180" alt="Palm">
             <p>Security infrastructure for a more trusted financial future.</p>
             <ul class="en-social">
               <li><a href="#tech-top" aria-label="LinkedIn"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3.2" y="3.2" width="13.6" height="13.6" rx="2.4"/><path d="M6.8 8.6v5M6.8 6.6v.1M10.2 13.6v-5M13.4 13.6v-2.8a2.2 2.2 0 0 0-3.2-1.9"/></svg></a></li>
@@ -1989,7 +1996,7 @@
           <div class="en-foot-cols">
             <div>
               <h3>Product</h3>
-              <a href="#overview">Quantum Vault</a>
+              <a href="#overview">Palm</a>
               <a href="#policy-engine">Policy engine</a>
               <a href="#boundary">Key protection</a>
               <a href="#architecture">Architecture</a>
@@ -2023,7 +2030,7 @@
         </div>
 
         <div class="en-foot-bottom">
-          <small>&copy; 2026 Veyns. All rights reserved.</small>
+          <small>&copy; 2026 <a href="https://atl.ae" target="_blank" rel="noopener noreferrer">ATL</a> · All rights reserved<br>Singapore | United Arab Emirates</small>
           <nav class="en-foot-legal">
             <a href="#tech-contact">Privacy</a>
             <a href="#tech-contact">Terms</a>
@@ -2305,8 +2312,7 @@
       <div class="en-wrap">
         <div class="en-foot-top">
           <div class="en-foot-brand">
-            <img src="/veyns-lockup-black.png" width="480" height="99" alt="Veyns">
-            <p class="home-foot-sub">Quantum Vault</p>
+            <img src="/palm-logo.png" width="578" height="180" alt="Palm">
             <p>Security infrastructure for a more trusted financial future.</p>
             <ul class="en-social">
               <li><a href="#pricing-top" aria-label="LinkedIn"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3.2" y="3.2" width="13.6" height="13.6" rx="2.4"/><path d="M6.8 8.6v5M6.8 6.6v.1M10.2 13.6v-5M13.4 13.6v-2.8a2.2 2.2 0 0 0-3.2-1.9"/></svg></a></li>
@@ -2350,7 +2356,7 @@
         </div>
 
         <div class="en-foot-bottom">
-          <small>&copy; 2026 Veyns. All rights reserved.</small>
+          <small>&copy; 2026 <a href="https://atl.ae" target="_blank" rel="noopener noreferrer">ATL</a> · All rights reserved<br>Singapore | United Arab Emirates</small>
           <nav class="en-foot-legal">
             <a href="#price-contact">Privacy</a>
             <a href="#price-contact">Terms</a>
@@ -2785,7 +2791,7 @@
       </header>
       <p class="statement" id="invite-code-for">Send this code to them.</p>
       <p class="code-block" id="invite-code-value">&mdash;</p>
-      <p class="fine">They enter it in QuVault and approve with their own palm. It works once, expires in seven days, and grants nothing until their palm has been scanned.</p>
+      <p class="fine">They enter it in Palm and approve with their own palm. It works once, expires in seven days, and grants nothing until their palm has been scanned.</p>
       <footer class="sheet-foot end">
         <button class="btn ghost sm" id="invite-code-copy" type="button">Copy code</button>
         <button class="btn brand sm" id="invite-code-ok" type="button">Done</button>
@@ -2868,7 +2874,7 @@
       <p class="fine">Write these twelve words down on paper, in order. Anyone who sees them can spend this vault. They are shown only after two palm scans, and they are the only way back if this browser is lost.</p>
       <ol class="words" id="phrase-words"></ol>
       <footer class="sheet-foot end">
-        <p class="fine">QuVault never sends these words anywhere.</p>
+        <p class="fine">Palm never sends these words anywhere.</p>
         <button class="btn brand sm" id="phrase-done" type="button">I have written it down</button>
       </footer>
     </div>

@@ -398,6 +398,27 @@ for (const [id, method] of SIGNIN_BUTTONS) $(id).addEventListener('click', () =>
   $('marketing-nav').addEventListener('click', event => { if (event.target.closest('a')) shut(); });
 }
 
+/*
+ * The landing page's small-screen menu. It closes on a choice, on Escape, on a tap anywhere
+ * outside the bar, and when the screen grows wide enough for the links to show inline.
+ */
+{
+  const toggle = $('qv-burger');
+  const menu = $('qv-menu');
+  const set = open => {
+    menu.hidden = !open;
+    toggle.setAttribute('aria-expanded', String(open));
+    toggle.setAttribute('aria-label', open ? 'Close menu' : 'Menu');
+  };
+  toggle.addEventListener('click', () => set(menu.hidden));
+  menu.addEventListener('click', event => { if (event.target.closest('a, button')) set(false); });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !menu.hidden) { set(false); toggle.focus(); }
+  });
+  document.addEventListener('click', event => { if (!menu.hidden && !event.target.closest('#qv-nav')) set(false); });
+  matchMedia('(min-width: 961px)').addEventListener('change', event => { if (event.matches) set(false); });
+}
+
 $('signout').addEventListener('click', async () => {
   await api('/api/logout', {}).catch(() => {});
   state.data = null;
@@ -1039,7 +1060,7 @@ function drawNetworkStep(choices) {
         el('span', { class: 'account-mark' }, MARKS[network.id] || network.symbol.slice(0, 1)),
         el('span', { class: 'account-text' }, el('b', {}, network.label), el('small', {}, network.chain)),
         el('span', { class: 'chip soft' }, network.canSend ? 'send and receive' : 'receive'))))
-      : el('p', { class: 'quiet' }, 'This vault already has an account on every network QuVault supports.'));
+      : el('p', { class: 'quiet' }, 'This vault already has an account on every network Palm supports.'));
 }
 
 function drawSignerStep() {

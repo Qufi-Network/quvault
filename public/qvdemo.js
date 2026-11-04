@@ -40,10 +40,10 @@
   form.addEventListener('submit', e => {
     e.preventDefault();
     const name = val('qd-name'), email = val('qd-email'), org = val('qd-org'), msg = val('qd-body');
-    const note = msg || 'I would like to request a QuVault institutional demo.';
+    const note = msg || 'I would like to request a Palm institutional demo.';
     bubble(note, 'qd-out');
 
-    const subject = 'QuVault demo request' + (org ? ' — ' + org : '');
+    const subject = 'Palm demo request' + (org ? ' — ' + org : '');
     const lines = [note, '', '—', name, email, org].filter(Boolean);
     const href = 'mailto:info@qufi.network?cc=info@veyns.io'
       + '&subject=' + encodeURIComponent(subject)

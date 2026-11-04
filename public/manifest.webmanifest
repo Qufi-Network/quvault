@@ -1,6 +1,6 @@
 {
-  "name": "Veyns Quantum Vault",
-  "short_name": "Veyns",
+  "name": "Palm",
+  "short_name": "Palm",
   "description": "A palm-authorised treasury wallet. Every payment needs a Veyns palm approval bound to that exact transaction.",
   "id": "/",
   "start_url": "/",

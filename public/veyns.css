@@ -146,8 +146,8 @@
 }
 
 .vx-brand { flex: none; display: flex; align-items: center; }
-.vx-brand img { width: auto; height: clamp(23px, 2vw, 28px); transition: height 420ms var(--vx-ease); }
-.vx-nav.stuck .vx-brand img { height: 22px; }
+.vx-brand img { width: auto; height: clamp(32px, 2.6vw, 38px); transition: height 420ms var(--vx-ease); }
+.vx-nav.stuck .vx-brand img { height: 30px; }
 
 .vx-links { display: flex; align-items: center; gap: 2px; margin-inline: auto; min-width: 0; }
 .vx-links a {
@@ -337,7 +337,7 @@
   .vx-nav.open,
   .vx-nav.open.light.stuck { background: rgba(2, 8, 17, .96); border-bottom-color: transparent; }
   .vx-nav.open.light.stuck { --vx-nav-ink-lit: #fff; }
-  .vx-nav.open.light.stuck .vx-brand img { content: url("/veyns-lockup-white.png"); }
+  .vx-nav.open.light.stuck .vx-brand img { content: url("/palm-logo-white.png"); }
   .vx-nav.open.light.stuck .vx-burger { border-color: var(--vx-line-2); }
   .vx-nav.open.light.stuck .vx-burger span { background: #fff; }
 }
