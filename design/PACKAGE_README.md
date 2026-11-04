@@ -29,7 +29,7 @@ The transparent palm asset is also supplied separately.
 - invent different icons
 - alter the source reference
 
-## Recommended Claude workflow
+## Recommended workflow
 
 1. Open MASTER_REFERENCE.png.
 2. Open every section reference.
