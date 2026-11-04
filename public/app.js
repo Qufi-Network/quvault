@@ -941,6 +941,22 @@ function configureSendForm(account) {
 }
 
 function renderAccountSend(account, data) {
+  // A shared Bitcoin vault must be locked to the chain before it can send. Rather than let the
+  // owner fill the form and hit a refusal, the send tab points them straight at the lock flow.
+  const mustLock = account.network === 'bitcoin' && (account.signers?.length || 0) > 1 && !account.quorum;
+  $('send-lock-guide').hidden = !mustLock;
+  if (mustLock) {
+    const waiting = account.signers.filter(signer => !signer.signingKey).map(signer => signer.label);
+    $('send-lock-msg').textContent = waiting.length
+      ? `This vault has ${account.signers.length} signers, so it has to be locked to the chain before it can send — then every payment is kept by Bitcoin itself, not just by a rule here. First, these signers still need to make a signing key: ${waiting.join(', ')}.`
+      : `This vault has ${account.signers.length} signers, so it has to be locked to the chain before it can send. Lock it to a quorum and every payment is then enforced by Bitcoin itself, not just by a rule here.`;
+    $('send-lock-go').textContent = waiting.length ? 'Open Signers and rules' : 'Lock to a quorum';
+    $('send-form').hidden = true;
+    $('send-soon').hidden = true;
+    $('send-error').textContent = '';
+    renderRequests($('send-pending'), data.pending.filter(op => op.kind === 'withdraw'));
+    return;
+  }
   $('send-form').hidden = !account.canSend;
   if (account.canSend) configureSendForm(account);
   // Say WHY there is nothing to spend, so "no confirmed coins" never reads as a bug while a
@@ -1693,6 +1709,7 @@ async function drawInvites(account) {
 const accountNow = () => (state.data?.accounts || []).find(item => item.network === state.account);
 
 $('open-rules').addEventListener('click', () => openAccount(state.account, 'rules'));
+$('send-lock-go').addEventListener('click', () => openAccount(state.account, 'rules'));
 $('account-send').addEventListener('click', () => openAccount(state.account, 'send'));
 $('account-receive').addEventListener('click', () => openAccount(state.account, 'receive'));
 
