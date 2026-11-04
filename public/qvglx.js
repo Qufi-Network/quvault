@@ -2,7 +2,7 @@
  * qvglx.js — the figure graphics that replace every icon. One <canvas class="qv-glx"> per concept,
  * each a distinct clean line drawing chosen by data-fx and relevant to its label. Rendered as thin
  * lines with small crisp nodes on an ordinary 2D canvas (so the page can carry many without hitting
- * the WebGL-context limit). Blue on light cards, white on the blue band (data-light switches it).
+ * the WebGL-context limit). Black on light cards, white on the blue band (data-light switches it).
  * One shared loop; only on-screen figures draw. No glow, no pulsing. CSP-safe.
  */
 (() => {
@@ -140,10 +140,10 @@
     ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     const S = Math.min(w, h) * 0.42, cx = w / 2, cy = h / 2;
     const pos = it.g.nodes.map(n => { const p = project(it, n, t); return [cx + p[0] * S, cy + p[1] * S]; });
-    const col = it.light ? '21,94,239' : '255,255,255';
+    const col = it.light ? '10,10,10' : '255,255,255';
     const E = it.g.edges;
     ctx.lineWidth = Math.max(1, dpr);
-    ctx.strokeStyle = 'rgba(' + col + ',' + (it.light ? 0.5 : 0.62) + ')';
+    ctx.strokeStyle = 'rgba(' + col + ',' + (it.light ? 0.6 : 0.62) + ')';
     ctx.beginPath();
     for (let e = 0; e < E.length; e += 2) { const a = pos[E[e]], b = pos[E[e + 1]]; ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); }
     ctx.stroke();

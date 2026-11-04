@@ -146,8 +146,8 @@
 }
 
 .vx-brand { flex: none; display: flex; align-items: center; }
-.vx-brand img { width: auto; height: clamp(32px, 2.6vw, 38px); transition: height 420ms var(--vx-ease); }
-.vx-nav.stuck .vx-brand img { height: 30px; }
+.vx-brand img { width: auto; height: clamp(34px, 2.8vw, 40px); transition: height 420ms var(--vx-ease); }
+.vx-nav.stuck .vx-brand img { height: 32px; }
 
 .vx-links { display: flex; align-items: center; gap: 2px; margin-inline: auto; min-width: 0; }
 .vx-links a {

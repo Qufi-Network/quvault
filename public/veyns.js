@@ -317,7 +317,7 @@ slowField($('home-net'));
 {
   const note = $('home-note');
   $('home-demo')?.addEventListener('click', () => {
-    if (note) note.textContent = 'Technical demo booking is not connected yet — nothing has been sent.';
+    if (note) note.textContent = 'Technical demo booking is not connected yet. Nothing has been sent.';
   });
 }
 
@@ -404,8 +404,8 @@ function liveCanvas(canvas, setup) {
       + 'the moment it is used.',
     policy: 'Conditions evaluated before anything is signed: how much may move, how many people '
       + 'must agree, which destinations are permitted, and within which window.',
-    crypto: 'ML-DSA-65 signs every authorisation under its own domain separated context. '
-      + 'ML-KEM-768 and X25519 together establish the keys that seal the vault, so the seal holds '
+    crypto: 'ML DSA 65 signs every authorisation under its own domain separated context. '
+      + 'ML KEM 768 and X25519 together establish the keys that seal the vault, so the seal holds '
       + 'even if one of the two is broken.',
     hardware: 'Keeping cryptographic operations inside protected hardware rather than in software. '
       + 'This is the direction of the architecture, not something running today.',
@@ -513,8 +513,8 @@ function liveCanvas(canvas, setup) {
       + 'transaction it approves, and the approval is spent the moment it is used.', 'live', 'Implemented'],
     policy: ['Policy', 'Programmable transaction controls: amount rules, how many people must '
       + 'approve, permitted destinations and the window in which they apply.', 'live', 'Implemented'],
-    crypto: ['Cryptography', 'ML-DSA-65 for authorisation signatures under a domain separated '
-      + 'context, and ML-KEM-768 alongside X25519 for key establishment.', 'live', 'Implemented'],
+    crypto: ['Cryptography', 'ML DSA 65 for authorisation signatures under a domain separated '
+      + 'context, and ML KEM 768 alongside X25519 for key establishment.', 'live', 'Implemented'],
     keys: ['Key protection', 'Keeping private key material inside protected hardware, so an '
       + 'application asks for a signature rather than receiving the key. Designed for, not yet built.',
       'planned', 'Designed for'],
@@ -682,7 +682,7 @@ liveCanvas($('cta-net'), (paint, w, h) => {
 {
   const note = $('about-note');
   $('about-demo')?.addEventListener('click', () => {
-    if (note) note.textContent = 'Demo booking is not connected yet — nothing has been sent.';
+    if (note) note.textContent = 'Demo booking is not connected yet. Nothing has been sent.';
   });
 }
 /* ================================================== the Technology page */
@@ -846,9 +846,9 @@ liveCanvas($('cta-net'), (paint, w, h) => {
     plane: 'The control plane turns that intent into a plan, evaluates the policy against it, and '
       + 'collects the palms the policy demands. It is the only place that decides. What leaves it '
       + 'is a plan and an authorization bound to that plan by digest.',
-    keys: 'Key material is sealed with ML-KEM-768 and X25519 and is unsealed only to sign one '
+    keys: 'Key material is sealed with ML KEM 768 and X25519 and is unsealed only to sign one '
       + 'plan, in one window that closes behind it. Today that unsealing happens in the browser, '
-      + 'not in dedicated hardware — which is the single most important thing on this page to be '
+      + 'not in dedicated hardware, which is the single most important thing on this page to be '
       + 'accurate about. Moving it behind hardware is what the architecture is designed for.',
     chain: 'What crosses into the network is a signed transaction and nothing else. No identity, '
       + 'no policy, no approver. The chain sees a valid spend; who authorized it stays in the '
@@ -912,7 +912,7 @@ liveCanvas($('cta-net'), (paint, w, h) => {
     amount: (amount?.value || '').trim(),
     destination: (dest?.value || '').trim(),
     network: 'ethereum',
-    policy: 'institutional-treasury-v3',
+    policy: 'institutional treasury v3',
     nonce: '7c1d4e8b',
   });
 
@@ -979,7 +979,7 @@ liveCanvas($('tech-net'), (paint, w, h) => {
 {
   const note = $('tech-note');
   $('tech-demo')?.addEventListener('click', () => {
-    if (note) note.textContent = 'Technical demo booking is not connected yet — nothing has been sent.';
+    if (note) note.textContent = 'Technical demo booking is not connected yet. Nothing has been sent.';
   });
 }
 /* ===================================================== how things feel */
@@ -1214,7 +1214,7 @@ for (const [group, mark] of [
     ['price-institutional', 'Institutional is priced against the deployment. Talk to us.'],
   ]) {
     $(id)?.addEventListener('click', () => {
-      say(`${said} Nothing has been sent — this form is not connected yet.`);
+      say(`${said} Nothing has been sent. This form is not connected yet.`);
       $('price-contact')?.scrollIntoView({ behavior: still.matches ? 'auto' : 'smooth', block: 'start' });
     });
   }

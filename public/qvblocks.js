@@ -25,7 +25,7 @@ function qvBlocks(canvas) {
     ctx.clearRect(0, 0, w, h);
     const F = h * 1.15, horizon = h * 0.26 + my * h * 0.05, cx = w * 0.5 + mx * w * 0.14;
     const hg = ctx.createRadialGradient(cx, horizon, 0, cx, horizon, Math.max(w, h) * 0.6);
-    hg.addColorStop(0, 'rgba(60,120,230,0.3)'); hg.addColorStop(1, 'rgba(60,120,230,0)');
+    hg.addColorStop(0, 'rgba(255,255,255,0.10)'); hg.addColorStop(1, 'rgba(255,255,255,0)');
     ctx.fillStyle = hg; ctx.fillRect(0, 0, w, h);
     const scrollTotal = t * 0.32, scroll = scrollTotal % T, base = Math.floor(scrollTotal / T);
     const proj = (x, d, hh) => [cx + F * x / d, horizon + F * (CH - hh) / d];
@@ -41,11 +41,11 @@ function qvBlocks(canvas) {
         const a = proj(x0 + g, d0 + g, hh), b = proj(x1 - g, d0 + g, hh), bb = proj(x1 - g, d1 - g, hh), aa = proj(x0 + g, d1 - g, hh);
         if (raised) {
           const af = proj(x0 + g, d0 + g, 0), bf = proj(x1 - g, d0 + g, 0);
-          ctx.fillStyle = 'rgba(7,18,44,' + (0.78 * fog) + ')';
+          ctx.fillStyle = 'rgba(10,10,10,' + (0.78 * fog) + ')';
           ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.lineTo(bf[0], bf[1]); ctx.lineTo(af[0], af[1]); ctx.closePath(); ctx.fill();
         }
-        ctx.fillStyle = raised ? 'rgba(48,108,205,' + (0.36 * fog) + ')' : 'rgba(26,58,116,' + (0.14 * fog) + ')';
-        ctx.strokeStyle = 'rgba(96,158,245,' + (0.28 * fog) + ')';
+        ctx.fillStyle = raised ? 'rgba(92,92,92,' + (0.36 * fog) + ')' : 'rgba(44,44,44,' + (0.14 * fog) + ')';
+        ctx.strokeStyle = 'rgba(210,210,210,' + (0.22 * fog) + ')';
         ctx.lineWidth = dpr;
         ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.lineTo(bb[0], bb[1]); ctx.lineTo(aa[0], aa[1]); ctx.closePath(); ctx.fill(); ctx.stroke();
       }

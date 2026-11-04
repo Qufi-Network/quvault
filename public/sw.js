@@ -13,14 +13,14 @@
  *   - A POST, a cross-origin request to the identity provider, or anything with credentials is
  *     passed straight through and left alone.
  */
-const CACHE = 'veyns-shell-v6';
+const CACHE = 'veyns-shell-v10';
 
 // The shell: enough to render the app offline. Everything else is cached as it is fetched.
 const SHELL = [
   '/', '/style.css', '/veyns.css', '/enterprise.css', '/light.css',
   '/app.js', '/veyns.js', '/qicons.js', '/qvcore.js', '/qvfx.js', '/qvdemo.js', '/vendor/wallet.js',
   '/manifest.webmanifest', '/icon.svg', '/icon-192.png', '/icon-512.png',
-  '/veyns-lockup-black.png', '/palm-logo.png', '/palm-logo-white.png', '/palm-mark.png', '/veyns-palm.webp',
+  '/veyns-lockup-black.png', '/palm-logo.png', '/palm-logo-white.png', '/palm-mark.png', '/palm-mark-white.png', '/palm-favicon.png', '/palm-veins-black.webp', '/veyns-palm.webp',
 ];
 
 self.addEventListener('install', event => {

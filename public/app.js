@@ -80,7 +80,7 @@ const shortId = id => `${id.slice(0, 10)}…${id.slice(-6)}`;
 const when = seconds => new Date(seconds * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
 function friendly(error) {
-  if (error?.code === 'popup_blocked') return 'Your browser blocked the Veyns window. Allow pop-ups for this site, then try again.';
+  if (error?.code === 'popup_blocked') return 'Your browser blocked the Veyns window. Allow pop ups for this site, then try again.';
   if (error instanceof SyntaxError) return `Veyns refused this site. Register ${location.origin} exactly as a website origin in the Veyns console.`;
   return error?.message || 'Something went wrong.';
 }
@@ -244,7 +244,7 @@ async function refresh() {
       $('signer-alert-title').textContent = waiting.length === 1
         ? 'Something needs your palm'
         : `${waiting.length} requests need your palm`;
-      $('signer-alert-what').textContent = `${waiting[0].statement} — ${waiting[0].approvedBy.length} of ${waiting[0].required} approvals so far.`;
+      $('signer-alert-what').textContent = `${waiting[0].statement}: ${waiting[0].approvedBy.length} of ${waiting[0].required} approvals so far.`;
     }
     // One browser holds one phrase, so a second vault here would write over the first.
     const taken = Boolean(device.record);
@@ -446,7 +446,7 @@ async function signInWithRedirect(method, nonce) {
   try {
     sessionStorage.setItem(REDIRECT_KEY, JSON.stringify({ state: flowState, verifier }));
   } catch {
-    throw new Error('This browser blocks both pop-ups and storage. Open the site in Chrome, Edge or Safari.');
+    throw new Error('This browser blocks both pop ups and storage. Open the site in Chrome, Edge or Safari.');
   }
   const response = await fetch(`${issuer}/v1/authorize/prepare`, {
     method: 'POST',
@@ -459,9 +459,9 @@ async function signInWithRedirect(method, nonce) {
     }),
   });
   const prepared = await response.json();
-  if (!response.ok) throw new Error(prepared.error_description || 'Veyns could not start sign-in.');
+  if (!response.ok) throw new Error(prepared.error_description || 'Veyns could not start the sign in.');
   const target = new URL(prepared.authorization_url);
-  if (target.origin !== new URL(issuer).origin || target.pathname !== '/authorize') throw new Error('Veyns returned an unexpected sign-in address.');
+  if (target.origin !== new URL(issuer).origin || target.pathname !== '/authorize') throw new Error('Veyns returned an unexpected sign in address.');
   location.assign(target.href);
 }
 
@@ -477,9 +477,9 @@ async function finishRedirectSignIn() {
   } catch {
     // Handled below.
   }
-  if (!saved || saved.state !== params.get('state')) throw new Error('That sign-in did not start in this tab. Please try again.');
+  if (!saved || saved.state !== params.get('state')) throw new Error('That sign in did not start in this tab. Please try again.');
   if (params.has('error')) {
-    throw new Error(params.get('error') === 'access_denied' ? 'Sign-in was cancelled.' : params.get('error_description') || 'Veyns could not sign you in.');
+    throw new Error(params.get('error') === 'access_denied' ? 'Sign in was cancelled.' : params.get('error_description') || 'Veyns could not sign you in.');
   }
 
   const { issuer, clientId, redirectUri } = state.config;
@@ -494,7 +494,7 @@ async function finishRedirectSignIn() {
     }),
   });
   const tokens = await response.json();
-  if (!response.ok) throw new Error(tokens.error_description || 'Veyns could not finish sign-in. Please try again.');
+  if (!response.ok) throw new Error(tokens.error_description || 'Veyns could not finish the sign in. Please try again.');
   await api('/api/login/finish', { token: tokens.id_token });
 }
 
@@ -793,8 +793,8 @@ function renderWallet(data) {
   const notes = [];
   if (balance?.pending) notes.push(`${fmtSats(balance.pending)} sats still unconfirmed`);
   if (coins) notes.push(`${coins} spendable coin${coins === 1 ? '' : 's'} (${fmtSats(spendable)} sats)`);
-  else if (balance && !balance.txCount) notes.push('No coins yet — open an account to find its address.');
-  notes.push(device.holdsKeyFor(wallet) ? 'Key held in this browser only' : 'Key not on this device — restore it in Security');
+  else if (balance && !balance.txCount) notes.push('No coins yet. Open an account to find its address.');
+  notes.push(device.holdsKeyFor(wallet) ? 'Key held in this browser only' : 'Key not on this device. Restore it in Security');
   $('balance-note').textContent = notes.join(' · ');
   $('chain-error').textContent = chainError || '';
   $('accounts-note').textContent = `${members.length} signer${members.length === 1 ? '' : 's'} across this vault`;
@@ -969,7 +969,7 @@ function renderAccountSend(account, data) {
   if (mustLock) {
     const waiting = account.signers.filter(signer => !signer.signingKey).map(signer => signer.label);
     $('send-lock-msg').textContent = waiting.length
-      ? `This vault has ${account.signers.length} signers, so it has to be locked to the chain before it can send — then every payment is kept by Bitcoin itself, not just by a rule here. First, these signers still need to make a signing key: ${waiting.join(', ')}.`
+      ? `This vault has ${account.signers.length} signers, so it has to be locked to the chain before it can send. Then every payment is kept by Bitcoin itself, not just by a rule here. First, these signers still need to make a signing key: ${waiting.join(', ')}.`
       : `This vault has ${account.signers.length} signers, so it has to be locked to the chain before it can send. Lock it to a quorum and every payment is then enforced by Bitcoin itself, not just by a rule here.`;
     $('send-lock-go').textContent = waiting.length ? 'Open Signers and rules' : 'Lock to a quorum';
     $('send-form').hidden = true;
@@ -987,7 +987,7 @@ function renderAccountSend(account, data) {
   const pendingSats = data.balance?.pending || 0;
   $('send-error').textContent = !noSpendable ? ''
     : pendingSats
-      ? `${fmtSats(pendingSats)} sats are still confirming on the network — you can send once they confirm. On testnet4 a confirmation can take a while.`
+      ? `${fmtSats(pendingSats)} sats are still confirming on the network. You can send once they confirm. On testnet4 a confirmation can take a while.`
       : 'No coins here yet. Use Receive to add testnet4 coins, then you can send.';
   $('send-rule-note').textContent = account.canSend ? `This account: ${account.rulesText}.` : '';
   $('fee-note').textContent = account.family === 'evm'
@@ -1108,7 +1108,7 @@ function drawThresholdStep() {
   const count = wizard.signers.length;
   wizard.approvals = Math.min(Math.max(1, wizard.approvals), count);
   $('wizard').replaceChildren(
-    el('p', { class: 'fine' }, 'How many of those palms have to approve before anything moves from this account — and before these settings can be changed again.'),
+    el('p', { class: 'fine' }, 'How many of those palms have to approve before anything moves from this account, and before these settings can be changed again.'),
     el('div', { class: 'presets' }, ...Array.from({ length: count }, (_, i) => i + 1).map(m =>
       button(`${m} of ${count}`, `chip pick${wizard.approvals === m ? ' on' : ''}`, () => { wizard.approvals = m; drawWizard(); }))),
     el('p', { class: 'quiet small' }, count === 1
@@ -1263,7 +1263,7 @@ function renderAlerts(data) {
   $('alert-title').textContent = waiting.length === 1
     ? 'Something is waiting for your palm'
     : `${waiting.length} requests are waiting for your palm`;
-  $('alert-what').textContent = `${first.statement} — ${first.approvedBy.length} of ${first.required} approvals so far.`;
+  $('alert-what').textContent = `${first.statement}: ${first.approvedBy.length} of ${first.required} approvals so far.`;
   $('alert-go').onclick = () => openApproval(first, busyText(first));
 
   // Say it once per request, rather than every poll.
@@ -1375,10 +1375,10 @@ function renderSecurity(data) {
 
   const legacy = wallet.custody !== 'client';
   const holds = device.holdsKeyFor(wallet);
-  $('device-chip').textContent = legacy ? 'server-held' : holds ? 'in this browser' : 'not on this device';
+  $('device-chip').textContent = legacy ? 'held on the server' : holds ? 'in this browser' : 'not on this device';
   $('device-chip').classList.toggle('warn', legacy || !holds);
   $('device-state').textContent = legacy
-    ? 'This vault was made before keys lived in the browser: its key is sealed on the server, so there is no recovery phrase and no other-network accounts.'
+    ? 'This vault was made before keys lived in the browser: its key is sealed on the server, so there is no recovery phrase and no accounts on other networks.'
     : holds
       ? 'This browser holds the key for this vault. The server has never seen it.'
       : 'This browser does not hold the key. Restore it here with your twelve words, or use the browser that made the vault.';
@@ -1588,7 +1588,7 @@ function drawSettings() {
     JSON.stringify(draft.rules) === JSON.stringify(account?.policy.rules) ? null : 'threshold changed',
   ].filter(Boolean);
   $('change-cost').textContent = same ? '' :
-    `${changes.join(' · ')} — needs ${account?.changeRequired ?? 1} palm${(account?.changeRequired ?? 1) === 1 ? '' : 's'} from the current signers.`;
+    `${changes.join(' · ')}: needs ${account?.changeRequired ?? 1} palm${(account?.changeRequired ?? 1) === 1 ? '' : 's'} from the current signers.`;
 }
 
 /** Plain language, so the rules can be read rather than decoded. */
@@ -1718,7 +1718,7 @@ async function drawInvites(account) {
   $('invite-rows').replaceChildren(...mine.map(invite => el('div', { class: 'invite-row' },
     el('span', { class: 'avatar ghost' }, initials(invite.label)),
     el('span', { class: 'member-who' },
-      el('b', {}, `${invite.label} — invited`),
+      el('b', {}, `${invite.label} · invited`),
       el('small', {}, `${invite.code} · expires ${when(invite.expiresAt)}`)),
     button('Copy', 'link', () => copy(invite.code, 'Invitation code copied.')),
     button('Cancel', 'link', async () => {
@@ -1988,7 +1988,7 @@ function checkLineage(data) {
   const pinned = device.record?.attestationRootKeyId ?? null;
   const problem = !attestation
     ? (wallet?.custody === 'client'
-      ? 'This vault has no authorisation key yet. Register one in Settings — it takes one palm scan, and the key comes from the recovery phrase you already have.'
+      ? 'This vault has no authorisation key yet. Register one in Settings. It takes one palm scan, and the key comes from the recovery phrase you already have.'
       : null)
     : attestation.broken ? `This vault's key lineage does not verify: ${attestation.broken}. Register a key again in Settings.`
       : pinned && attestation.rootKeyId !== pinned
@@ -2048,7 +2048,7 @@ async function verifyReceiptOnChain(record, txid, resultEl) {
   try {
     const tx = await api(`/api/chain/tx/${txid}`);
     if ((tx.inputs || []).some(i => i.value == null)) {
-      throw new Error('The chain has not filled in every input value yet — try again in a moment.');
+      throw new Error('The chain has not filled in every input value yet. Try again in a moment.');
     }
     const rebuilt = canonicalTransaction({
       chain: record.chain || 'bitcoin',
@@ -2064,12 +2064,12 @@ async function verifyReceiptOnChain(record, txid, resultEl) {
     resultEl.replaceChildren(
       el('p', { class: 'verify-head' }, matches ? '✓ Verified against the chain' : '✗ Does not match the chain'),
       el('ul', { class: 'verify-list' },
-        el('li', {}, 'ML-DSA-65 signature, palm approved — already checked in this browser'),
+        el('li', {}, 'ML DSA 65 signature, palm approved, already checked in this browser'),
         el('li', { class: matches ? 'ok' : 'bad' }, matches
-          ? 'The receipt’s transaction digest is the digest of this exact on-chain transaction'
-          : 'This on-chain transaction does not reproduce the receipt’s digest'),
+          ? 'The receipt’s transaction digest is the digest of this exact transaction on chain'
+          : 'This transaction on chain does not reproduce the receipt’s digest'),
         el('li', {}, tx.confirmed
-          ? `Confirmed on-chain${tx.blockHeight ? ` at block ${tx.blockHeight.toLocaleString()}` : ''}`
+          ? `Confirmed on chain${tx.blockHeight ? ` at block ${tx.blockHeight.toLocaleString()}` : ''}`
           : 'Seen by the network, waiting to confirm'),
         recipients.length
           ? el('li', {}, `Pays ${fmtSats(paid)} sats to ${recipients.map(r => shortId(r.address)).join(', ')}`)
@@ -2299,7 +2299,7 @@ async function settled(current, operation) {
       const { txid, sweptSats } = await device.moveIn(operation);
       toast(txid
         ? `Vault moved. ${fmtSats(sweptSats)} sats are on their way to the new address (${shortId(txid)}).`
-        : 'Vault moved. The key is in this browser now — write the phrase down in Settings.');
+        : 'Vault moved. The key is in this browser now. Write the phrase down in Settings.');
     } else if (operation.kind === 'account') {
       toast('Deriving the address in this browser…');
       const account = await device.addAccount(operation);
