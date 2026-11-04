@@ -22,6 +22,9 @@ export const NATIVE = '0x0000000000000000000000000000000000000000';
 
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const DECIMAL = /^(0|[1-9][0-9]{0,77})$/;
+const WORD_LIMIT = 1n << 256n;
+/** Palm's fee is at most this fraction of the amount: the contract's FEE_DIVISOR. */
+export const FEE_DIVISOR = 1000n;
 
 export class PalmWalletError extends Error {}
 
@@ -36,10 +39,13 @@ function concat(...parts) {
   }
   return out;
 }
+/** One 32-byte word. A value that does not fit is refused, never reduced modulo 2^256. */
 const word = value => {
+  const v = BigInt(value);
+  if (v < 0n || v >= WORD_LIMIT) throw new PalmWalletError('That number does not fit in 256 bits.');
   const out = new Uint8Array(32);
-  let v = BigInt(value);
-  for (let i = 31; v > 0n; i--, v >>= 8n) out[i] = Number(v & 0xffn);
+  let rest = v;
+  for (let i = 31; rest > 0n; i--, rest >>= 8n) out[i] = Number(rest & 0xffn);
   return out;
 };
 const addressWord = address => {
@@ -47,54 +53,94 @@ const addressWord = address => {
   out.set(hex.decode(address.slice(2).toLowerCase()), 12);
   return out;
 };
+const whole = (value, what) => {
+  const text = String(value ?? '');
+  if (!DECIMAL.test(text) || BigInt(text) >= WORD_LIMIT) throw new PalmWalletError(`${what} must be a whole number below 2^256.`);
+  return text;
+};
+const address = (value, what) => {
+  const text = String(value ?? '');
+  if (!ADDRESS.test(text)) throw new PalmWalletError(`${what} is not an address.`);
+  return text.toLowerCase();
+};
 
-/** A transfer in the one form everything agrees on: lower-case addresses, decimal strings. */
-export function normalTransfer({ token, to, amount, nonce }) {
-  const tokenAddress = token ? String(token) : NATIVE;
-  if (!ADDRESS.test(tokenAddress) || !ADDRESS.test(String(to))) throw new PalmWalletError('That is not an address.');
-  if (!DECIMAL.test(String(amount)) || !DECIMAL.test(String(nonce))) throw new PalmWalletError('Amounts and nonces are whole numbers.');
-  if (String(amount) === '0') throw new PalmWalletError('Send more than nothing.');
-  return { token: tokenAddress.toLowerCase(), to: String(to).toLowerCase(), amount: String(amount), nonce: String(nonce) };
+/**
+ * A payment in the one form everything agrees on: lower-case addresses, decimal strings. It pays
+ * `amount` of `token` to `to`, Palm's `fee` in the same asset to `feeTo` (at most 0.1% of the
+ * amount, which the contract enforces too), and `gasRefund` of the native coin to whoever
+ * submits it, and is worthless after `deadline` (seconds since 1970).
+ */
+export function normalTransfer({ token, to, amount, fee = '0', feeTo = NATIVE, gasRefund = '0', deadline, nonce }) {
+  const t = {
+    token: address(token || NATIVE, 'The asset'),
+    to: address(to, 'The payee'),
+    amount: whole(amount, 'The amount'),
+    fee: whole(fee, 'The fee'),
+    feeTo: address(feeTo || NATIVE, 'The fee recipient'),
+    gasRefund: whole(gasRefund, 'The network fee'),
+    deadline: whole(deadline, 'The deadline'),
+    nonce: whole(nonce, 'The nonce'),
+  };
+  if (t.amount === '0') throw new PalmWalletError('Send more than nothing.');
+  if (BigInt(t.fee) > BigInt(t.amount) / FEE_DIVISOR) throw new PalmWalletError('Palm’s fee can be at most 0.1% of the amount.');
+  if (t.fee !== '0' && t.feeTo === NATIVE) throw new PalmWalletError('A fee needs somewhere to go.');
+  return t;
 }
 
-/** What the palms approve the hash of: this wallet, this chain, this transfer, this nonce. */
+/** A refresh: moves nothing, refunds the network fee, and closes the recovery path again. */
+export function normalRefresh({ gasRefund = '0', deadline, nonce }) {
+  return { gasRefund: whole(gasRefund, 'The network fee'), deadline: whole(deadline, 'The deadline'), nonce: whole(nonce, 'The nonce') };
+}
+
+/** What the palms approve the hash of: this wallet, this chain, this payment, this nonce. */
 export function canonicalEvmTransfer({ chainId, wallet, transfer }) {
-  if (!ADDRESS.test(String(wallet))) throw new PalmWalletError('That is not a wallet address.');
-  return { v: 1, kind: 'palm-wallet-transfer', chainId: String(chainId), wallet: String(wallet).toLowerCase(), ...normalTransfer(transfer) };
+  return { v: 2, kind: 'palm-wallet-transfer', chainId: whole(chainId, 'The chain'), wallet: address(wallet, 'The wallet'), ...normalTransfer(transfer) };
+}
+
+export function canonicalEvmRefresh({ chainId, wallet, refresh }) {
+  return { v: 2, kind: 'palm-wallet-refresh', chainId: whole(chainId, 'The chain'), wallet: address(wallet, 'The wallet'), ...normalRefresh(refresh) };
 }
 
 /** The transaction hash in the palm approval's details: base64url SHA-256 of the canonical JSON. */
 export const evmTransferDigest = args => sha256Base64Url(canonicalJson(canonicalEvmTransfer(args)));
+export const evmRefreshDigest = args => sha256Base64Url(canonicalJson(canonicalEvmRefresh(args)));
 
 const DOMAIN_TYPEHASH = keccak(utf8('EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)'));
-const TRANSFER_TYPEHASH = keccak(utf8('Transfer(address token,address to,uint256 amount,uint256 nonce)'));
-const RECOVERY_TYPEHASH = keccak(utf8('Recovery(address token,address to,uint256 amount,uint256 nonce)'));
-const CANCEL_TYPEHASH = keccak(utf8('Cancel(bytes32 id,uint256 nonce)'));
+const TRANSFER_TYPEHASH = keccak(utf8(
+  'Transfer(address token,address to,uint256 amount,uint256 fee,address feeTo,uint256 gasRefund,uint256 deadline,uint256 nonce)',
+));
+const REFRESH_TYPEHASH = keccak(utf8('Refresh(uint256 gasRefund,uint256 deadline,uint256 nonce)'));
+const RECOVERY_TYPEHASH = keccak(utf8('Recovery(address token,address to,uint256 amount,uint256 deadline,uint256 nonce)'));
 
-/** The wallet's EIP-712 domain separator, as `_domainSeparatorV4()` computes it. */
+/** The wallet's EIP-712 domain separator, as `_domainSeparatorV4()` computes it: version 2. */
 export const domainSeparator = ({ chainId, wallet }) => keccak(
-  DOMAIN_TYPEHASH, keccak(utf8('PalmWallet')), keccak(utf8('1')), word(chainId), addressWord(String(wallet)),
+  DOMAIN_TYPEHASH, keccak(utf8('PalmWallet')), keccak(utf8('2')), word(chainId), addressWord(address(wallet, 'The wallet')),
 );
 
 const typed = (domain, structHash) => keccak(Uint8Array.from([0x19, 0x01]), domain, structHash);
 
-/** The digest a normal-path transfer is signed over, as `transferDigest()` computes it. */
+/** The digest a palm path payment is signed over, as `transferDigest()` computes it. */
 export function eip712TransferDigest({ chainId, wallet, transfer }) {
   const t = normalTransfer(transfer);
-  return typed(domainSeparator({ chainId, wallet }),
-    keccak(TRANSFER_TYPEHASH, addressWord(t.token), addressWord(t.to), word(t.amount), word(t.nonce)));
+  return typed(domainSeparator({ chainId, wallet }), keccak(
+    TRANSFER_TYPEHASH, addressWord(t.token), addressWord(t.to), word(t.amount), word(t.fee),
+    addressWord(t.feeTo), word(t.gasRefund), word(t.deadline), word(t.nonce),
+  ));
 }
 
-/** The digest the signers sign to schedule a recovery transfer, as `recoveryDigest()` computes it. */
-export function eip712RecoveryDigest({ chainId, wallet, transfer }) {
-  const t = normalTransfer(transfer);
-  return typed(domainSeparator({ chainId, wallet }),
-    keccak(RECOVERY_TYPEHASH, addressWord(t.token), addressWord(t.to), word(t.amount), word(t.nonce)));
+/** The digest a refresh is signed over, as `refreshDigest()` computes it. */
+export function eip712RefreshDigest({ chainId, wallet, refresh }) {
+  const r = normalRefresh(refresh);
+  return typed(domainSeparator({ chainId, wallet }), keccak(REFRESH_TYPEHASH, word(r.gasRefund), word(r.deadline), word(r.nonce)));
 }
 
-/** The digest the palm key signs to cancel a scheduled recovery, as `cancelDigest()` computes it. */
-export function eip712CancelDigest({ chainId, wallet, id, nonce }) {
-  return typed(domainSeparator({ chainId, wallet }), keccak(CANCEL_TYPEHASH, hex.decode(String(id).replace(/^0x/, '')), word(nonce)));
+/** The digest the signers alone sign on the recovery path, as `recoveryDigest()` computes it. */
+export function eip712RecoveryDigest({ chainId, wallet, recovery }) {
+  const token = address(recovery.token || NATIVE, 'The asset');
+  return typed(domainSeparator({ chainId, wallet }), keccak(
+    RECOVERY_TYPEHASH, addressWord(token), addressWord(address(recovery.to, 'The payee')),
+    word(whole(recovery.amount, 'The amount')), word(whole(recovery.deadline, 'The deadline')), word(whole(recovery.nonce, 'The nonce')),
+  ));
 }
 
 /** The Ethereum address of a secp256k1 private key. */
@@ -188,30 +234,59 @@ export const deployCallOf = (params, salt) => toHex(concat(salt, initCodeOf(para
 /** nonce(): the wallet's next transfer number. */
 export const NONCE_CALL = toHex(selector('nonce()'));
 
-/**
- * transfer(address token, address to, uint256 amount, bytes[] signerSignatures, bytes palmSignature),
- * with the signer signatures ordered by the address that made them, as the contract requires.
- */
-export function transferCallOf(transfer, signerSignatures, palmSignature) {
-  const t = normalTransfer(transfer);
-  const sigs = signerSignatures.map(hexBytes);
-  const palm = hexBytes(palmSignature);
+/** abi.encode of a bytes[] (and a bytes after it, unless null), as the tail of a call whose head is `headWords` long. */
+function signaturesTail(headWords, signerSignatures, palmSignature) {
   const element = bytes => concat(word(bytes.length), pad32(bytes));
-  const elements = sigs.map(element);
+  const elements = signerSignatures.map(sig => element(hexBytes(sig)));
   const offsets = [];
-  let at = 32 * sigs.length;
+  let at = 32 * elements.length;
   for (const e of elements) {
     offsets.push(word(at));
     at += e.length;
   }
-  const array = concat(word(sigs.length), ...offsets, ...elements);
-  const head = 5 * 32;
+  const array = concat(word(elements.length), ...offsets, ...elements);
+  const head = 32 * headWords;
+  const palm = palmSignature === null ? null : element(hexBytes(palmSignature));
+  return {
+    offsets: palm ? [word(head), word(head + array.length)] : [word(head)],
+    body: palm ? concat(array, palm) : array,
+  };
+}
+
+/**
+ * transfer((address token, address to, uint256 amount, uint256 fee, address feeTo,
+ * uint256 gasRefund, uint256 deadline) p, bytes[] signerSignatures, bytes palmSignature), with
+ * the signer signatures ordered by the address that made them, as the contract requires.
+ */
+export function transferCallOf(transfer, signerSignatures, palmSignature) {
+  const t = normalTransfer(transfer);
+  const tail = signaturesTail(9, signerSignatures, palmSignature);
   return toHex(concat(
-    selector('transfer(address,address,uint256,bytes[],bytes)'),
-    addressWord(t.token), addressWord(t.to), word(t.amount), word(head), word(head + array.length),
-    array, element(palm),
+    selector('transfer((address,address,uint256,uint256,address,uint256,uint256),bytes[],bytes)'),
+    addressWord(t.token), addressWord(t.to), word(t.amount), word(t.fee), addressWord(t.feeTo), word(t.gasRefund), word(t.deadline),
+    ...tail.offsets, tail.body,
   ));
 }
+
+/** refresh(uint256 gasRefund, uint256 deadline, bytes[] signerSignatures, bytes palmSignature) */
+export function refreshCallOf(refresh, signerSignatures, palmSignature) {
+  const r = normalRefresh(refresh);
+  const tail = signaturesTail(4, signerSignatures, palmSignature);
+  return toHex(concat(selector('refresh(uint256,uint256,bytes[],bytes)'), word(r.gasRefund), word(r.deadline), ...tail.offsets, tail.body));
+}
+
+/** recover(address token, address to, uint256 amount, uint256 deadline, bytes[] signerSignatures) */
+export function recoverCallOf(recovery, signerSignatures) {
+  const tail = signaturesTail(5, signerSignatures, null);
+  return toHex(concat(
+    selector('recover(address,address,uint256,uint256,bytes[])'),
+    addressWord(address(recovery.token || NATIVE, 'The asset')), addressWord(address(recovery.to, 'The payee')),
+    word(whole(recovery.amount, 'The amount')), word(whole(recovery.deadline, 'The deadline')), ...tail.offsets, tail.body,
+  ));
+}
+
+/** lastActivity(): when the palm last approved something in this wallet. */
+export const LAST_ACTIVITY_CALL = toHex(selector('lastActivity()'));
 
 /** The address a 65-byte r || s || v signature over `digest` was made by. */
 export function recoverAddress(digest, signature) {

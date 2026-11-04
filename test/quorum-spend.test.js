@@ -9,6 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DEST, start, ok, signedIn, palmApprove, walletFor, signAndSend, setRules } from './harness.js';
 import { cosignerFrom, signQuorum } from '../client/wallet.js';
+import { signKeyProof } from '../src/key-proof.js';
 
 const PHRASES = {
   alex: 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
@@ -24,6 +25,7 @@ async function signingKey(env, client, vaultOwnerId, phrase) {
   ok(await client.post('/api/signing-key/register', {
     operationId: started.operation.id,
     publicKey: Buffer.from(key.publicKey).toString('hex'),
+    proof: signKeyProof(key.privateKey, { vaultOwnerId, memberId: client.id, publicKey: Buffer.from(key.publicKey).toString('hex') }),
   }));
   return key;
 }

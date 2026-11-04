@@ -7,6 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { start, ok, signedIn, palmApprove, walletFor } from './harness.js';
 import { cosignerFrom, accountFrom } from '../client/wallet.js';
+import { signKeyProof } from '../src/key-proof.js';
 import { multisigAddressOf } from '../src/bitcoin.js';
 
 const PHRASE = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
@@ -20,6 +21,7 @@ async function makeSigningKey(env, client, vaultOwnerId, mnemonic = PHRASE) {
   const registered = ok(await client.post('/api/signing-key/register', {
     operationId: started.operation.id,
     publicKey: Buffer.from(key.publicKey).toString('hex'),
+    proof: signKeyProof(key.privateKey, { vaultOwnerId, memberId: client.id, publicKey: Buffer.from(key.publicKey).toString('hex') }),
   }));
   return { ...registered, key, operation: started.operation, index: started.index };
 }
@@ -52,6 +54,7 @@ test('nothing is registered until the palm has landed', async t => {
   const early = await alex.post('/api/signing-key/register', {
     operationId: started.operation.id,
     publicKey: Buffer.from(key.publicKey).toString('hex'),
+    proof: signKeyProof(key.privateKey, { vaultOwnerId: alex.id, memberId: alex.id, publicKey: Buffer.from(key.publicKey).toString('hex') }),
   });
   assert.equal(early.status, 409);
   assert.equal(ok(await alex.get('/api/wallet')).members[0].signingKey, null);

@@ -680,6 +680,16 @@ const SCHEMA = [
    * start again from the first.
    */
   'ALTER TABLE accounts ADD COLUMN IF NOT EXISTS reminded TEXT',
+
+  /* ============================================== v28 — who holds each key, and what a wallet owes
+   *
+   * quorum_members records, at the moment an account is locked, which member holds each key it is
+   * locked to; whose palm counts is read from here afterwards, never from who later registers a
+   * matching key. deploy_owed is what building a Palm Wallet cost the gas account, paid back by
+   * the wallet's first payment or refresh.
+   */
+  'ALTER TABLE accounts ADD COLUMN IF NOT EXISTS quorum_members TEXT',
+  'ALTER TABLE accounts ADD COLUMN IF NOT EXISTS deploy_owed TEXT',
 ];
 
 /**

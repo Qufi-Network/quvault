@@ -42,6 +42,8 @@ const app = createApp({
     : undefined,
   // Vercel sends this as a bearer token on its scheduled reminder run, when it is set.
   cronSecret: env.CRON_SECRET || '',
+  // Where Palm's 0.1% fee on Palm Wallet payments goes; the gas account until it is set.
+  palmFeeAddress: env.PALM_FEE_ADDRESS || '',
   network: env.BITCOIN_NETWORK || 'testnet4',
   chainApi: env.CHAIN_API || 'https://mempool.space/testnet4/api',
   requirePalmSignin: env.REQUIRE_PALM_SIGNIN === 'true',

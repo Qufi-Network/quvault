@@ -19,9 +19,11 @@ import {
 } from './palm-vault.js';
 import { createPalmSigner, PalmRefused } from './palm-signer.js';
 import {
-  walletParams, walletSalt, walletAddressOf, deployCallOf, NONCE_CALL, transferCallOf, recoverAddress,
-  evmAddressOfPublicKey, evmTransferDigest, eip712TransferDigest, normalTransfer, NATIVE, DEPLOYER, PalmWalletError,
+  walletParams, walletSalt, walletAddressOf, deployCallOf, NONCE_CALL, LAST_ACTIVITY_CALL, transferCallOf, refreshCallOf,
+  recoverAddress, evmAddressOfPublicKey, evmTransferDigest, evmRefreshDigest, eip712TransferDigest, eip712RefreshDigest,
+  normalTransfer, normalRefresh, NATIVE, DEPLOYER, FEE_DIVISOR, PalmWalletError,
 } from './palm-wallet.js';
+import { verifyKeyProof } from './key-proof.js';
 import { relayerKeyFrom, relayerAddressOf, signRelayed } from './palm-relayer.js';
 import { DEFAULT_POLICY, PolicyError, describePolicy, requiredFor, requiredToChange, validatePolicy } from './policy.js';
 import { NETWORKS, createBalances, format, networkList } from './networks.js';
@@ -45,6 +47,9 @@ const LOGIN_SECONDS = 300;
 const PALM_REQUEST_SECONDS = 300;
 const OPERATION_SECONDS = 1800; // how long a quorum has to come together
 const UNLOCK_SECONDS = 300; // how long the key stays open once a request has opened it
+// How long a signed Palm Wallet payment stays good: long enough to gather every palm and
+// signature, short enough that a signed payment cannot be held back and used much later.
+const PALM_WALLET_DEADLINE = 2 * 3600;
 
 /*
  * The two custody modes, named rather than spelled out at each of the thirty places that ask.
@@ -170,10 +175,14 @@ const SQL = {
   // can land once and only on the vault it was approved for.
   moveAccountToPalm: `UPDATE accounts SET address = $1, public_key = $2, required = $3, quorum_keys = $4, lock_kind = 'palm',
                         palm_vault_id = $5, palm_key = $6, recovery_delay = $7, descriptor = $8, previous_address = $9,
-                        policy = $10, signers = $11, reminded = NULL
+                        policy = $10, signers = $11, quorum_members = $11, reminded = NULL
                       WHERE wallet_user_id = $12 AND network = 'bitcoin' AND address = $9`,
-  palmAccounts: `SELECT * FROM accounts WHERE network = 'bitcoin' AND lock_kind = 'palm' AND required IS NOT NULL`,
-  setReminded: `UPDATE accounts SET reminded = $1 WHERE wallet_user_id = $2 AND network = 'bitcoin'`,
+  palmAccounts: `SELECT * FROM accounts WHERE lock_kind = 'palm' AND required IS NOT NULL`,
+  // Who holds each key a locked account names, recorded when it was locked and used from then on.
+  setQuorumMembers: 'UPDATE accounts SET quorum_members = $1 WHERE wallet_user_id = $2 AND network = $3',
+  // What building a Palm Wallet cost the gas account, owed back by its first payment or refresh.
+  setDeployOwed: 'UPDATE accounts SET deploy_owed = $1 WHERE wallet_user_id = $2 AND network = $3',
+  setReminded: 'UPDATE accounts SET reminded = $1 WHERE wallet_user_id = $2 AND network = $3',
   lockAccountToQuorum: `UPDATE accounts SET address = $1, public_key = $2, required = $3, quorum_keys = $4,
                           previous_address = COALESCE(previous_address, address)
                         WHERE wallet_user_id = $5 AND network = $6`,
@@ -336,6 +345,8 @@ export function createApp(options) {
     // What Vercel's scheduler sends as a bearer token, when CRON_SECRET is set. Optional: without
     // it the reminder run is still harmless, because it runs at most once an hour whoever asks.
     cronSecret = '',
+    // Where Palm's 0.1% on Palm Wallet payments goes. Until it is set, the gas account.
+    palmFeeAddress = '',
     network = 'testnet4',
     chainApi = 'https://mempool.space/testnet4/api',
     requirePalmSignin = false,
@@ -790,8 +801,16 @@ export function createApp(options) {
    * for these coins, so their palm must not count towards moving them either.
    */
   const keyHoldersOf = (account, members) => {
-    const keys = account?.required ? JSON.parse(account.quorum_keys) : [];
-    return members.filter(m => m.public_key && keys.includes(m.public_key));
+    if (!account?.required) return [];
+    const keys = JSON.parse(account.quorum_keys);
+    const frozen = account.quorum_members ? JSON.parse(account.quorum_members) : null;
+    if (Array.isArray(frozen) && frozen.length === keys.length) {
+      // Recorded at lock: member i holds key i, and nobody else does, whatever the roster says now.
+      return frozen.map((id, i) => members.find(m => m.member_id === id && m.public_key === keys[i])).filter(Boolean);
+    }
+    // Locked before that was recorded: each key counts once, for whoever registered it first.
+    const seen = new Set();
+    return members.filter(m => m.public_key && keys.includes(m.public_key) && !seen.has(m.public_key) && seen.add(m.public_key));
   };
 
   /**
@@ -1511,7 +1530,7 @@ export function createApp(options) {
         const approved = approvals.some(a => a.user_id === user.id && a.status === 'approved');
         view.signatures = { done: signed.length, required: evmAccount.required };
         view.needsSignature = Boolean(approved && member?.public_key
-          && JSON.parse(evmAccount.quorum_keys).includes(member.public_key)
+          && keyHoldersOf(evmAccount, await all('membersOf', op.wallet_user_id)).some(m => m.member_id === user.id)
           && !signed.includes(evmAddressOfPublicKey(member.public_key)));
         view.needsYou = view.needsYou || view.needsSignature;
         return view;
@@ -1528,7 +1547,7 @@ export function createApp(options) {
       view.signatures = { done: signed.length, required: account.required };
       view.needsSignature = Boolean(
         approved && member?.public_key
-        && JSON.parse(account.quorum_keys).includes(member.public_key)
+        && keyHoldersOf(account, await all('membersOf', op.wallet_user_id)).some(m => m.member_id === user.id)
         && !signed.includes(member.public_key),
       );
       view.needsYou = view.needsYou || view.needsSignature;
@@ -1626,6 +1645,14 @@ export function createApp(options) {
       const payload = JSON.parse(op.payload);
       return { unlock: openSealed(payload.unlockSealed, vault()).toString('base64'), salt: payload.salt, label: payload.label };
     }
+    if (op.kind === 'signing' && wallet?.custody === CUSTODY.BROWSER) {
+      // What the new key's proof must name: the vault it signs for and the person it belongs to.
+      const { vaultOwnerId } = JSON.parse(op.payload);
+      return {
+        unlock: openSealed(wallet.unlock_sealed, vault()).toString('base64'), salt: wallet.salt,
+        keyBinding: { vaultOwnerId, memberId: user.id },
+      };
+    }
     if (!wallet) throw new HttpError(409, 'This account has no wallet.');
     if (op.kind === 'upgrade') {
       // The secret for the key this browser is about to make, not the one being retired.
@@ -1671,8 +1698,7 @@ export function createApp(options) {
     if (op.txid) throw new HttpError(409, 'That transaction has already been sent.');
 
     const member = await one('memberIn', op.wallet_user_id, user.id);
-    const keys = JSON.parse(account.quorum_keys);
-    if (!member?.public_key || !keys.includes(member.public_key)) {
+    if (!keyHoldersOf(account, await all('membersOf', op.wallet_user_id)).some(m => m.member_id === user.id)) {
       throw new HttpError(403, 'Your key is not one of the ones this account is locked to.');
     }
     const approvals = await all('approvalsOf', op.id);
@@ -1701,6 +1727,7 @@ export function createApp(options) {
       signatures: signersOn(lockOfAccount(account), op.psbt || unsignedFor(lockOfAccount(account), plan)).length,
       // A palm vault spend is signed through a Taproot script, which the browser reads differently.
       lockKind: lockOfAccount(account).kind,
+      ...await palmProofFor(op, user),
     };
   }
 
@@ -1730,6 +1757,7 @@ export function createApp(options) {
       threshold: op.required,
       subject: subjectOf(owner?.sub),
       expiresAt: op.expires_at,
+      ...await palmProofFor(op, owner),
     };
   }
 
@@ -1982,8 +2010,7 @@ export function createApp(options) {
     const account = await one('accountOn', op.wallet_user_id, 'bitcoin');
     if (!account?.required) throw new HttpError(409, 'That account is not spent by signatures.');
     const member = await one('memberIn', op.wallet_user_id, user.id);
-    const keys = JSON.parse(account.quorum_keys);
-    if (!member?.public_key || !keys.includes(member.public_key)) {
+    if (!keyHoldersOf(account, await all('membersOf', op.wallet_user_id)).some(m => m.member_id === user.id)) {
       throw new HttpError(403, 'Your key is not one of the ones this account is locked to.');
     }
     const approvals = await all('approvalsOf', op.id);
@@ -2523,6 +2550,14 @@ export function createApp(options) {
     const member = await one('memberIn', vaultOwnerId, user.id);
     if (!member) throw new HttpError(404, 'You do not sign for that vault.');
     if (member.public_key) throw new HttpError(409, 'You already have a signing key for that vault.');
+    // Proof that the key is this person's: a signature by it over this vault, this person and the
+    // key. Public keys are on the roster and on the chain; without this anyone could claim one.
+    if (!verifyKeyProof(String(body.proof ?? ''), { vaultOwnerId, memberId: user.id, publicKey })) {
+      throw new HttpError(400, 'That signing key comes without proof that you hold it.');
+    }
+    if ((await all('membersOf', vaultOwnerId)).some(m => m.public_key === publicKey && m.member_id !== user.id)) {
+      throw new HttpError(409, 'That signing key already belongs to someone else in this vault.');
+    }
     await query('setMemberKey', publicKey, index, now(), vaultOwnerId, user.id);
     return { signingKey: publicKey, index };
   }
@@ -2774,7 +2809,10 @@ export function createApp(options) {
     };
     const op = await newOperation({
       walletOwnerId: user.id, user, kind: 'lock', statement, details,
-      payload: { ...(plan ?? {}), transactionHash: bound?.digest ?? null, quorum: { keys, required, address: quorumAddress, ...(palmVault ?? {}) } },
+      payload: {
+        ...(plan ?? {}), transactionHash: bound?.digest ?? null,
+        quorum: { keys, members: signers.map(m => m.member_id), required, address: quorumAddress, ...(palmVault ?? {}) },
+      },
       required: palms, networkId: 'bitcoin',
     });
     return { operation: operationView(op, [], user), quorum: { address: quorumAddress, required, signers: signers.length, palm }, plan };
@@ -2792,11 +2830,13 @@ export function createApp(options) {
       await query('lockAccountToPalm', quorum.address, Buffer.from(made.leaves.normal.script).toString('hex'),
         quorum.required, JSON.stringify(quorum.keys), quorum.palmVaultId, quorum.palmKey, quorum.delay, quorum.descriptor,
         op.wallet_user_id, 'bitcoin');
+      if (quorum.members) await query('setQuorumMembers', JSON.stringify(quorum.members), op.wallet_user_id, 'bitcoin');
       return;
     }
     const script = multisigOf(quorum.keys, quorum.required).witnessScript;
     await query('lockAccountToQuorum', quorum.address, Buffer.from(script).toString('hex'),
       quorum.required, JSON.stringify(quorum.keys), op.wallet_user_id, 'bitcoin');
+    if (quorum.members) await query('setQuorumMembers', JSON.stringify(quorum.members), op.wallet_user_id, 'bitcoin');
   }
 
   /** The browser reports the address it derived for the new network. */
@@ -2885,10 +2925,40 @@ export function createApp(options) {
     };
   }
 
+  /**
+   * Coins in any account this vault has locked to the chain, palm vaults and Palm Wallets alike.
+   * Erasing removes the records that open them, so a vault holding any is not erased. A balance
+   * that cannot be read counts as holding: the safe answer is not to guess.
+   */
+  async function lockedHoldings(ownerId) {
+    const holding = [];
+    for (const account of await all('accountsOf', ownerId)) {
+      if (!account.required) continue;
+      const net = NETWORKS[account.network];
+      let amount = null;
+      try {
+        amount = account.network === 'bitcoin'
+          ? await chain.balance(account.address).then(b => BigInt(b.confirmed + b.pending))
+          : BigInt(await evmChainFor(account.network).balance(account.address));
+      } catch {
+        amount = null;
+      }
+      if (amount === null || amount > 0n) {
+        holding.push(`${net?.label ?? account.network} at ${account.address} ${amount === null ? '(balance unknown)' : `holds ${format(amount.toString(), account.network)} ${net?.symbol ?? ''}`}`.trim());
+      }
+    }
+    return holding;
+  }
+
   async function requestReset({ user }) {
     requirePalmReady();
     const wallet = await one('walletOf', user.id);
     if (!wallet) throw new HttpError(409, 'There is no vault to erase.');
+    const locked = await lockedHoldings(user.id);
+    if (locked.length) {
+      throw new HttpError(409, `This vault cannot be erased while coins are locked to the chain: ${locked.join('; ')}. `
+        + 'Erasing would remove what opens them. Send them out first.');
+    }
     const [accounts, balance] = await Promise.all([
       all('accountsOf', user.id),
       chain.balance(wallet.address).catch(() => null),
@@ -2918,6 +2988,8 @@ export function createApp(options) {
     }
     const wallet = await one('walletOf', user.id);
     if (!wallet) return { ok: true, txid: null, sweptSats: 0 };
+    const locked = await lockedHoldings(user.id);
+    if (locked.length) throw new HttpError(409, `This vault cannot be erased while coins are locked to the chain: ${locked.join('; ')}.`);
 
     const balance = await chain.balance(wallet.address).catch(() => null);
     const holding = balance ? balance.confirmed + balance.pending : 0;
@@ -3381,6 +3453,7 @@ export function createApp(options) {
       subject: subjectOf(owner?.sub),
       authorizationId: op.id,
       expiresAt: op.expires_at,
+      ...await palmProofFor(op, owner),
     };
   }
 
@@ -3687,6 +3760,18 @@ export function createApp(options) {
   /** Sends a palm vault's coins straight back into it, so every recovery clock starts again. */
   async function requestRefresh({ user, body }) {
     requirePalmReady();
+    const refreshNetwork = String(body.network ?? 'bitcoin');
+    if (isEvm(refreshNetwork)) {
+      const ownerId = String(body.vaultOwnerId || user.id);
+      const [evmAccount, members] = await Promise.all([one('accountOn', ownerId, refreshNetwork), all('membersOf', ownerId)]);
+      if (evmAccount?.lock_kind !== 'palm' || !evmAccount.required) {
+        throw new HttpError(409, 'Only a wallet locked to the palm has a recovery path to keep closed.');
+      }
+      if (ownerId !== user.id && !keyHoldersOf(evmAccount, members).some(m => m.member_id === user.id)) {
+        throw new HttpError(403, 'Only someone whose key this wallet is locked to can ask for that.');
+      }
+      return palmWalletRefreshRequest({ user, ownerId, account: evmAccount, networkId: refreshNetwork });
+    }
     const { ownerId, account } = await signerVault(user, body.vaultOwnerId);
     if (account?.lock_kind !== 'palm' || !account.required) {
       throw new HttpError(409, 'Only a vault locked to the palm has a recovery clock to restart.');
@@ -3975,14 +4060,16 @@ export function createApp(options) {
     let reminded = 0;
     for (const row of rows) {
       try {
-        const lock = lockOfAccount(row);
-        const clock = recoveryClock(lock.vault, await chain.spendableUtxos(row.address), await tipHeight());
+        // A Palm Wallet's clock is the chain's: when the palm last approved something, plus the delay.
+        const clock = isEvm(row.network)
+          ? await palmWalletState(row.network, palmWalletOf(row)).then(state => ({ nextOpensAt: state.opensAt, daysLeft: state.daysLeft }))
+          : recoveryClock(lockOfAccount(row).vault, await chain.spendableUtxos(row.address), await tipHeight());
         if (clock.nextOpensAt === null) continue;
         const stage = reminderStage(clock.daysLeft);
         const [at, last] = String(row.reminded ?? '').split(':').map(Number);
         if (stage <= (at === clock.nextOpensAt ? last : 0)) continue;
         await pushTo(keyHoldersOf(row, await all('membersOf', row.wallet_user_id)).map(m => m.member_id));
-        await query('setReminded', `${clock.nextOpensAt}:${stage}`, row.wallet_user_id);
+        await query('setReminded', `${clock.nextOpensAt}:${stage}`, row.wallet_user_id, row.network);
         reminded++;
       } catch (error) {
         log.warn(`Reminder skipped: ${error.message}`);
@@ -3994,16 +4081,35 @@ export function createApp(options) {
   /* ============================================== Palm Wallets: Ethereum and BSC need the palm
    *
    * An EVM account locked to the palm lives in a PalmWallet contract (contracts/), at an address
-   * worked out before the contract exists. A transfer needs the threshold of signers' signatures
-   * and the palm key's, checked by the contract; the signers' keys are the ones they already
-   * hold for this vault, and the palm key belongs to the palm signer. The gas account builds the
-   * wallet on its first payment and submits every transfer, and can move nothing by itself.
+   * worked out before the contract exists and built by the gas account as the account is locked.
+   * A payment needs the threshold of signers' signatures and the palm key's, checked by the
+   * contract; the signers' keys are the ones they already hold for this vault, and the palm key
+   * belongs to the palm signer. Each payment pays its own way: Palm's 0.1% fee, and the network
+   * fee back to the gas account, both shown on the phone and both in what the palms approve.
+   *
+   * The recovery path is the Bitcoin one: the signers alone, once the palm has approved nothing
+   * in the wallet for the delay. A refresh, like a payment, closes it again.
    */
   let gasKey = null;
   const gasAccount = () => {
     if (!walletSeed) return null;
     gasKey ??= relayerKeyFrom(walletSeed);
     return { key: gasKey, address: relayerAddressOf(gasKey) };
+  };
+
+  /** Where Palm's 0.1% goes: PALM_FEE_ADDRESS when it is set, the gas account until then. */
+  const feeAddress = () => (/^0x[0-9a-fA-F]{40}$/.test(palmFeeAddress) ? palmFeeAddress.toLowerCase() : gasAccount()?.address ?? null);
+
+  /*
+   * Gas, measured on a local chain: building a wallet 1.49M, a payment to a new payee about 146k,
+   * a refresh 55k, each further signer about 7k. `basis` is what a refund is worked out from,
+   * `limit` what a transaction may use.
+   */
+  const GAS = {
+    deploy: { basis: 1_600_000n, limit: 2_200_000n },
+    transfer: { basis: 155_000n, limit: 350_000n },
+    refresh: { basis: 62_000n, limit: 200_000n },
+    perSigner: 8_000n,
   };
 
   /** A palm wallet's settings, from what the account stores, checked against its address. */
@@ -4021,6 +4127,31 @@ export function createApp(options) {
     return { ...params, salt, keys, address: String(account.address).toLowerCase(), chainId: Number(description.chainId) };
   }
 
+  /** The network fee for a call using `units` of gas, at today's price with a fifth to spare. */
+  async function networkFeeFor(networkId, units) {
+    const fees = await evmChainFor(networkId).fees();
+    return (units * (BigInt(fees.baseFeePerGas) + BigInt(fees.maxPriorityFeePerGas)) * 12n) / 10n;
+  }
+
+  /** Where a palm wallet stands on its chain: built or not, its next nonce, and its recovery clock. */
+  async function palmWalletState(networkId, pw) {
+    const evm = evmChainFor(networkId);
+    const [code, balance] = await Promise.all([evm.code(pw.address), evm.balance(pw.address)]);
+    const built = code !== '0x';
+    const [nonce, last] = built
+      ? await Promise.all([evm.call({ to: pw.address, data: NONCE_CALL }), evm.call({ to: pw.address, data: LAST_ACTIVITY_CALL })])
+        .then(([n, l]) => [BigInt(n).toString(10), Number(BigInt(l))])
+      : ['0', null];
+    const opensAt = last === null ? null : last + pw.recoveryDelay;
+    const left = opensAt === null ? null : Math.max(0, opensAt - now());
+    return {
+      built, balance, nonce, lastActivity: last, opensAt,
+      daysLeft: left === null ? null : Math.ceil(left / 86400),
+      open: left === 0,
+      refreshDue: left !== null && left <= 60 * 86400,
+    };
+  }
+
   /** What the account view says about a palm wallet. */
   async function palmWalletView(row) {
     const net = NETWORKS[row.network];
@@ -4029,14 +4160,20 @@ export function createApp(options) {
       palmSigner: row.palm_key,
       recoveryDelayDays: Math.round(row.recovery_delay / 86400),
       built: null,
+      clock: null,
       gasAccount: gasAccount()?.address ?? null,
       gasBalance: null,
       gasSymbol: net.symbol,
+      feeAddress: feeAddress(),
     };
     try {
-      const evm = evmChainFor(row.network);
-      const [code, gas] = await Promise.all([evm.code(row.address), view.gasAccount ? evm.balance(view.gasAccount) : null]);
-      view.built = code !== '0x';
+      const pw = palmWalletOf(row);
+      const [state, gas] = await Promise.all([
+        palmWalletState(row.network, pw),
+        view.gasAccount ? evmChainFor(row.network).balance(view.gasAccount) : null,
+      ]);
+      view.built = state.built;
+      view.clock = { opensAt: state.opensAt, daysLeft: state.daysLeft, open: state.open, refreshDue: state.refreshDue, delayDays: view.recoveryDelayDays };
       view.gasBalance = gas === null ? null : format(gas, row.network);
     } catch (error) {
       if (!(error instanceof EvmChainError)) throw error;
@@ -4046,8 +4183,8 @@ export function createApp(options) {
 
   /**
    * Locking an Ethereum or BSC account to the palm. The wallet's address is known now; the coins
-   * move there in one transfer the owner's device signs, and the contract itself is built by the
-   * gas account on the wallet's first payment.
+   * move there in one transfer the owner's device signs, and the gas account builds the contract
+   * as soon as that transfer is sent, so the wallet's recovery clock starts then.
    */
   async function requestEvmLock({ user, body, networkId }) {
     const net = NETWORKS[networkId];
@@ -4118,7 +4255,8 @@ export function createApp(options) {
       signers: signers.map(m => m.label).join(', '),
       to: address,
       effect: `from now on the ${net.label} network itself refuses any transfer from this account without a palm approval`,
-      recovery: `if the palm signer is ever gone, the signers alone can schedule a transfer that runs after about ${days} days, and a palm approval can still cancel it`,
+      recovery: `if the palm approves nothing in the wallet for about ${days} days, the signers alone can move the coins; any payment or refresh starts that wait again`,
+      fees: 'each payment pays Palm 0.1% and its own network fee, both shown before you approve',
       ...lockWarning(required, signers.length, days),
       ...(transfer ? {
         amount_wei: transfer.value, chain_id: net.chainId, max_fee_per_gas: transfer.maxFeePerGas, transaction_hash: digest,
@@ -4128,14 +4266,17 @@ export function createApp(options) {
       walletOwnerId: user.id, user, kind: 'lock', statement, details,
       payload: {
         ...(transfer ?? {}), transactionHash: digest,
-        quorum: { kind: 'palm-evm', palmVaultId, palmKey: palmAddress, keys, required, recoveryDays: days, address, chainId: net.chainId },
+        quorum: {
+          kind: 'palm-evm', palmVaultId, palmKey: palmAddress, keys, members: signers.map(m => m.member_id),
+          required, recoveryDays: days, address, chainId: net.chainId,
+        },
       },
       required: Math.max(palms, 1), networkId,
     });
     return { operation: operationView(op, [], user), quorum: { address, required, signers: signers.length, palm: true } };
   }
 
-  /** Writes a palm wallet onto an EVM account, once its coins are on their way to it. */
+  /** Writes a palm wallet onto an EVM account, once its coins are on their way to it, then builds it. */
   async function lockEvmAccount(op) {
     const { quorum } = JSON.parse(op.payload);
     const params = walletParams({
@@ -4144,47 +4285,87 @@ export function createApp(options) {
     if (walletAddressOf(params, walletSalt(quorum.palmVaultId)) !== quorum.address) {
       throw new HttpError(500, 'The Palm Wallet no longer matches the one that was approved.');
     }
-    const description = { kind: 'palm-wallet', chainId: quorum.chainId, deployer: DEPLOYER, ...params };
+    const description = { kind: 'palm-wallet', version: 2, chainId: quorum.chainId, deployer: DEPLOYER, ...params };
     await query('lockAccountToPalm', quorum.address, quorum.palmKey, quorum.required, JSON.stringify(quorum.keys),
       quorum.palmVaultId, quorum.palmKey, params.recoveryDelay, JSON.stringify(description), op.wallet_user_id, op.network);
+    await query('setQuorumMembers', JSON.stringify(quorum.members ?? []), op.wallet_user_id, op.network);
+    // Built now, so the recovery clock starts now and the wallet exists whatever happens to this
+    // server's records. The gas it costs is owed back by the wallet's first payment or refresh.
+    try {
+      const account = await one('accountOn', op.wallet_user_id, op.network);
+      const pw = palmWalletOf(account);
+      if ((await evmChainFor(op.network).code(pw.address)) === '0x') {
+        await relay(op.network, pw, null, 'deploy');
+        const owed = await networkFeeFor(op.network, GAS.deploy.basis);
+        await query('setDeployOwed', owed.toString(10), op.wallet_user_id, op.network);
+      }
+    } catch (error) {
+      // Not built yet (the gas account may be empty): the first payment builds it instead.
+      log.warn(`Palm Wallet not built at lock: ${error.message}`);
+    }
   }
 
-  /** A transfer out of a palm wallet: native coin, any amount up to everything in it. */
+  /** A payment out of a palm wallet: native coin, up to everything in it, fees included. */
   async function palmWalletWithdrawal({ user, ownerId, account, networkId, body }) {
     const net = NETWORKS[networkId];
     const pw = palmWalletOf(account);
     const to = String(body.to ?? '').trim();
     if (!net.valid(to)) throw new HttpError(400, `That is not a valid ${net.label} address.`);
-    const evm = evmChainFor(networkId);
-    let balance;
-    let nonce;
+    const feeTo = feeAddress();
+    if (!feeTo) throw new HttpError(503, 'Palm Wallets need WALLET_SEED.');
+    let state;
+    let gasRefund;
     try {
-      const code = await evm.code(pw.address);
-      [balance, nonce] = await Promise.all([
-        evm.balance(pw.address),
-        code === '0x' ? '0' : evm.call({ to: pw.address, data: NONCE_CALL }).then(raw => BigInt(raw).toString(10)),
-      ]);
+      state = await palmWalletState(networkId, pw);
+      const units = GAS.transfer.basis + GAS.perSigner * BigInt(pw.threshold) + (state.built ? 0n : GAS.deploy.basis);
+      gasRefund = (await networkFeeFor(networkId, units)) + (state.built ? BigInt(account.deploy_owed || '0') : 0n);
     } catch (error) {
       if (error instanceof EvmChainError) throw new HttpError(502, error.message);
       throw error;
     }
-    const amount = body.amount === 'max' ? balance : String(body.amount ?? '').trim();
-    if (!/^[1-9][0-9]*$/.test(amount)) throw new HttpError(400, `Enter an amount in the smallest unit (wei) of ${net.symbol}.`);
-    if (BigInt(amount) > BigInt(balance)) throw new HttpError(400, `This wallet holds ${format(balance, networkId)} ${net.symbol}.`);
+    const balance = BigInt(state.balance);
+    let amount;
+    if (body.amount === 'max') {
+      const spare = balance - gasRefund;
+      amount = spare > 0n ? (spare * FEE_DIVISOR) / (FEE_DIVISOR + 1n) : 0n;
+    } else {
+      if (!/^[1-9][0-9]{0,77}$/.test(String(body.amount ?? '').trim())) {
+        throw new HttpError(400, `Enter an amount in the smallest unit (wei) of ${net.symbol}.`);
+      }
+      amount = BigInt(String(body.amount).trim());
+    }
+    const fee = amount / FEE_DIVISOR;
+    if (amount <= 0n || amount + fee + gasRefund > balance) {
+      throw new HttpError(400, `This wallet holds ${format(balance.toString(), networkId)} ${net.symbol}, and a payment also needs Palm's 0.1% and about ${format(gasRefund.toString(), networkId)} ${net.symbol} of network fee.`);
+    }
 
-    const transfer = normalTransfer({ token: NATIVE, to, amount, nonce });
+    let transfer;
+    try {
+      transfer = normalTransfer({
+        token: NATIVE, to, amount: amount.toString(), fee: fee.toString(), feeTo, gasRefund: gasRefund.toString(),
+        deadline: String(now() + PALM_WALLET_DEADLINE), nonce: state.nonce,
+      });
+    } catch (error) {
+      throw new HttpError(400, error instanceof PalmWalletError ? error.message : 'That payment cannot be made.');
+    }
     const digest = evmTransferDigest({ chainId: pw.chainId, wallet: pw.address, transfer });
     const destination = await describeDestination(ownerId, networkId, to);
-    const statement = `Send ${format(amount, networkId)} ${net.symbol} to ${destination.phrase}`;
+    const show = value => `${format(String(value), networkId)} ${net.symbol}`;
+    const statement = `Send ${show(amount)} to ${destination.phrase}, plus ${show(fee + gasRefund)} in fees`;
     const details = {
       action: 'withdraw', network: networkId, to, ...destination.details,
-      token: 'native', amount_units: amount, wallet: pw.address, chain_id: String(pw.chainId),
+      token: 'native', amount_units: transfer.amount,
+      palm_fee: `${show(fee)}, which is 0.1%`, palm_fee_units: transfer.fee, palm_fee_to: transfer.feeTo,
+      network_fee: `${show(gasRefund)}${state.built ? '' : ', including building the wallet'}`, network_fee_units: transfer.gasRefund,
+      total: show(amount + fee + gasRefund),
+      wallet: pw.address, chain_id: String(pw.chainId),
+      good_until: new Date(Number(transfer.deadline) * 1000).toUTCString(),
       approvals_required: `${pw.threshold} of ${pw.signers.length} signer${pw.signers.length === 1 ? '' : 's'} and the palm`,
       transaction_hash: digest,
     };
     const op = await newOperation({
       walletOwnerId: ownerId, user, kind: 'withdraw', statement, details,
-      payload: { chain: 'evm-palm', network: networkId, chainId: pw.chainId, wallet: pw.address, transfer, transactionHash: digest },
+      payload: { chain: 'evm-palm', kind: 'transfer', network: networkId, chainId: pw.chainId, wallet: pw.address, transfer, transactionHash: digest },
       required: pw.threshold, networkId,
     });
     await appendEvidence(EVIDENCE.PROPOSAL_CREATED, {
@@ -4195,15 +4376,61 @@ export function createApp(options) {
     return { operation: operationView(op, [], user), transfer, transactionHash: digest };
   }
 
-  /** The signatures a palm wallet transfer has collected so far, by signer address. */
+  /** A refresh of a palm wallet: the palms and the signers close its recovery path again. */
+  async function palmWalletRefreshRequest({ user, ownerId, account, networkId }) {
+    const net = NETWORKS[networkId];
+    const pw = palmWalletOf(account);
+    let state;
+    let gasRefund;
+    try {
+      state = await palmWalletState(networkId, pw);
+      const units = GAS.refresh.basis + GAS.perSigner * BigInt(pw.threshold) + (state.built ? 0n : GAS.deploy.basis);
+      gasRefund = (await networkFeeFor(networkId, units)) + (state.built ? BigInt(account.deploy_owed || '0') : 0n);
+    } catch (error) {
+      if (error instanceof EvmChainError) throw new HttpError(502, error.message);
+      throw error;
+    }
+    if (gasRefund > BigInt(state.balance)) {
+      throw new HttpError(409, `A refresh pays its own network fee of about ${format(gasRefund.toString(), networkId)} ${net.symbol}, and this wallet holds less.`);
+    }
+    const refresh = normalRefresh({ gasRefund: gasRefund.toString(), deadline: String(now() + PALM_WALLET_DEADLINE), nonce: state.nonce });
+    const digest = evmRefreshDigest({ chainId: pw.chainId, wallet: pw.address, refresh });
+    const days = Math.round(pw.recoveryDelay / 86400);
+    const statement = `Refresh ${ownerId === user.id ? 'my' : 'the'} ${net.label} Palm Wallet, so its recovery path stays closed`;
+    const details = {
+      action: 'refresh the wallet', network: networkId, wallet: pw.address, chain_id: String(pw.chainId),
+      network_fee: `${format(gasRefund.toString(), networkId)} ${net.symbol}`, network_fee_units: refresh.gasRefund,
+      effect: `nothing moves; the signers alone cannot use the recovery path for about ${days} more days`,
+      good_until: new Date(Number(refresh.deadline) * 1000).toUTCString(),
+      approvals_required: `${pw.threshold} of ${pw.signers.length} signer${pw.signers.length === 1 ? '' : 's'} and the palm`,
+      transaction_hash: digest,
+    };
+    const op = await newOperation({
+      walletOwnerId: ownerId, user, kind: 'withdraw', statement, details,
+      payload: { chain: 'evm-palm', kind: 'refresh', network: networkId, chainId: pw.chainId, wallet: pw.address, refresh, transactionHash: digest },
+      required: pw.threshold, networkId,
+    });
+    return { operation: operationView(op, [], user) };
+  }
+
+  /** The signatures a palm wallet request has collected so far, by signer address. */
   const collectedOf = op => (op.psbt ? JSON.parse(op.psbt) : {});
 
-  /** What one signer's browser needs to sign a palm wallet transfer with their own key. */
+  /** The two digests of a palm wallet request: the one the palms approved, and the one everyone signs. */
+  function palmWalletDigests(stored) {
+    const at = { chainId: stored.chainId, wallet: stored.wallet };
+    return stored.kind === 'refresh'
+      ? { approved: evmRefreshDigest({ ...at, refresh: stored.refresh }), typed: eip712RefreshDigest({ ...at, refresh: stored.refresh }) }
+      : { approved: evmTransferDigest({ ...at, transfer: stored.transfer }), typed: eip712TransferDigest({ ...at, transfer: stored.transfer }) };
+  }
+
+  /** What one signer's browser needs to sign a palm wallet request with their own key. */
   async function palmWalletUnlock(op, account, user) {
     if (!['running', 'done'].includes(op.status)) throw new HttpError(409, 'This request is still collecting palm approvals.');
-    if (op.txid) throw new HttpError(409, 'That transfer has already been sent.');
+    if (op.txid) throw new HttpError(409, 'That has already been sent.');
     const member = await one('memberIn', op.wallet_user_id, user.id);
-    if (!member?.public_key || !JSON.parse(account.quorum_keys).includes(member.public_key)) {
+    const [members, wallet] = await Promise.all([all('membersOf', op.wallet_user_id), one('walletOf', op.wallet_user_id)]);
+    if (!keyHoldersOf(account, members).some(m => m.member_id === user.id)) {
       throw new HttpError(403, 'Your key is not one of the ones this wallet is locked to.');
     }
     const approvals = await all('approvalsOf', op.id);
@@ -4212,7 +4439,6 @@ export function createApp(options) {
     const mine = await one('walletOf', user.id);
     if (mine?.custody !== CUSTODY.BROWSER) throw new HttpError(409, 'Move your own vault into this browser first.');
     const stored = JSON.parse(op.payload);
-    const [members, wallet] = await Promise.all([all('membersOf', op.wallet_user_id), one('walletOf', op.wallet_user_id)]);
     return {
       authorizationId: op.id,
       walletId: mine.address,
@@ -4226,45 +4452,47 @@ export function createApp(options) {
       salt: mine.salt,
       keyIndex: member.key_index,
       signingKey: member.public_key,
-      palmWallet: { chainId: stored.chainId, wallet: stored.wallet, transfer: stored.transfer },
+      palmWallet: { kind: stored.kind ?? 'transfer', chainId: stored.chainId, wallet: stored.wallet, transfer: stored.transfer, refresh: stored.refresh },
       transactionHash: stored.transactionHash,
+      // This person's own palm decision for this request, so the browser can check Veyns' word
+      // itself rather than this server's before it signs anything.
+      ...await palmProofFor(op, user),
       required: account.required,
       signatures: Object.keys(collectedOf(op)).length,
     };
   }
 
   /**
-   * One signer's signature on a palm wallet transfer. It must be over exactly the transfer the
-   * palms approved and come from this signer's own key. Once there are enough, the palm signer is
+   * One signer's signature on a palm wallet request. It must be over exactly what the palms
+   * approved and come from this signer's own key. Once there are enough, the palm signer is
    * handed Veyns' own decisions and adds the palm key's signature, and the gas account builds the
-   * wallet if it is not built yet and submits the transfer.
+   * wallet if it is not built yet and submits it.
    */
   async function palmWalletSignature(op, user, body) {
     const account = await one('accountOn', op.wallet_user_id, op.network);
     if (account?.lock_kind !== 'palm' || !account.required) throw new HttpError(409, 'That account is not a Palm Wallet.');
     const pw = palmWalletOf(account);
     const stored = JSON.parse(op.payload);
-    if (stored.chain !== 'evm-palm' || String(stored.wallet).toLowerCase() !== pw.address) {
+    if (stored.chain !== 'evm-palm' || String(stored.wallet).toLowerCase() !== pw.address || Number(stored.chainId) !== pw.chainId) {
       throw new HttpError(409, 'That request is not for this Palm Wallet.');
     }
-    const digest = evmTransferDigest({ chainId: pw.chainId, wallet: pw.address, transfer: stored.transfer });
-    if (digest !== stored.transactionHash || digest !== JSON.parse(op.details).transaction_hash) {
-      throw new HttpError(409, 'The stored transfer no longer matches the one that was approved.');
+    const digests = palmWalletDigests(stored);
+    if (digests.approved !== stored.transactionHash || digests.approved !== JSON.parse(op.details).transaction_hash) {
+      throw new HttpError(409, 'The stored request no longer matches the one that was approved.');
     }
-    const member = await one('memberIn', op.wallet_user_id, user.id);
-    if (!member?.public_key || !pw.keys.includes(member.public_key)) {
-      throw new HttpError(403, 'Your key is not one of the ones this wallet is locked to.');
-    }
+    const members = await all('membersOf', op.wallet_user_id);
+    const holders = keyHoldersOf(account, members);
+    const holder = holders.find(m => m.member_id === user.id);
+    if (!holder) throw new HttpError(403, 'Your key is not one of the ones this wallet is locked to.');
     const approvals = await all('approvalsOf', op.id);
     if (!approvals.some(a => a.user_id === user.id && a.status === 'approved')) throw new HttpError(409, 'Put your palm to this request first.');
 
     const collected = collectedOf(op);
-    const signerAddress = evmAddressOfPublicKey(member.public_key);
+    const signerAddress = evmAddressOfPublicKey(holder.public_key);
     if (body.signature !== undefined && !collected[signerAddress]) {
-      const typed = eip712TransferDigest({ chainId: pw.chainId, wallet: pw.address, transfer: stored.transfer });
       let from;
       try {
-        from = recoverAddress(typed, String(body.signature));
+        from = recoverAddress(digests.typed, String(body.signature));
       } catch (error) {
         throw new HttpError(400, error instanceof PalmWalletError ? error.message : 'That is not a signature.');
       }
@@ -4281,39 +4509,47 @@ export function createApp(options) {
       throw new HttpError(409, 'The palm signer no longer holds this wallet\'s palm key. Nothing was signed.');
     }
     const subjects = [];
-    for (const holder of keyHoldersOf(account, await all('membersOf', op.wallet_user_id))) {
-      const person = await one('userById', holder.member_id);
-      if (person?.sub) subjects.push([person.sub, approvalSubject(person.sub)]);
+    for (const person of holders) {
+      const who = await one('userById', person.member_id);
+      if (who?.sub) subjects.push([who.sub, approvalSubject(who.sub)]);
     }
+    const request = {
+      vaultId: account.palm_vault_id,
+      wallet: { address: pw.address, chainId: pw.chainId, threshold: pw.threshold, signerSubs: subjects },
+      action: { statement: op.statement, details: JSON.parse(op.details) },
+      decisions: approvals.filter(a => a.status === 'approved' && !a.invalidated_at && a.decision_token).map(a => a.decision_token),
+    };
     let palm;
     try {
-      palm = signer.signEvmTransfer({
-        vaultId: account.palm_vault_id,
-        wallet: { address: pw.address, chainId: pw.chainId, threshold: pw.threshold, signerSubs: subjects },
-        transfer: stored.transfer,
-        action: { statement: op.statement, details: JSON.parse(op.details) },
-        decisions: approvals.filter(a => a.status === 'approved' && !a.invalidated_at && a.decision_token).map(a => a.decision_token),
-      });
+      palm = stored.kind === 'refresh'
+        ? signer.signEvmRefresh({ ...request, refresh: stored.refresh })
+        : signer.signEvmTransfer({ ...request, transfer: stored.transfer });
     } catch (error) {
       if (error instanceof PalmRefused) throw new HttpError(409, `The palm key refused to sign: ${error.message}.`);
       throw error;
     }
     const ordered = Object.keys(collected).sort().slice(0, pw.threshold).map(address => collected[address]);
-    const txid = await relay(op.network, pw, transferCallOf(stored.transfer, ordered, palm.signature));
+    const data = stored.kind === 'refresh'
+      ? refreshCallOf(stored.refresh, ordered, palm.signature)
+      : transferCallOf(stored.transfer, ordered, palm.signature);
+    const txid = await relay(op.network, pw, data, stored.kind === 'refresh' ? 'refresh' : 'transfer');
+    // What building the wallet cost has now been paid back by this request's network fee.
+    if (account.deploy_owed) await query('setDeployOwed', null, op.wallet_user_id, op.network);
     await query('finishOperation', 'done', txid, null, now(), op.id);
     await appendEvidence(EVIDENCE.BROADCAST_ACCEPTED, {
       actor: user.id, subjectKind: 'operation', subjectId: op.id,
-      userId: user.id, vaultId: pw.address, kind: 'withdraw', network: op.network, chain: 'evm', txid, transactionHash: digest,
+      userId: user.id, vaultId: pw.address, kind: 'withdraw', network: op.network, chain: 'evm', txid, transactionHash: digests.approved,
     });
     return { signatures, required: pw.threshold, txid };
   }
 
   /**
-   * The gas account sends a call to a palm wallet, building the wallet first if it is not built.
-   * The two go out back to back, the second with the next nonce, so a first payment needs no
-   * waiting in between.
+   * The gas account sends a call to a palm wallet, building the wallet first if it is not built
+   * (`data` null: only build it). Its balance is checked before anything leaves this server, and
+   * a signed call is never handed to the network service to estimate: the gas it may use is fixed,
+   * so a payment exists outside this server only once it is really sent.
    */
-  async function relay(networkId, pw, data) {
+  async function relay(networkId, pw, data, kind) {
     const gas = gasAccount();
     if (!gas) throw new HttpError(503, 'The gas account needs WALLET_SEED.');
     const net = NETWORKS[networkId];
@@ -4322,11 +4558,8 @@ export function createApp(options) {
     try {
       const [code, nonce, fees, balance] = await Promise.all([evm.code(pw.address), evm.nonce(gas.address), evm.fees(), evm.balance(gas.address)]);
       const built = code !== '0x';
-      const deploy = built ? null : deployCallOf(pw, pw.salt);
-      const deployGas = built ? 0n : BigInt(await evm.estimateGas({ from: gas.address, to: DEPLOYER, data: deploy })) * 6n / 5n;
-      const callGas = built
-        ? BigInt(await evm.estimateGas({ from: gas.address, to: pw.address, data })) * 6n / 5n
-        : 300000n; // the wallet is not there to estimate against until the first transaction lands
+      const deployGas = built ? 0n : GAS.deploy.limit;
+      const callGas = data === null ? 0n : (kind === 'refresh' ? GAS.refresh.limit : GAS.transfer.limit) + GAS.perSigner * BigInt(pw.threshold);
       if (BigInt(balance) < (deployGas + callGas) * BigInt(fees.maxFeePerGas)) throw new HttpError(409, empty);
       const send = async (to, callData, gasLimit, n) => {
         const { raw } = signRelayed({
@@ -4336,8 +4569,10 @@ export function createApp(options) {
         return evm.broadcast(raw);
       };
       let next = BigInt(nonce);
-      if (!built) await send(DEPLOYER, deploy, deployGas, next++);
-      return await send(pw.address, data, callGas, next);
+      let sent = null;
+      if (!built) sent = await send(DEPLOYER, deployCallOf(pw, pw.salt), deployGas, next++);
+      if (data !== null) sent = await send(pw.address, data, callGas, next);
+      return sent;
     } catch (error) {
       if (error instanceof HttpError) throw error;
       if (error instanceof EvmChainError) {
@@ -4346,6 +4581,27 @@ export function createApp(options) {
       }
       throw error;
     }
+  }
+
+  /** This person's own palm decisions for a request, for their browser to check against Veyns itself. */
+  async function palmProofFor(op, user) {
+    const mine = (await all('myApprovals', op.id, user.id)).filter(a => a.status === 'approved' && a.decision_token);
+    return { palmProof: { statement: op.statement, details: JSON.parse(op.details), decisions: mine.map(a => a.decision_token) } };
+  }
+
+  /** Veyns' published keys, for a browser that cannot reach Veyns itself to check a decision. */
+  let veynsKeysCache = { at: 0, keys: null };
+  async function veynsKeys() {
+    if (!veynsKeysCache.keys || now() - veynsKeysCache.at > 3600) {
+      try {
+        const response = await fetchImpl(`${issuer}/jwks.json`, { signal: AbortSignal.timeout(10_000) });
+        if (!response.ok) throw new Error(`status ${response.status}`);
+        veynsKeysCache = { at: now(), keys: (await response.json()).keys ?? [] };
+      } catch {
+        throw new HttpError(502, 'Could not load the Veyns signing keys.');
+      }
+    }
+    return { issuer, audience: clientId, keys: veynsKeysCache.keys };
   }
 
   async function ownOperation(id, user) {
@@ -4559,6 +4815,7 @@ export function createApp(options) {
     { method: 'POST', path: '/api/recovery-door/plan', handler: recoveryDoorPlan, auth: true, limit: RATE.spend },
     { method: 'POST', path: '/api/recovery-door/send', handler: recoveryDoorSend, auth: true, limit: RATE.unlock },
     { method: 'GET', path: '/api/cron/reminders', handler: sendReminders },
+    { method: 'GET', path: '/api/veyns-keys', handler: veynsKeys, auth: true, limit: RATE.upstream },
     { method: 'POST', path: '/api/vault/unfreeze/approval', handler: requestUnfreeze, auth: true, limit: RATE.palm },
     { method: 'POST', path: '/api/push/subscribe', handler: subscribePush, auth: true, limit: RATE.write },
     { method: 'POST', path: '/api/push/unsubscribe', handler: unsubscribePush, auth: true, limit: RATE.write },

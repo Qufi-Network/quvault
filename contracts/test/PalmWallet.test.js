@@ -1,8 +1,11 @@
 /*
  * PalmWallet on a local Ethereum chain. The palm signatures here come from Palm's own palm
- * signer (src/palm-signer.js) given real ES256 palm decisions, and the digests from
- * src/palm-wallet.js, so these tests check that the off-chain code and the contract agree on
- * every byte, not just that the contract works with signatures made the contract's way.
+ * signer (src/palm-signer.js) given real ES256 palm decisions, the digests and every call from
+ * src/palm-wallet.js, and wallets are deployed the way the app deploys them, through the CREATE2
+ * proxy, so these tests check that the off-chain code and the contract agree on every byte.
+ *
+ * The attacks an independent audit found against the first version are replayed at the end, and
+ * must all fail now.
  */
 const { expect } = require('chai');
 const { ethers } = require('hardhat');
@@ -11,12 +14,19 @@ const crypto = require('node:crypto');
 const ISSUER = 'https://issuer.test';
 const AUDIENCE = 'palm-test';
 const DAY = 24 * 3600;
+// Arachnid's deterministic deployment proxy, as it sits at 0x4e59…956c on Sepolia and BSC testnet.
+const PROXY = '0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3';
 
 let pw;
 let signerModule;
+let relayer;
+let actionDigest;
 before(async () => {
   pw = await import('../../src/palm-wallet.js');
   signerModule = await import('../../src/palm-signer.js');
+  relayer = await import('../../src/palm-relayer.js');
+  ({ actionDigest } = await import('../../src/veyns.js'));
+  await ethers.provider.send('hardhat_setCode', [pw.DEPLOYER, PROXY]);
 });
 
 /** Stands in for Veyns: real ES256 decision tokens, signed with a key the palm signer pins. */
@@ -37,10 +47,8 @@ function mockVeyns() {
   };
   return { jwk, decision };
 }
-let actionDigest;
-before(async () => { ({ actionDigest } = await import('../../src/veyns.js')); });
 
-/** The call reverts with the contract's custom error , and nothing else counts. */
+/** The call reverts with the contract's custom error, and nothing else counts. */
 async function reverts(promise, contract, name) {
   try {
     const tx = await promise;
@@ -55,271 +63,321 @@ async function reverts(promise, contract, name) {
   throw new Error(`expected ${name}, but it did not revert`);
 }
 
-const sortByAddress = wallets => [...wallets].sort((a, b) => (BigInt(a.address) < BigInt(b.address) ? -1 : 1));
-const signWith = (wallet, digest) => wallet.signingKey.sign(digest).serialized;
+const now = async () => (await ethers.provider.getBlock('latest')).timestamp;
+const later = async seconds => { await ethers.provider.send('evm_increaseTime', [seconds]); await ethers.provider.send('evm_mine', []); };
+const byAddress = (a, b) => (BigInt(a.address) < BigInt(b.address) ? -1 : 1);
 
-/** A deployed Palm Wallet with `count` signers, `threshold`, its palm signer, and some coin. */
-async function deployed({ count = 1, threshold = 1, delay = 30 * DAY, fund = ethers.parseEther('5') } = {}) {
+/**
+ * A Palm Wallet built the app's way: `count` signers with keys the browser's signing code uses,
+ * the real palm signer (or, with `palmKey`, a raw key the test signs with directly), deployed
+ * through the CREATE2 proxy at the address src/palm-wallet.js promised, and funded.
+ */
+async function built({ count = 1, threshold = 1, days = 30, fund = ethers.parseEther('5'), palmKey = null } = {}) {
   const [payer] = await ethers.getSigners();
   const veyns = mockVeyns();
-  const palm = signerModule.createPalmSigner({
-    seed: crypto.randomBytes(32), issuer: ISSUER, audience: AUDIENCE, pinnedKeys: [veyns.jwk],
-  });
+  const palm = signerModule.createPalmSigner({ seed: crypto.randomBytes(32), issuer: ISSUER, audience: AUDIENCE, pinnedKeys: [veyns.jwk] });
   const vaultId = `vault-${crypto.randomBytes(4).toString('hex')}`;
-  const people = sortByAddress(Array.from({ length: count }, () => ethers.Wallet.createRandom()));
-  const subs = people.map((_, i) => `sub-${i}`);
-  const factory = await (await ethers.getContractFactory('PalmWalletFactory')).deploy();
-  const salt = ethers.id(vaultId);
-  const args = [people.map(p => p.address), threshold, palm.palmAddressFor(vaultId), delay, salt];
-  const predicted = await factory.addressOf(...args);
-  await (await factory.create(...args)).wait();
-  const wallet = await ethers.getContractAt('PalmWallet', predicted);
-  if (fund) await (await payer.sendTransaction({ to: predicted, value: fund })).wait();
+  const people = Array.from({ length: count }, (_, i) => {
+    const key = crypto.randomBytes(32);
+    return { key, address: pw.addressOfKey(key), sub: `sub-${i}` };
+  }).sort(byAddress);
+  const palmAddress = palmKey ? pw.addressOfKey(palmKey) : palm.palmAddressFor(vaultId);
+  const params = pw.walletParams({ signers: people.map(p => p.address), threshold, palmSigner: palmAddress, recoveryDays: days });
+  const salt = pw.walletSalt(vaultId);
+  const address = pw.walletAddressOf(params, salt);
+  await (await payer.sendTransaction({ to: pw.DEPLOYER, data: pw.deployCallOf(params, salt) })).wait();
+  const wallet = await ethers.getContractAt('PalmWallet', address);
+  if (fund) await (await payer.sendTransaction({ to: address, value: fund })).wait();
   const chainId = Number((await ethers.provider.getNetwork()).chainId);
-  return { payer, veyns, palm, vaultId, people, subs, wallet, address: predicted, chainId, threshold };
+  return { payer, veyns, palm, palmKey, vaultId, people, wallet, address, chainId, threshold, params };
 }
 
-/** What the app would put in front of a person, and the palm signer's signature for it. */
-function approve(ctx, transfer, { approvers = ctx.subs.slice(0, ctx.threshold), tweak = {} } = {}) {
+/** A payment as the app makes one: Palm's 0.1% fee, a network fee refund, a two hour deadline. */
+async function payment(ctx, { to, amount, token = pw.NATIVE, feeTo = null, gasRefund = '0', nonce = null, deadline = null, fee = null }) {
+  return pw.normalTransfer({
+    token, to, amount: String(amount),
+    fee: fee ?? (BigInt(amount) / 1000n).toString(), feeTo: feeTo ?? ctx.payer.address,
+    gasRefund: String(gasRefund), deadline: String(deadline ?? (await now()) + 7200),
+    nonce: String(nonce ?? await ctx.wallet.nonce()),
+  });
+}
+
+/** What the app puts in front of a person, and the palm signer's signature for it. */
+function approve(ctx, transfer, { approvers = ctx.people.slice(0, ctx.threshold).map(p => p.sub), tweak = {} } = {}) {
   const t = pw.normalTransfer(transfer);
   const details = {
     action: 'withdraw', network: 'ethereum', wallet: ctx.address, to: t.to,
-    token: t.token === pw.NATIVE ? 'native' : t.token, amount_units: t.amount, chain_id: String(ctx.chainId),
+    token: t.token === pw.NATIVE ? 'native' : t.token, amount_units: t.amount,
+    palm_fee_units: t.fee, palm_fee_to: t.feeTo, network_fee_units: t.gasRefund, chain_id: String(ctx.chainId),
     transaction_hash: pw.evmTransferDigest({ chainId: ctx.chainId, wallet: ctx.address, transfer: t }),
     ...tweak,
   };
   const action = { statement: `Send ${t.amount} to ${t.to}`, details };
   return ctx.palm.signEvmTransfer({
     vaultId: ctx.vaultId,
-    wallet: { address: ctx.address, chainId: ctx.chainId, threshold: ctx.threshold, signerSubs: ctx.subs },
-    transfer: t,
-    action,
-    decisions: approvers.map(sub => ctx.veyns.decision(sub, action)),
+    wallet: { address: ctx.address, chainId: ctx.chainId, threshold: ctx.threshold, signerSubs: ctx.people.map(p => p.sub) },
+    transfer: t, action, decisions: approvers.map(sub => ctx.veyns.decision(sub, action)),
+  });
+}
+
+function approveRefresh(ctx, refresh, approvers = ctx.people.slice(0, ctx.threshold).map(p => p.sub)) {
+  const r = pw.normalRefresh(refresh);
+  const details = {
+    action: 'refresh the wallet', wallet: ctx.address, chain_id: String(ctx.chainId), network_fee_units: r.gasRefund,
+    transaction_hash: pw.evmRefreshDigest({ chainId: ctx.chainId, wallet: ctx.address, refresh: r }),
+  };
+  const action = { statement: 'Refresh my wallet', details };
+  return ctx.palm.signEvmRefresh({
+    vaultId: ctx.vaultId,
+    wallet: { address: ctx.address, chainId: ctx.chainId, threshold: ctx.threshold, signerSubs: ctx.people.map(p => p.sub) },
+    refresh: r, action, decisions: approvers.map(sub => ctx.veyns.decision(sub, action)),
   });
 }
 
 const digestOf = (ctx, transfer) => pw.eip712TransferDigest({ chainId: ctx.chainId, wallet: ctx.address, transfer });
+const signersSign = (people, digest) => [...people].sort(byAddress).map(p => pw.signDigest(digest, p.key));
+const send = (ctx, data, from = ctx.payer) => from.sendTransaction({ to: ctx.address, data, gasLimit: 500_000 });
 
-describe('PalmWallet', () => {
-  it('lands at the address the factory promised, and agrees with Palm on the digest', async () => {
-    const ctx = await deployed();
+describe('PalmWallet v2', () => {
+  it('lands at the address the app promised, and agrees with the app on every digest', async () => {
+    const ctx = await built();
     expect(await ethers.provider.getBalance(ctx.address)).to.equal(ethers.parseEther('5'));
     expect(await ctx.wallet.palmSigner()).to.equal(ethers.getAddress(ctx.palm.palmAddressFor(ctx.vaultId)));
-    const transfer = { token: pw.NATIVE, to: ctx.payer.address, amount: '1000', nonce: '0' };
-    const onChain = await ctx.wallet.transferDigest(pw.NATIVE, ctx.payer.address, 1000n, 0n);
-    expect(onChain).to.equal(`0x${Buffer.from(digestOf(ctx, transfer)).toString('hex')}`);
+    const t = await payment(ctx, { to: ctx.payer.address, amount: 1_000_000 });
+    const onChain = await ctx.wallet.transferDigest([t.token, t.to, t.amount, t.fee, t.feeTo, t.gasRefund, t.deadline], t.nonce);
+    expect(onChain).to.equal(`0x${Buffer.from(digestOf(ctx, t)).toString('hex')}`);
+    const r = pw.normalRefresh({ gasRefund: '7', deadline: '99', nonce: '3' });
+    expect(await ctx.wallet.refreshDigest(7n, 99n, 3n)).to.equal(`0x${Buffer.from(pw.eip712RefreshDigest({ chainId: ctx.chainId, wallet: ctx.address, refresh: r })).toString('hex')}`);
+    const rec = { token: pw.NATIVE, to: ctx.payer.address, amount: '5', deadline: '9', nonce: '1' };
+    expect(await ctx.wallet.recoveryDigest(rec.token, rec.to, 5n, 9n, 1n)).to.equal(`0x${Buffer.from(pw.eip712RecoveryDigest({ chainId: ctx.chainId, wallet: ctx.address, recovery: rec })).toString('hex')}`);
   });
 
-  it('sends with the signer and the palm key, both checked by the contract', async () => {
-    const ctx = await deployed();
+  it('pays the payee, Palm its 0.1%, and refunds the network fee to whoever submitted it', async () => {
+    const ctx = await built();
+    const [, submitter, feeBox] = await ethers.getSigners();
     const to = ethers.Wallet.createRandom().address;
-    const transfer = { token: pw.NATIVE, to, amount: ethers.parseEther('1').toString(), nonce: '0' };
-    const { signature: palmSig } = approve(ctx, transfer);
-    await (await ctx.wallet.transfer(pw.NATIVE, to, ethers.parseEther('1'), [signWith(ctx.people[0], digestOf(ctx, transfer))], palmSig)).wait();
+    const t = await payment(ctx, { to, amount: ethers.parseEther('1'), feeTo: feeBox.address, gasRefund: ethers.parseEther('0.01') });
+    const { signature } = approve(ctx, t);
+    const feeBefore = await ethers.provider.getBalance(feeBox.address);
+    const subBefore = await ethers.provider.getBalance(submitter.address);
+    const receipt = await (await send(ctx, pw.transferCallOf(t, signersSign(ctx.people, digestOf(ctx, t)), signature), submitter)).wait();
     expect(await ethers.provider.getBalance(to)).to.equal(ethers.parseEther('1'));
+    expect(await ethers.provider.getBalance(feeBox.address) - feeBefore).to.equal(ethers.parseEther('0.001'));
+    const gasCost = receipt.gasUsed * receipt.gasPrice;
+    expect(await ethers.provider.getBalance(submitter.address) - subBefore + gasCost).to.equal(ethers.parseEther('0.01'));
     expect(await ctx.wallet.nonce()).to.equal(1n);
   });
 
   it('refuses the signer alone, and a palm signature from any other key', async () => {
-    const ctx = await deployed();
-    const to = ethers.Wallet.createRandom().address;
-    const transfer = { token: pw.NATIVE, to, amount: '1000', nonce: '0' };
-    const mine = signWith(ctx.people[0], digestOf(ctx, transfer));
-    await reverts(ctx.wallet.transfer(pw.NATIVE, to, 1000n, [mine], mine), ctx.wallet, 'NoPalm');
-    const thief = ethers.Wallet.createRandom();
-    await reverts(ctx.wallet.transfer(pw.NATIVE, to, 1000n, [mine], signWith(thief, digestOf(ctx, transfer))), ctx.wallet, 'NoPalm');
+    const ctx = await built();
+    const t = await payment(ctx, { to: ctx.payer.address, amount: 1000 });
+    const sigs = signersSign(ctx.people, digestOf(ctx, t));
+    await reverts(send(ctx, pw.transferCallOf(t, sigs, sigs[0])), ctx.wallet, 'NoPalm');
+    await reverts(send(ctx, pw.transferCallOf(t, sigs, pw.signDigest(digestOf(ctx, t), crypto.randomBytes(32)))), ctx.wallet, 'NoPalm');
   });
 
-  it('a palm signature is for one transfer: not another amount, payee, nonce or wallet', async () => {
-    const ctx = await deployed();
-    const other = await deployed();
-    const to = ethers.Wallet.createRandom().address;
-    const transfer = { token: pw.NATIVE, to, amount: '1000', nonce: '0' };
-    const { signature: palmSig } = approve(ctx, transfer);
-    const mine = signWith(ctx.people[0], digestOf(ctx, transfer));
-    await expect(ctx.wallet.transfer(pw.NATIVE, to, 2000n, [mine], palmSig), ctx.wallet, 'NoPalm');
-    await reverts(ctx.wallet.transfer(pw.NATIVE, ctx.payer.address, 1000n, [mine], palmSig), ctx.wallet, 'NoPalm');
-    await reverts(other.wallet.transfer(pw.NATIVE, to, 1000n, [mine], palmSig), other.wallet, 'NoPalm');
-    await (await ctx.wallet.transfer(pw.NATIVE, to, 1000n, [mine], palmSig)).wait();
-    await reverts(ctx.wallet.transfer(pw.NATIVE, to, 1000n, [mine], palmSig), ctx.wallet, 'NoPalm');
+  it('a palm signature is for one payment: not another amount, payee, fee, refund, deadline, nonce or wallet', async () => {
+    const ctx = await built();
+    const t = await payment(ctx, { to: ctx.payer.address, amount: 100_000, gasRefund: 5 });
+    const { signature } = approve(ctx, t);
+    const variants = [
+      { ...t, amount: '100001' }, { ...t, to: ethers.Wallet.createRandom().address.toLowerCase() }, { ...t, fee: '99' },
+      { ...t, feeTo: ethers.Wallet.createRandom().address.toLowerCase() }, { ...t, gasRefund: '6' },
+      { ...t, deadline: String(BigInt(t.deadline) + 1n) },
+    ];
+    for (const v of variants) await reverts(send(ctx, pw.transferCallOf(v, signersSign(ctx.people, digestOf(ctx, v)), signature)), ctx.wallet, 'NoPalm');
+    const other = await built();
+    await reverts(send(other, pw.transferCallOf(t, signersSign(other.people, digestOf(other, t)), signature)), other.wallet, 'NoPalm');
+    await (await send(ctx, pw.transferCallOf(t, signersSign(ctx.people, digestOf(ctx, t)), signature))).wait();
+    await reverts(send(ctx, pw.transferCallOf(t, signersSign(ctx.people, digestOf(ctx, t)), signature)), ctx.wallet, 'NoPalm');
   });
 
   it('a shared wallet needs that many different signers, in order, plus the palm', async () => {
-    const ctx = await deployed({ count: 3, threshold: 2 });
-    const to = ethers.Wallet.createRandom().address;
-    const transfer = { token: pw.NATIVE, to, amount: '1000', nonce: '0' };
-    const { signature: palmSig } = approve(ctx, transfer);
-    const d = digestOf(ctx, transfer);
+    const ctx = await built({ count: 3, threshold: 2 });
+    const t = await payment(ctx, { to: ctx.payer.address, amount: 1000 });
+    const { signature } = approve(ctx, t);
+    const d = digestOf(ctx, t);
     const [a, b] = ctx.people;
-    await reverts(ctx.wallet.transfer(pw.NATIVE, to, 1000n, [signWith(a, d)], palmSig), ctx.wallet, 'NotEnoughSigners');
-    await reverts(ctx.wallet.transfer(pw.NATIVE, to, 1000n, [signWith(a, d), signWith(a, d)], palmSig), ctx.wallet, 'NotADistinctSigner');
-    await reverts(ctx.wallet.transfer(pw.NATIVE, to, 1000n, [signWith(b, d), signWith(a, d)], palmSig), ctx.wallet, 'NotADistinctSigner');
-    const stranger = sortByAddress([ethers.Wallet.createRandom(), a]);
-    await reverts(ctx.wallet.transfer(pw.NATIVE, to, 1000n, stranger.map(w => signWith(w, d)), palmSig), ctx.wallet, 'NotADistinctSigner');
-    await (await ctx.wallet.transfer(pw.NATIVE, to, 1000n, [signWith(a, d), signWith(b, d)], palmSig)).wait();
-    expect(await ethers.provider.getBalance(to)).to.equal(1000n);
+    await reverts(send(ctx, pw.transferCallOf(t, [pw.signDigest(d, a.key)], signature)), ctx.wallet, 'NotEnoughSigners');
+    await reverts(send(ctx, pw.transferCallOf(t, [pw.signDigest(d, a.key), pw.signDigest(d, a.key)], signature)), ctx.wallet, 'NotADistinctSigner');
+    await reverts(send(ctx, pw.transferCallOf(t, [pw.signDigest(d, b.key), pw.signDigest(d, a.key)], signature)), ctx.wallet, 'NotADistinctSigner');
+    await (await send(ctx, pw.transferCallOf(t, [pw.signDigest(d, a.key), pw.signDigest(d, b.key)], signature))).wait();
   });
 
-  it('sends ERC-20 tokens the same way', async () => {
-    const ctx = await deployed({ fund: 0n });
+  it('sends ERC-20 tokens the same way, Palm\'s fee in the same token', async () => {
+    const ctx = await built();
     const token = await (await ethers.getContractFactory('TestToken')).deploy();
-    await (await token.mint(ctx.address, 500n)).wait();
+    await (await token.mint(ctx.address, 1_000_000n)).wait();
+    const [, , feeBox] = await ethers.getSigners();
     const to = ethers.Wallet.createRandom().address;
-    const transfer = { token: await token.getAddress(), to, amount: '200', nonce: '0' };
-    const { signature: palmSig } = approve(ctx, transfer);
-    await (await ctx.wallet.transfer(transfer.token, to, 200n, [signWith(ctx.people[0], digestOf(ctx, transfer))], palmSig)).wait();
-    expect(await token.balanceOf(to)).to.equal(200n);
+    const t = await payment(ctx, { to, amount: 500_000, token: await token.getAddress(), feeTo: feeBox.address });
+    const { signature } = approve(ctx, t);
+    await (await send(ctx, pw.transferCallOf(t, signersSign(ctx.people, digestOf(ctx, t)), signature))).wait();
+    expect(await token.balanceOf(to)).to.equal(500_000n);
+    expect(await token.balanceOf(feeBox.address)).to.equal(500n);
   });
 
-  it('the palm signer will not sign what a person did not read', async () => {
-    const ctx = await deployed();
-    const transfer = { token: pw.NATIVE, to: ethers.Wallet.createRandom().address, amount: '1000', nonce: '0' };
-    const refusedFor = tweak => {
-      try {
-        approve(ctx, transfer, { tweak });
-        return null;
-      } catch (error) {
-        return error instanceof signerModule.PalmRefused ? error.message : `not a refusal: ${error.message}`;
-      }
+  it('the palm signer will not sign what a person did not read: payee, amount, fee or its recipient, network fee', async () => {
+    const ctx = await built();
+    const t = await payment(ctx, { to: ctx.payer.address, amount: 100_000, gasRefund: 5 });
+    for (const tweak of [{ to: ethers.Wallet.createRandom().address }, { amount_units: '1' }, { palm_fee_units: '1' },
+      { palm_fee_to: ethers.Wallet.createRandom().address }, { network_fee_units: '4' }, { token: ethers.Wallet.createRandom().address }]) {
+      expect(() => approve(ctx, t, { tweak })).to.throw(signerModule.PalmRefused);
+    }
+    // And never a fee above 0.1%: the app's encoder refuses to build one, and so does the palm signer.
+    expect(() => approve(ctx, { ...t, fee: '101' })).to.throw(/0\.1%/);
+    expect(() => ctx.palm.signEvmTransfer({
+      vaultId: ctx.vaultId, wallet: { address: ctx.address, chainId: ctx.chainId, threshold: 1, signerSubs: ['sub-0'] },
+      transfer: { ...t, fee: '101' }, action: { statement: 'x', details: {} }, decisions: [],
+    })).to.throw(signerModule.PalmRefused);
+  });
+
+  it('the contract caps Palm\'s fee at 0.1% even with every signature, refuses expired payments and fake tokens', async () => {
+    const palmKey = crypto.randomBytes(32);
+    const ctx = await built({ palmKey });
+    const deadline = String((await now()) + 7200);
+    const raw = { token: pw.NATIVE, to: ctx.payer.address, amount: '100000', fee: '101', feeTo: ctx.payer.address, gasRefund: '0', deadline, nonce: '0' };
+    // Built by hand, because the app's own encoder will not even produce this.
+    const iface = ctx.wallet.interface;
+    const digest = await ctx.wallet.transferDigest([raw.token, raw.to, raw.amount, raw.fee, raw.feeTo, raw.gasRefund, raw.deadline], 0n);
+    const sign = key => pw.signDigest(ethers.getBytes(digest), key);
+    const data = iface.encodeFunctionData('transfer', [[raw.token, raw.to, raw.amount, raw.fee, raw.feeTo, raw.gasRefund, raw.deadline], [sign(ctx.people[0].key)], sign(palmKey)]);
+    await reverts(send(ctx, data), ctx.wallet, 'FeeTooHigh');
+
+    const old = await payment(ctx, { to: ctx.payer.address, amount: 1000, deadline: (await now()) - 1 });
+    const d = digestOf(ctx, old);
+    await reverts(send(ctx, pw.transferCallOf(old, [pw.signDigest(d, ctx.people[0].key)], pw.signDigest(d, palmKey))), ctx.wallet, 'Expired');
+
+    const fake = await payment(ctx, { to: ctx.payer.address, amount: 1000, token: ethers.Wallet.createRandom().address });
+    const fd = digestOf(ctx, fake);
+    await reverts(send(ctx, pw.transferCallOf(fake, [pw.signDigest(fd, ctx.people[0].key)], pw.signDigest(fd, palmKey))), ctx.wallet, 'NotAToken');
+    expect(await ctx.wallet.nonce()).to.equal(0n, 'nothing used a nonce');
+  });
+
+  it('recovery opens only after the palm has approved nothing for the delay, and the signers alone then move the coins', async () => {
+    const ctx = await built({ days: 30 });
+    const thief = ethers.Wallet.createRandom().address;
+    const recovery = async () => {
+      const r = { token: pw.NATIVE, to: thief, amount: ethers.parseEther('5').toString(), deadline: String((await now()) + 3600), nonce: String(await ctx.wallet.nonce()) };
+      return pw.recoverCallOf(r, signersSign(ctx.people, pw.eip712RecoveryDigest({ chainId: ctx.chainId, wallet: ctx.address, recovery: r })));
     };
-    expect(refusedFor({ to: ctx.payer.address })).to.match(/payee/);
-    expect(refusedFor({ amount_units: '999' })).to.match(/amount/);
-    expect(refusedFor({ token: ctx.payer.address })).to.match(/asset/);
-    expect(refusedFor({ wallet: ctx.payer.address })).to.match(/different wallet/);
-    expect(refusedFor({ chain_id: '1' })).to.match(/different chain/);
-    expect(refusedFor({ transaction_hash: 'x'.repeat(43) })).to.match(/different transfer/);
-    expect(() => approve(ctx, transfer, { approvers: [] })).to.throw(/needs 1 palm approval/);
+    await reverts(send(ctx, await recovery()), ctx.wallet, 'NotYetDormant');
+    await later(29 * DAY);
+    await reverts(send(ctx, await recovery()), ctx.wallet, 'NotYetDormant');
+    expect(await ctx.wallet.nonce()).to.equal(0n, 'trying changed nothing');
+    await later(2 * DAY);
+    await (await send(ctx, await recovery())).wait();
+    expect(await ethers.provider.getBalance(thief)).to.equal(ethers.parseEther('5'));
   });
 
-  it('recovery: the signers alone can schedule, only after the delay does it run, and the palm can cancel', async () => {
-    const ctx = await deployed({ delay: 30 * DAY });
-    const to = ethers.Wallet.createRandom().address;
-    const sign = nonce => signWith(ctx.people[0], pw.eip712RecoveryDigest({
-      chainId: ctx.chainId, wallet: ctx.address, transfer: { token: pw.NATIVE, to, amount: '1000', nonce },
-    }));
-
-    const id = await ctx.wallet.scheduleRecovery.staticCall(pw.NATIVE, to, 1000n, [sign('0')]);
-    await (await ctx.wallet.scheduleRecovery(pw.NATIVE, to, 1000n, [sign('0')])).wait();
-    await reverts(ctx.wallet.executeRecovery(id), ctx.wallet, 'TooEarly');
-    await ethers.provider.send('evm_increaseTime', [30 * DAY]);
-    await ethers.provider.send('evm_mine', []);
-    await (await ctx.wallet.executeRecovery(id)).wait();
-    expect(await ethers.provider.getBalance(to)).to.equal(1000n);
-
-    // A thief with the phrase schedules one; the palm path cancels it before it can run.
-    const stolen = await ctx.wallet.scheduleRecovery.staticCall(pw.NATIVE, to, 2000n, [signWith(ctx.people[0], pw.eip712RecoveryDigest({
-      chainId: ctx.chainId, wallet: ctx.address, transfer: { token: pw.NATIVE, to, amount: '2000', nonce: '1' },
-    }))]);
-    await (await ctx.wallet.scheduleRecovery(pw.NATIVE, to, 2000n, [signWith(ctx.people[0], pw.eip712RecoveryDigest({
-      chainId: ctx.chainId, wallet: ctx.address, transfer: { token: pw.NATIVE, to, amount: '2000', nonce: '1' },
-    }))])).wait();
-    const cancelHash = (await import('../../src/veyns.js')).transactionDigest({
-      v: 1, kind: 'palm-wallet-cancel', chainId: String(ctx.chainId), wallet: ctx.address.toLowerCase(), id: stolen.toLowerCase(), nonce: '2',
-    });
-    const action = { statement: 'Cancel the scheduled transfer', details: { action: 'cancel a scheduled transfer', transaction_hash: cancelHash } };
-    const { signature } = ctx.palm.signEvmCancel({
-      vaultId: ctx.vaultId, wallet: { address: ctx.address, chainId: ctx.chainId, signerSubs: ctx.subs },
-      id: stolen, nonce: '2', action, decisions: [ctx.veyns.decision(ctx.subs[0], action)],
-    });
-    await (await ctx.wallet.cancelRecovery(stolen, signature)).wait();
-    await ethers.provider.send('evm_increaseTime', [30 * DAY]);
-    await ethers.provider.send('evm_mine', []);
-    await reverts(ctx.wallet.executeRecovery(stolen), ctx.wallet, 'NothingScheduled');
+  it('a refresh needs the signers and the palm, refunds its network fee, and closes the recovery path again', async () => {
+    const ctx = await built({ days: 30 });
+    await later(25 * DAY);
+    const r = pw.normalRefresh({ gasRefund: '1000', deadline: String((await now()) + 3600), nonce: '0' });
+    const d = pw.eip712RefreshDigest({ chainId: ctx.chainId, wallet: ctx.address, refresh: r });
+    const { signature } = approveRefresh(ctx, r);
+    await reverts(send(ctx, pw.refreshCallOf(r, [], signature)), ctx.wallet, 'NotEnoughSigners');
+    await reverts(send(ctx, pw.refreshCallOf(r, signersSign(ctx.people, d), signersSign(ctx.people, d)[0])), ctx.wallet, 'NoPalm');
+    await (await send(ctx, pw.refreshCallOf(r, signersSign(ctx.people, d), signature))).wait();
+    const opens = await ctx.wallet.recoveryOpensAt();
+    expect(opens).to.equal(BigInt(await now()) + BigInt(30 * DAY));
   });
 
   it('refuses a wallet that could be spent by one signature, or that is set up wrong', async () => {
-    const Wallet = await ethers.getContractFactory('PalmWallet');
-    const people = sortByAddress([ethers.Wallet.createRandom(), ethers.Wallet.createRandom()]).map(p => p.address);
-    const palmAddr = ethers.Wallet.createRandom().address;
-    await reverts(Wallet.deploy(people, 1, palmAddr, 30 * DAY), Wallet, 'BadSetup');
-    await reverts(Wallet.deploy([...people].reverse(), 2, palmAddr, 30 * DAY), Wallet, 'BadSetup');
-    await reverts(Wallet.deploy(people, 2, people[0], 30 * DAY), Wallet, 'BadSetup');
-    await reverts(Wallet.deploy(people, 2, palmAddr, 60), Wallet, 'BadSetup');
+    const [payer] = await ethers.getSigners();
+    const factory = await ethers.getContractFactory('PalmWallet');
+    const a = ethers.Wallet.createRandom().address;
+    const b = ethers.Wallet.createRandom().address;
+    const [lo, hi] = BigInt(a) < BigInt(b) ? [a, b] : [b, a];
+    const palm = ethers.Wallet.createRandom().address;
+    for (const args of [[[lo, hi], 1, palm, 30 * DAY], [[hi, lo], 2, palm, 30 * DAY], [[lo], 1, lo, 30 * DAY], [[lo], 1, palm, 60], [[lo], 2, palm, 30 * DAY]]) {
+      let failed = false;
+      try { await factory.connect(payer).deploy(...args); } catch { failed = true; }
+      expect(failed, JSON.stringify(args)).to.equal(true);
+    }
   });
-});
 
-/*
- * The wallet as the app makes it: no factory of ours, but the standard CREATE2 deployment proxy,
- * an address worked out by src/palm-wallet.js before anything exists, the app's own encoding of
- * every call, signers signing with the browser's signing code, and transactions signed by the
- * server's gas account. If any byte of that disagrees with the contract, this fails.
- */
-describe('Palm Wallet as the app builds it', () => {
-  // Arachnid's deterministic deployment proxy, as it sits at 0x4e59…956c on Sepolia and BSC testnet.
-  const PROXY = '0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3';
-  let relayer;
-  before(async () => { relayer = await import('../../src/palm-relayer.js'); });
-
-  /** Sends a transaction the way the server's gas account does: built and signed by the app's code. */
-  async function relayed(key, { to, data, gasLimit }) {
-    const chainId = (await ethers.provider.getNetwork()).chainId;
-    const from = relayer.relayerAddressOf(key);
-    const block = await ethers.provider.getBlock('latest');
-    const fields = {
-      chainId: chainId.toString(), nonce: String(await ethers.provider.getTransactionCount(from, 'pending')),
-      maxPriorityFeePerGas: '1000000000', maxFeePerGas: (block.baseFeePerGas * 2n + 1000000000n).toString(),
-      gasLimit: String(gasLimit), to, value: '0', data,
-    };
-    const { raw, txid } = relayer.signRelayed(fields, key);
-    const sent = await ethers.provider.send('eth_sendRawTransaction', [raw]);
-    expect(sent).to.equal(txid);
-    return ethers.provider.getTransactionReceipt(sent); // the local chain mines each transaction at once
-  }
-
-  it('is reached at its promised address, receives before it exists, and is built and spent by the gas account', async () => {
-    await ethers.provider.send('hardhat_setCode', [pw.DEPLOYER, PROXY]);
+  it('is built and spent by the gas account exactly as the app does it, coins arriving before it exists', async () => {
     const [payer] = await ethers.getSigners();
     const veyns = mockVeyns();
     const palm = signerModule.createPalmSigner({ seed: crypto.randomBytes(32), issuer: ISSUER, audience: AUDIENCE, pinnedKeys: [veyns.jwk] });
     const vaultId = `vault-${crypto.randomBytes(4).toString('hex')}`;
-    const keys = Array.from({ length: 3 }, () => crypto.randomBytes(32));
-    const people = keys.map((key, i) => ({ key, address: pw.addressOfKey(key), sub: `sub-${i}` }))
-      .sort((a, b) => (BigInt(a.address) < BigInt(b.address) ? -1 : 1));
-    const params = pw.walletParams({
-      signers: people.map(p => p.address), threshold: 2, palmSigner: palm.palmAddressFor(vaultId), recoveryDays: 30,
-    });
+    const people = Array.from({ length: 3 }, (_, i) => { const key = crypto.randomBytes(32); return { key, address: pw.addressOfKey(key), sub: `sub-${i}` }; }).sort(byAddress);
+    const params = pw.walletParams({ signers: people.map(p => p.address), threshold: 2, palmSigner: palm.palmAddressFor(vaultId), recoveryDays: 30 });
     const salt = pw.walletSalt(vaultId);
     const address = pw.walletAddressOf(params, salt);
-    expect(await ethers.provider.getCode(address)).to.equal('0x');
-
-    // Coins can arrive before the wallet exists.
     await (await payer.sendTransaction({ to: address, value: ethers.parseEther('3') })).wait();
 
-    // The gas account builds it, through the deployment proxy, at exactly that address.
     const gasKey = relayer.relayerKeyFrom(crypto.randomBytes(32).toString('base64'));
-    await (await payer.sendTransaction({ to: relayer.relayerAddressOf(gasKey), value: ethers.parseEther('1') })).wait();
-    const built = await relayed(gasKey, { to: pw.DEPLOYER, data: pw.deployCallOf(params, salt), gasLimit: 3_000_000 });
-    expect(built.status).to.equal(1);
-    expect(await ethers.provider.getCode(address)).to.not.equal('0x');
+    const gasAddress = relayer.relayerAddressOf(gasKey);
+    await (await payer.sendTransaction({ to: gasAddress, value: ethers.parseEther('1') })).wait();
+    const relayed = async (to, data, gasLimit) => {
+      const block = await ethers.provider.getBlock('latest');
+      const { raw, txid } = relayer.signRelayed({
+        chainId: (await ethers.provider.getNetwork()).chainId.toString(), nonce: String(await ethers.provider.getTransactionCount(gasAddress, 'pending')),
+        maxPriorityFeePerGas: '1000000000', maxFeePerGas: (block.baseFeePerGas * 2n + 1000000000n).toString(),
+        gasLimit: String(gasLimit), to, value: '0', data,
+      }, gasKey);
+      expect(await ethers.provider.send('eth_sendRawTransaction', [raw])).to.equal(txid);
+      return ethers.provider.getTransactionReceipt(txid); // the local chain mines each transaction at once
+    };
+    expect((await relayed(pw.DEPLOYER, pw.deployCallOf(params, salt), 3_000_000)).status).to.equal(1);
     const wallet = await ethers.getContractAt('PalmWallet', address);
-    expect(await wallet.threshold()).to.equal(2n);
     expect(await wallet.recoveryDelay()).to.equal(BigInt(30 * DAY));
-    expect((await wallet.signers()).map(a => a.toLowerCase())).to.deep.equal(params.signers);
     expect(BigInt(await ethers.provider.call({ to: address, data: pw.NONCE_CALL }))).to.equal(0n);
-    expect(await ethers.provider.getBalance(address)).to.equal(ethers.parseEther('3'), 'what arrived early is there');
+    expect(BigInt(await ethers.provider.call({ to: address, data: pw.LAST_ACTIVITY_CALL }))).to.equal(BigInt(await now()));
 
-    // Two of the three sign the way the browser does, the palm signer adds its signature, and the
-    // gas account submits the app's encoding of the call.
     const chainId = Number((await ethers.provider.getNetwork()).chainId);
-    const ctx = { palm, veyns, vaultId, subs: people.map(p => p.sub), address, chainId, threshold: 2 };
+    const ctx = { payer, palm, veyns, vaultId, people, address, chainId, threshold: 2, wallet };
     const to = ethers.Wallet.createRandom().address;
-    const transfer = { token: pw.NATIVE, to, amount: ethers.parseEther('1.25').toString(), nonce: '0' };
-    const digest = pw.eip712TransferDigest({ chainId, wallet: address, transfer });
-    const signing = [people[0], people[2]];
-    const sigs = signing.map(p => pw.signDigest(digest, p.key));
-    expect(sigs.map(sig => pw.recoverAddress(digest, sig))).to.deep.equal(signing.map(p => p.address));
-    const { signature: palmSig } = approve(ctx, transfer, { approvers: signing.map(p => p.sub) });
-    const paid = await relayed(gasKey, { to: address, data: pw.transferCallOf(transfer, sigs, palmSig), gasLimit: 300_000 });
+    const t = await payment(ctx, { to, amount: ethers.parseEther('1.25'), feeTo: gasAddress, gasRefund: ethers.parseEther('0.001') });
+    const { signature } = approve(ctx, t, { approvers: [people[0].sub, people[2].sub] });
+    const paid = await relayed(address, pw.transferCallOf(t, signersSign([people[0], people[2]], digestOf(ctx, t)), signature), 300_000);
     expect(paid.status).to.equal(1);
     expect(await ethers.provider.getBalance(to)).to.equal(ethers.parseEther('1.25'));
-    expect(await wallet.nonce()).to.equal(1n);
+  });
+});
 
-    // The same call without the palm key's signature is refused by the wallet itself.
-    const next = { ...transfer, nonce: '1' };
-    const nextDigest = pw.eip712TransferDigest({ chainId, wallet: address, transfer: next });
-    const forged = pw.signDigest(nextDigest, people[1].key);
-    await reverts(payer.sendTransaction({
-      to: address, data: pw.transferCallOf(next, signing.map(p => pw.signDigest(nextDigest, p.key)), forged), gasLimit: 300_000,
-    }), wallet, 'NoPalm');
+/*
+ * The attacks the audit proved against version 1 (A1 to A3), replayed against version 2.
+ */
+describe('PalmWallet v2 against the audit\'s attacks', () => {
+  it('A1: a thief with the signer keys can no longer touch the nonce, so every palm approved rescue goes through', async () => {
+    const ctx = await built({ days: 30 });
+    const thief = ethers.Wallet.createRandom().address;
+    // The thief tries what used to work: a recovery for 1 wei, to burn the nonce.
+    const r = { token: pw.NATIVE, to: thief, amount: '1', deadline: String((await now()) + 3600), nonce: '0' };
+    const thiefCall = pw.recoverCallOf(r, signersSign(ctx.people, pw.eip712RecoveryDigest({ chainId: ctx.chainId, wallet: ctx.address, recovery: r })));
+    await reverts(send(ctx, thiefCall), ctx.wallet, 'NotYetDormant');
+    expect(await ctx.wallet.nonce()).to.equal(0n);
+    // The owner's palm approved rescue of everything to a safe address lands at the nonce it was signed for.
+    const safe = ethers.Wallet.createRandom().address;
+    const amount = ethers.parseEther('4.99');
+    const t = await payment(ctx, { to: safe, amount });
+    const { signature } = approve(ctx, t);
+    await (await send(ctx, pw.transferCallOf(t, signersSign(ctx.people, digestOf(ctx, t)), signature))).wait();
+    expect(await ethers.provider.getBalance(safe)).to.equal(amount);
+  });
+
+  it('A2: a "token" with no code is refused rather than reported as sent', async () => {
+    const palmKey = crypto.randomBytes(32);
+    const ctx = await built({ palmKey });
+    const t = await payment(ctx, { to: ctx.payer.address, amount: 1000, token: ethers.Wallet.createRandom().address });
+    const d = digestOf(ctx, t);
+    await reverts(send(ctx, pw.transferCallOf(t, [pw.signDigest(d, ctx.people[0].key)], pw.signDigest(d, palmKey))), ctx.wallet, 'NotAToken');
+  });
+
+  it('A3: whoever holds the palm key alone cannot keep the signers out once the delay has passed', async () => {
+    const palmKey = crypto.randomBytes(32);
+    const ctx = await built({ palmKey, days: 30 });
+    // The palm key has no function of its own: a refresh without the signers is refused.
+    const fr = pw.normalRefresh({ gasRefund: '0', deadline: String((await now()) + 3600), nonce: '0' });
+    const frd = pw.eip712RefreshDigest({ chainId: ctx.chainId, wallet: ctx.address, refresh: fr });
+    await reverts(send(ctx, pw.refreshCallOf(fr, [], pw.signDigest(frd, palmKey))), ctx.wallet, 'NotEnoughSigners');
+    await later(31 * DAY);
+    const heir = ethers.Wallet.createRandom().address;
+    const r = { token: pw.NATIVE, to: heir, amount: ethers.parseEther('5').toString(), deadline: String((await now()) + 3600), nonce: '0' };
+    await (await send(ctx, pw.recoverCallOf(r, signersSign(ctx.people, pw.eip712RecoveryDigest({ chainId: ctx.chainId, wallet: ctx.address, recovery: r }))))).wait();
+    expect(await ethers.provider.getBalance(heir)).to.equal(ethers.parseEther('5'));
   });
 });

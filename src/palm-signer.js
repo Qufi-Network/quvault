@@ -25,7 +25,8 @@ import { transactionDigest, actionDigest } from './veyns.js';
 import { palmVaultOf, planOfPalmPsbt, palmPathOf, signPalmPsbt } from './palm-vault.js';
 import { NETWORK } from './bitcoin.js';
 import {
-  NATIVE, normalTransfer, evmTransferDigest, eip712TransferDigest, eip712CancelDigest, addressOfKey, signDigest,
+  NATIVE, normalTransfer, normalRefresh, evmTransferDigest, evmRefreshDigest, eip712TransferDigest, eip712RefreshDigest,
+  addressOfKey, signDigest,
 } from './palm-wallet.js';
 
 export class PalmRefused extends Error {}
@@ -210,13 +211,12 @@ export function createPalmSigner({
   };
 
   /**
-   * Signs the palm key's part of a Palm Wallet transfer, or throws PalmRefused.
+   * Signs the palm key's part of a Palm Wallet payment, or throws PalmRefused saying why not.
    *
-   * `wallet` = { address, chainId, threshold, signerSubs }: the wallet as it was made, and the
-   * Veyns subjects of the people who sign for it. `transfer` = { token, to, amount, nonce }.
-   * The hash the palms approved is recomputed from the transfer itself, and the payee, amount,
-   * asset, wallet and chain in what they read must all be this transfer's: the signer will not
-   * sign a payment that differs from the one a person was shown.
+   * The approval's transaction hash must be this exact payment, and every line a person read on
+   * their phone must be this payment's: the payee, the amount, the asset, Palm's fee and where it
+   * goes, the network fee, the wallet and the chain. A server that showed one thing and asked for
+   * another is refused here, however the hash was arranged.
    */
   function signEvmTransfer({ vaultId, wallet, transfer, action, decisions }) {
     let t;
@@ -229,11 +229,13 @@ export function createPalmSigner({
     }
     const details = action?.details ?? {};
     if (details.transaction_hash !== digest) refuse('the approved action names a different transfer');
-    const lower = value => String(value ?? '').toLowerCase();
     const approvedToken = details.token === undefined || details.token === 'native' ? NATIVE : lower(details.token);
     if (lower(details.to) !== t.to) refuse('the approved payee is not this transfer\'s');
     if (String(details.amount_units ?? '') !== t.amount) refuse('the approved amount is not this transfer\'s');
     if (approvedToken !== t.token) refuse('the approved asset is not this transfer\'s');
+    if (String(details.palm_fee_units ?? '0') !== t.fee) refuse('the approved Palm fee is not this transfer\'s');
+    if (t.fee !== '0' && lower(details.palm_fee_to) !== t.feeTo) refuse('the approved Palm fee goes somewhere else');
+    if (String(details.network_fee_units ?? '0') !== t.gasRefund) refuse('the approved network fee is not this transfer\'s');
     if (lower(details.wallet) !== lower(wallet.address)) refuse('the approval is for a different wallet');
     if (String(details.chain_id ?? '') !== String(wallet.chainId)) refuse('the approval is for a different chain');
 
@@ -254,29 +256,39 @@ export function createPalmSigner({
   }
 
   /**
-   * Signs a cancellation of a scheduled recovery: the palm path stopping a transfer the signers
-   * scheduled without it. One palm approval of this exact cancellation is enough, because a
-   * cancellation can only stop money moving.
+   * Signs the palm key's part of a refresh: the signers and the palm saying they are still here,
+   * which closes the recovery path again. It needs the same palms as a payment, so neither the
+   * palm key alone nor the signers alone can keep the recovery path shut.
    */
-  function signEvmCancel({ vaultId, wallet, id, nonce, action, decisions }) {
-    const scheduledId = lower(id);
-    if (!/^0x[0-9a-f]{64}$/.test(scheduledId) || !/^(0|[1-9][0-9]{0,77})$/.test(String(nonce))) refuse('that is not a scheduled transfer');
-    const digest = transactionDigest({ v: 1, kind: 'palm-wallet-cancel', chainId: String(wallet.chainId), wallet: lower(wallet.address), id: scheduledId, nonce: String(nonce) });
+  function signEvmRefresh({ vaultId, wallet, refresh, action, decisions }) {
+    let r;
+    let digest;
+    try {
+      r = normalRefresh(refresh);
+      digest = evmRefreshDigest({ chainId: wallet?.chainId, wallet: wallet?.address, refresh: r });
+    } catch (error) {
+      refuse(String(error.message).replace(/\.$/, '').toLowerCase());
+    }
     const details = action?.details ?? {};
-    if (details.transaction_hash !== digest) refuse('the approved action names a different cancellation');
+    if (details.transaction_hash !== digest) refuse('the approved action names a different refresh');
+    if (String(details.network_fee_units ?? '0') !== r.gasRefund) refuse('the approved network fee is not this refresh\'s');
+    if (lower(details.wallet) !== lower(wallet.address)) refuse('the approval is for a different wallet');
+    if (String(details.chain_id ?? '') !== String(wallet.chainId)) refuse('the approval is for a different chain');
+    const required = Number(wallet.threshold);
+    if (!Number.isInteger(required) || required < 1) refuse('the wallet names no threshold');
     const { approvedBy, requestIds } = checkPalms({
-      decisions, expected: actionDigest(action.statement, details), subjects: wallet.signerSubs, transactionKey: digest, required: 1,
+      decisions, expected: actionDigest(action.statement, details), subjects: wallet.signerSubs, transactionKey: digest, required,
     });
     const key = evmKeyFor(String(vaultId));
     try {
-      const signature = signDigest(eip712CancelDigest({ chainId: wallet.chainId, wallet: wallet.address, id: scheduledId, nonce }), key);
-      for (const requestId of requestIds) counted.set(requestId, digest);
-      return { signature, approvedBy: [...approvedBy].sort(), transactionHash: digest };
+      const signature = signDigest(eip712RefreshDigest({ chainId: wallet.chainId, wallet: wallet.address, refresh: r }), key);
+      for (const id of requestIds) counted.set(id, digest);
+      return { signature, palmAddress: addressOfKey(key), approvedBy: [...approvedBy].sort(), transactionHash: digest };
     } finally {
       key.fill(0);
     }
   }
   const lower = value => String(value ?? '').toLowerCase();
 
-  return { publicKeyFor, sign, palmAddressFor, signEvmTransfer, signEvmCancel };
+  return { publicKeyFor, sign, palmAddressFor, signEvmTransfer, signEvmRefresh };
 }

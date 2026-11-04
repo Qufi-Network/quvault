@@ -21,7 +21,11 @@ import { base64urlnopad } from '@scure/base';
 import { canonicalTransaction, canonicalBytes } from '../src/canonical.js';
 import { canonicalTransfer, transferBytes, transferDigest, checkErc20Plan } from '../src/canonical-transfer.js';
 import { signingHash, assembleSigned, transactionHash as evmTxHash } from '../src/evm.js';
-import { evmTransferDigest, eip712TransferDigest, signDigest as signEvmDigest } from '../src/palm-wallet.js';
+import {
+  evmTransferDigest, eip712TransferDigest, evmRefreshDigest, eip712RefreshDigest, signDigest as signEvmDigest,
+} from '../src/palm-wallet.js';
+import { signKeyProof } from '../src/key-proof.js';
+import { checkPalmProof } from '../src/palm-proof.js';
 import {
   deriveAttestationKeys, signAuthorization, signAuthorizationV2, signRegistration,
   signCheckpoint, verifyAuthorization, verifyChain,
@@ -401,15 +405,35 @@ export function signQuorum(mnemonic, { psbt, plan, index, address, transactionHa
 export function signPalmWalletTransfer(mnemonic, { keyIndex, palmWallet, transactionHash }) {
   const { privateKey, publicKey } = cosignerFrom(mnemonic, keyIndex);
   try {
-    const { chainId, wallet, transfer } = palmWallet ?? {};
-    if (evmTransferDigest({ chainId, wallet, transfer }) !== transactionHash) {
-      throw new Error('This is not the transfer that was approved. Nothing has been signed.');
+    const { kind = 'transfer', chainId, wallet, transfer, refresh } = palmWallet ?? {};
+    const at = { chainId, wallet };
+    const approved = kind === 'refresh' ? evmRefreshDigest({ ...at, refresh }) : evmTransferDigest({ ...at, transfer });
+    if (approved !== transactionHash) {
+      throw new Error('This is not what was approved. Nothing has been signed.');
     }
-    const signature = signEvmDigest(eip712TransferDigest({ chainId, wallet, transfer }), privateKey);
-    return { signature, signingKey: toHexKey(publicKey) };
+    const typed = kind === 'refresh' ? eip712RefreshDigest({ ...at, refresh }) : eip712TransferDigest({ ...at, transfer });
+    return { signature: signEvmDigest(typed, privateKey), signingKey: toHexKey(publicKey) };
   } finally {
     privateKey.fill(0);
   }
+}
+
+/**
+ * The public half of this person's signing key for one vault, with proof that they hold it: a
+ * signature by the key over the vault, the person and the key. The server refuses a key without it.
+ */
+export function signingKeyProof(mnemonic, index, { vaultOwnerId, memberId }) {
+  const { privateKey, publicKey } = cosignerFrom(mnemonic, index);
+  try {
+    const key = toHexKey(publicKey);
+    return { publicKey: key, proof: signKeyProof(privateKey, { vaultOwnerId, memberId, publicKey: key }) };
+  } finally {
+    privateKey.fill(0);
+  }
+}
+
+export async function cosignerKeyWithProof(record, unlocked, branch) {
+  return withPhrase(record, unlocked.unlock, mnemonic => signingKeyProof(mnemonic, branch, unlocked.keyBinding ?? {}));
 }
 
 export async function signApprovedPalmWallet(record, unlocked) {
@@ -895,7 +919,7 @@ export function checkpointDisagreement(record, serverHeads) {
  * and the interface exists so that when one of those does exist it replaces this object
  * rather than every call site in the page.
  */
-export function browserSigner(record, authorization) {
+export function browserSigner(record, authorization, trust = null) {
   return assertSigner({
     isolation: ISOLATION.BROWSER_JAVASCRIPT,
     keyHandle: record?.address ?? null,
@@ -935,6 +959,16 @@ export function browserSigner(record, authorization) {
     async signTransaction(request) {
       const wrong = requestMatchesAuthorization(request, authorization);
       if (wrong) throw new SignerError(`This signer will not sign that: ${wrong}.`);
+      // Veyns' own word, checked here with Veyns' own keys: this person's palm approved exactly
+      // this, and it names exactly the transaction about to be signed. The server's database is
+      // not trusted for that, so a rewritten record is refused here rather than signed.
+      if (trust) {
+        try {
+          checkPalmProof(authorization, trust);
+        } catch (error) {
+          throw new SignerError(error.message);
+        }
+      }
       const network = request.network;
       // An account-chain transfer (Ethereum, BSC) carries a `transfer` to sign, not a UTXO
       // plan or a PSBT. Which kind of signature this is comes from the authorisation, never

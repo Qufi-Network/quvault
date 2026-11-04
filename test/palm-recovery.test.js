@@ -11,6 +11,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { hex } from '@scure/base';
 import { DEST, start, ok, signedIn, palmApprove, walletFor, signAndSend } from './harness.js';
 import { cosignerFrom, signQuorum, signRecovery } from '../client/wallet.js';
+import { signKeyProof } from '../src/key-proof.js';
 import {
   palmVaultOf, palmVaultFromDescriptor, recoveryClock, LEAF_VERSION, DEFAULT_RECOVERY_DELAY,
 } from '../src/palm-vault.js';
@@ -33,6 +34,7 @@ async function signingKey(env, client, vaultOwnerId, phrase) {
   ok(await client.post('/api/signing-key/register', {
     operationId: started.operation.id,
     publicKey: Buffer.from(key.publicKey).toString('hex'),
+    proof: signKeyProof(key.privateKey, { vaultOwnerId, memberId: client.id, publicKey: Buffer.from(key.publicKey).toString('hex') }),
   }));
   return key;
 }

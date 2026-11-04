@@ -18,13 +18,22 @@ import {
   ADDRESSES, attestInstitutionalFor,
 } from './harness.js';
 import { cosignerFrom, signTransfer, signPalmWalletTransfer, NETWORKS as CLIENT_NETWORKS } from '../client/wallet.js';
+import { signKeyProof } from '../src/key-proof.js';
 import { decodeSigned, recoverSigner, transactionHash } from '../src/evm.js';
-import { DEPLOYER, NONCE_CALL, eip712TransferDigest, recoverAddress, evmAddressOfPublicKey } from '../src/palm-wallet.js';
+import { checkPalmProof } from '../src/palm-proof.js';
+import { canonicalTransfer, transferDigest } from '../src/canonical-transfer.js';
+import {
+  DEPLOYER, NONCE_CALL, LAST_ACTIVITY_CALL, eip712TransferDigest, recoverAddress, evmAddressOfPublicKey,
+} from '../src/palm-wallet.js';
 
 const PHRASE = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 const PAYEE = '0x3535353535353535353535353535353535353535';
 const ETH = 10n ** 18n;
-const TRANSFER_SELECTOR = hex.encode(keccak_256(new TextEncoder().encode('transfer(address,address,uint256,bytes[],bytes)')).subarray(0, 4));
+const selectorOf = signature => hex.encode(keccak_256(new TextEncoder().encode(signature)).subarray(0, 4));
+const TRANSFER_SELECTOR = selectorOf('transfer((address,address,uint256,uint256,address,uint256,uint256),bytes[],bytes)');
+const REFRESH_SELECTOR = selectorOf('refresh(uint256,uint256,bytes[],bytes)');
+// The chain's clock, for lastActivity: the same moment the app's test clock starts at.
+const CHAIN_TIME = 1_800_000_000n;
 
 /** A small chain: balances, nonces, code, deployment through the proxy, and the wallet's transfers. */
 function chainNode() {
@@ -32,6 +41,7 @@ function chainNode() {
   const nonces = new Map();
   const code = new Map();
   const walletNonce = new Map();
+  const lastActivity = new Map();
   const sent = [];
   const lower = a => String(a).toLowerCase();
   const word = (bytes, at) => BigInt(`0x${hex.encode(bytes.subarray(at, at + 32))}`);
@@ -55,13 +65,27 @@ function chainNode() {
       const address = `0x${hex.encode(keccak_256(new Uint8Array([0xff, ...hex.decode(DEPLOYER.slice(2)), ...salt, ...keccak_256(init)])).subarray(12))}`;
       if (code.has(address)) throw new Error('execution reverted: already deployed');
       code.set(address, '0x6080');
+      lastActivity.set(address, CHAIN_TIME);
     } else if (code.has(to) && hex.encode(data.subarray(0, 4)) === TRANSFER_SELECTOR) {
+      // The Payment struct sits inline: token, to, amount, fee, feeTo, gasRefund, deadline.
       const body = data.subarray(4);
       const payee = `0x${hex.encode(body.subarray(32 + 12, 64))}`;
       const amount = word(body, 64);
+      const fee = word(body, 96);
+      const feeTo = `0x${hex.encode(body.subarray(128 + 12, 160))}`;
+      const refund = word(body, 160);
       walletNonce.set(to, (walletNonce.get(to) ?? 0n) + 1n);
-      balances.set(to, (balances.get(to) ?? 0n) - amount);
+      lastActivity.set(to, CHAIN_TIME + 1000n);
+      balances.set(to, (balances.get(to) ?? 0n) - amount - fee - refund);
       balances.set(payee, (balances.get(payee) ?? 0n) + amount);
+      balances.set(feeTo, (balances.get(feeTo) ?? 0n) + fee);
+      balances.set(from, (balances.get(from) ?? 0n) + refund);
+    } else if (code.has(to) && hex.encode(data.subarray(0, 4)) === REFRESH_SELECTOR) {
+      const refund = word(data.subarray(4), 0);
+      walletNonce.set(to, (walletNonce.get(to) ?? 0n) + 1n);
+      lastActivity.set(to, CHAIN_TIME + 5000n);
+      balances.set(to, (balances.get(to) ?? 0n) - refund);
+      balances.set(from, (balances.get(from) ?? 0n) + refund);
     }
     sent.push({ raw, tx, from, to, data });
     return transactionHash(raw);
@@ -76,6 +100,7 @@ function chainNode() {
     eth_getCode: ([address]) => code.get(lower(address)) ?? '0x',
     eth_call: ([{ to, data }]) => {
       if (data === NONCE_CALL) return `0x${(walletNonce.get(lower(to)) ?? 0n).toString(16).padStart(64, '0')}`;
+      if (data === LAST_ACTIVITY_CALL) return `0x${(lastActivity.get(lower(to)) ?? 0n).toString(16).padStart(64, '0')}`;
       throw new Error('unexpected call');
     },
     eth_estimateGas: ([{ to }]) => quantity(lower(to) === DEPLOYER ? 1_500_000 : 120_000),
@@ -83,7 +108,7 @@ function chainNode() {
   };
 
   return {
-    balances, code, sent, walletNonce,
+    balances, code, sent, walletNonce, lastActivity,
     async fetch(url, init) {
       const { id, method, params } = JSON.parse(init.body);
       try {
@@ -141,7 +166,11 @@ async function signingKey(env, client, vaultOwnerId) {
   await palmApprove(env, client, started.operation.id);
   ok(await client.post(`/api/operations/${started.operation.id}/unlock`, {}));
   const key = cosignerFrom(PHRASE, started.index);
-  ok(await client.post('/api/signing-key/register', { operationId: started.operation.id, publicKey: Buffer.from(key.publicKey).toString('hex') }));
+  ok(await client.post('/api/signing-key/register', {
+    operationId: started.operation.id,
+    publicKey: Buffer.from(key.publicKey).toString('hex'),
+    proof: signKeyProof(key.privateKey, { vaultOwnerId, memberId: client.id, publicKey: Buffer.from(key.publicKey).toString('hex') }),
+  }));
   return key;
 }
 
@@ -152,11 +181,11 @@ function signaturesIn(data) {
   const body = data.subarray(4);
   const at = n => Number(BigInt(`0x${hex.encode(body.subarray(n, n + 32))}`));
   const bytesAt = start => `0x${hex.encode(body.subarray(start + 32, start + 32 + at(start)))}`;
-  const sigs = at(96);
+  const sigs = at(224);
   const count = at(sigs);
   return {
     signers: Array.from({ length: count }, (_, i) => bytesAt(sigs + 32 + at(sigs + 32 + 32 * i))),
-    palm: bytesAt(at(128)),
+    palm: bytesAt(at(256)),
   };
 }
 
@@ -181,7 +210,8 @@ test('locking Ethereum to the palm moves every coin to a Palm Wallet whose addre
   const env = await startChain(t);
   const { asked, account, eoa, key } = await lockedWallet(env);
   assert.match(asked.operation.statement, /^Lock my Ethereum to my palm on the chain and move 0\.99\d* ETH to it$/);
-  assert.match(asked.operation.details.recovery, /schedule a transfer that runs after about 90 days, and a palm approval can still cancel it/);
+  assert.match(asked.operation.details.recovery, /if the palm approves nothing in the wallet for about 90 days, the signers alone can move the coins/);
+  assert.match(asked.operation.details.fees, /Palm 0\.1% and its own network fee/);
   assert.match(asked.operation.details.warning, /if you die/);
   assert.equal(account.address, asked.quorum.address, 'the account is now the wallet');
   assert.equal(account.quorum.required, 1);
@@ -264,5 +294,112 @@ test('a Palm Wallet takes only its own signer\'s signature, over exactly the app
   // The right key, over a different transfer: the browser refuses before it signs.
   assert.throws(() => signPalmWalletTransfer(PHRASE, {
     ...unlocked, palmWallet: { ...unlocked.palmWallet, transfer: { ...unlocked.palmWallet.transfer, amount: '9999' } },
-  }), /not the transfer that was approved/);
+  }), /not what was approved/);
+});
+
+/* ------------------------------------------------------------- the audit's findings, closed */
+
+/** What a signer's browser trusts to check a palm decision: Veyns' published keys, and who they are. */
+async function trustFor(env, sub) {
+  const { keys } = await (await env.world.fetchImpl(`${ISSUER}/jwks.json`)).json();
+  return { issuer: ISSUER, audience: CLIENT_ID, keys, subjects: [sub, `pairwise:${CLIENT_ID}:${sub}`] };
+}
+
+test('every payment pays Palm 0.1% and its own network fee, shown before the palm; send everything fits exactly', async t => {
+  const env = await startChain(t);
+  const { alex, account } = await lockedWallet(env);
+  const config = ok(await env.client().get('/api/config'));
+  env.node.balances.set(config.gasAccount, ETH);
+
+  const amount = ETH / 2n;
+  const { operation } = ok(await alex.post('/api/withdrawals', { network: 'ethereum', to: PAYEE, amount: amount.toString() }));
+  const d = operation.details;
+  assert.equal(d.palm_fee_units, (amount / 1000n).toString(), 'Palm takes exactly 0.1%');
+  assert.equal(d.palm_fee_to, config.gasAccount, 'to the gas account until PALM_FEE_ADDRESS is set');
+  assert.match(d.palm_fee, /which is 0\.1%/);
+  assert.ok(BigInt(d.network_fee_units) > 0n, 'the network fee is paid back by the wallet');
+  assert.match(d.network_fee, /including building the wallet/, 'the first payment also pays for building it');
+  assert.match(operation.statement, /plus .* in fees$/);
+  assert.ok(d.good_until, 'the signed payment expires');
+
+  await palmApprove(env, alex, operation.id);
+  const unlocked = ok(await alex.post(`/api/operations/${operation.id}/unlock`, {}));
+  const before = env.node.balances.get(account.address);
+  ok(await alex.post(`/api/operations/${operation.id}/signature`, { signature: signPalmWalletTransfer(PHRASE, unlocked).signature }));
+  assert.equal(env.node.balances.get(PAYEE.toLowerCase()), amount);
+  assert.equal(before - env.node.balances.get(account.address), amount + amount / 1000n + BigInt(d.network_fee_units));
+
+  // Send everything: amount, fee and network fee add up to no more than the wallet holds.
+  const all = ok(await alex.post('/api/withdrawals', { network: 'ethereum', to: PAYEE, amount: 'max' }));
+  const total = BigInt(all.operation.details.amount_units) + BigInt(all.operation.details.palm_fee_units) + BigInt(all.operation.details.network_fee_units);
+  assert.ok(total <= env.node.balances.get(account.address));
+  assert.ok(env.node.balances.get(account.address) - total < 1000n, 'and leaves next to nothing behind');
+});
+
+test('a refresh: the palm, the signer and the palm key close the recovery path again, and the wallet pays its fee', async t => {
+  const env = await startChain(t);
+  const { alex, account } = await lockedWallet(env, 90);
+  const config = ok(await env.client().get('/api/config'));
+  env.node.balances.set(config.gasAccount, ETH);
+  const { operation } = ok(await alex.post('/api/vault/refresh/approval', { network: 'ethereum' }));
+  assert.match(operation.statement, /^Refresh my Ethereum Palm Wallet, so its recovery path stays closed$/);
+  assert.match(operation.details.effect, /about 90 more days/);
+  await palmApprove(env, alex, operation.id);
+  const unlocked = ok(await alex.post(`/api/operations/${operation.id}/unlock`, {}));
+  assert.equal(unlocked.palmWallet.kind, 'refresh');
+  const { txid } = ok(await alex.post(`/api/operations/${operation.id}/signature`, { signature: signPalmWalletTransfer(PHRASE, unlocked).signature }));
+  assert.ok(txid);
+  assert.equal(env.node.sent.at(-1).to, account.address);
+  assert.equal(env.node.lastActivity.get(account.address), 1_800_005_000n, 'the wallet records the refresh');
+  const view = await ethereum(alex);
+  assert.equal(view.quorum.palmWallet.clock.opensAt, 1_800_005_000 + 90 * 86400);
+});
+
+test('audit H4: a vault cannot be erased while its Palm Wallet holds coins', async t => {
+  const env = await startChain(t);
+  const { alex } = await lockedWallet(env);
+  const refused = await alex.post('/api/wallet/reset/approval', {});
+  assert.equal(refused.status, 409);
+  assert.match(refused.body.error, /cannot be erased while coins are locked to the chain: Ethereum at 0x[0-9a-f]{40} holds 0\.99/);
+});
+
+test('audit H2: a database writer who redirects the lock move is refused by the browser\'s own check of the palm', async t => {
+  const env = await startChain(t);
+  const alex = await signedIn(env, 'sub-alex');
+  await walletFor(env, alex);
+  await addAccount(env, alex, { network: 'ethereum' });
+  await signingKey(env, alex, alex.id);
+  env.node.balances.set(ADDRESSES.ethereum.address.toLowerCase(), ETH);
+  const asked = ok(await alex.post('/api/accounts/lock', { network: 'ethereum', required: 1, palm: true }));
+  await palmApprove(env, alex, asked.operation.id);
+  const trust = await trustFor(env, 'sub-alex');
+
+  // Untouched, the browser's check passes.
+  const honest = ok(await alex.post(`/api/operations/${asked.operation.id}/unlock`, {}));
+  assert.doesNotThrow(() => checkPalmProof(honest, trust));
+
+  // The attacker rewrites where the coins go, and every hash the server keeps, consistently.
+  const db = await env.app.db();
+  const [row] = (await db.query('SELECT payload, details FROM operations WHERE id = $1', [asked.operation.id])).rows;
+  const payload = JSON.parse(row.payload);
+  const details = JSON.parse(row.details);
+  payload.to = '0x6666666666666666666666666666666666666666';
+  const digest = transferDigest(canonicalTransfer({ chain: 'evm', network: payload.network, from: payload.from, plan: payload }));
+  payload.transactionHash = digest;
+  details.to = payload.to;
+  details.transaction_hash = digest;
+  await db.query('UPDATE operations SET payload = $1, details = $2 WHERE id = $3', [JSON.stringify(payload), JSON.stringify(details), asked.operation.id]);
+
+  const tampered = ok(await alex.post(`/api/operations/${asked.operation.id}/unlock`, {}));
+  assert.equal(tampered.transfer.to, payload.to, 'the server hands over the rewritten transfer');
+  assert.throws(() => checkPalmProof(tampered, trust), /approves a different action/);
+});
+
+test('the wallet code the app deploys was built from the contract source in this repository', async () => {
+  const fs = await import('node:fs');
+  const crypto = await import('node:crypto');
+  const { PALM_WALLET_SOURCE_SHA256 } = await import('../src/palm-wallet-code.js');
+  const source = fs.readFileSync(new URL('../contracts/contracts/PalmWallet.sol', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  assert.equal(crypto.createHash('sha256').update(source).digest('hex'), PALM_WALLET_SOURCE_SHA256,
+    'PalmWallet.sol changed: compile it and run node scripts/export-palm-wallet.js');
 });

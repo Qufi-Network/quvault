@@ -13,7 +13,7 @@
  */
 import {
   checkAuthorization, checkChain, clearRecord, fromBase64, loadRecord, planDigest,
-  createVaultKey, browserSigner, cosignerPublicKeyFor, deriveAccountFor,
+  createVaultKey, browserSigner, cosignerKeyWithProof, deriveAccountFor,
   restoreVaultKey, revealPhrase, pinAttestationRoot,
   signEvidenceCheckpoint, pinCheckpoint, checkpointDisagreement, signRecovery,
 } from '/vendor/wallet.js';
@@ -467,6 +467,44 @@ async function signInWithRedirect(method, nonce) {
   location.assign(target.href);
 }
 
+/*
+ * Who this person is to Veyns, kept from the sign in token Veyns handed this page directly, so the
+ * page can tell their own palm decisions from anyone else's without asking the server.
+ */
+const SUBJECT_KEY = 'palm.subject';
+function rememberSubject(idToken) {
+  try {
+    const claims = JSON.parse(atob(String(idToken).split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    if (claims.sub) localStorage.setItem(SUBJECT_KEY, String(claims.sub));
+  } catch {
+    // Without it the page still checks the decision is genuine and for this exact request.
+  }
+}
+
+/** What this page trusts to check a palm decision: Veyns' own published keys, and who this person is. */
+let veynsKeyCache = null;
+async function palmTrust() {
+  const { issuer, clientId } = state.config;
+  if (!veynsKeyCache) {
+    try {
+      const discovery = await (await fetch(`${issuer}/.well-known/openid-configuration`)).json();
+      const jwks = discovery.jwks_uri && new URL(discovery.jwks_uri).origin === new URL(issuer).origin ? discovery.jwks_uri : `${issuer}/jwks.json`;
+      veynsKeyCache = (await (await fetch(jwks)).json()).keys ?? null;
+    } catch {
+      veynsKeyCache = null;
+    }
+    // Veyns unreachable from this page: the same published keys, fetched by the server from Veyns.
+    if (!veynsKeyCache?.length) veynsKeyCache = (await api('/api/veyns-keys')).keys;
+  }
+  let sub = null;
+  try {
+    sub = localStorage.getItem(SUBJECT_KEY);
+  } catch {
+    sub = null;
+  }
+  return { issuer, audience: clientId, keys: veynsKeyCache, subjects: sub ? [sub, `pairwise:${clientId}:${sub}`] : null };
+}
+
 async function finishRedirectSignIn() {
   const params = new URLSearchParams(location.search);
   if (!params.has('state') || !(params.has('code') || params.has('error'))) return;
@@ -497,6 +535,7 @@ async function finishRedirectSignIn() {
   });
   const tokens = await response.json();
   if (!response.ok) throw new Error(tokens.error_description || 'Veyns could not finish the sign in. Please try again.');
+  rememberSubject(tokens.id_token);
   await api('/api/login/finish', { token: tokens.id_token });
 }
 
@@ -594,8 +633,8 @@ const device = {
    * that was approved and cannot outlive it. It answers three questions and holds no key the
    * page can reach — see `browserSigner` and the isolation level it declares.
    */
-  signerFor(unlocked) {
-    return browserSigner(this.record, unlocked);
+  async signerFor(unlocked) {
+    return browserSigner(this.record, unlocked, await palmTrust());
   },
 
   /**
@@ -623,7 +662,7 @@ const device = {
     const unlocked = await this.unlockFor(operation.id);
     // Signing and the authorisation record both happen behind the signer, against the digest
     // the palm approved; a mismatch throws there and nothing reaches this line.
-    const { hex, authorization } = await this.signerFor(unlocked).signTransaction(this.signingRequest(unlocked));
+    const { hex, authorization } = await (await this.signerFor(unlocked)).signTransaction(this.signingRequest(unlocked));
     const sent = await api(`/api/operations/${operation.id}/broadcast`, { hex, authorization });
     /*
      * Checkpoint the evidence this payment just produced, using the unlock this payment
@@ -666,8 +705,9 @@ const device = {
    */
   async makeSigningKey(operation) {
     const unlocked = await this.unlockFor(operation.id);
-    const publicKey = await cosignerPublicKeyFor(this.record, unlocked, operation.details.branch);
-    return api('/api/signing-key/register', { operationId: operation.id, publicKey });
+    // The key and proof that this browser holds it: the server takes no key without that.
+    const { publicKey, proof } = await cosignerKeyWithProof(this.record, unlocked, operation.details.branch);
+    return api('/api/signing-key/register', { operationId: operation.id, publicKey, proof });
   },
 
   /**
@@ -679,7 +719,7 @@ const device = {
     const unlocked = await this.unlockFor(operation.id);
     // The same signer: it sees an approval carrying a PSBT and contributes one signature to
     // it rather than signing the whole spend. What comes back is a PSBT, never a key.
-    const signed = await this.signerFor(unlocked).signTransaction(this.signingRequest(unlocked));
+    const signed = await (await this.signerFor(unlocked)).signTransaction(this.signingRequest(unlocked));
     // Bitcoin collects a partly signed transaction; a Palm Wallet on Ethereum or BSC, a signature.
     return api(`/api/operations/${operation.id}/signature`, signed.psbt ? { psbt: signed.psbt } : { signature: signed.signature });
   },
@@ -691,7 +731,7 @@ const device = {
   async rotateAttestation(operation) {
     const unlocked = await this.unlockFor(operation.id);
     const current = state.data?.wallet?.attestation?.epoch ?? null;
-    const registration = await this.signerFor(unlocked).signMessage(current === null
+    const registration = await browserSigner(this.record, unlocked).signMessage(current === null
       // No lineage yet: start one at epoch 1, signed by itself.
       ? { vaultId: this.record.address, epoch: 1 }
       : { vaultId: this.record.address, epoch: current + 1, previous: current });
@@ -1641,9 +1681,13 @@ function drawChainLock(account) {
 
   if (palmLocked && evm) {
     const wallet = locked.palmWallet;
+    $('chain-clock').hidden = false;
+    $('chain-clock-value').textContent = walletClockText(wallet.clock);
+    $('vault-tools').hidden = false;
+    $('vault-tools').replaceChildren(button('Refresh now', 'btn ghost sm', () => startRefresh(null, $('lock-error'), account.network)));
     $('chain-note').textContent = `${wallet.built ? 'The wallet contract is built.' : 'The wallet contract is built on its first payment; coins sent to this address before then are safe.'} `
       + `Network fees are paid by Palm's gas account ${wallet.gasAccount ?? ''}${wallet.gasBalance !== null ? `, which holds ${wallet.gasBalance} ${wallet.gasSymbol}` : ''}. On a test network, top it up from a faucet. `
-      + `If the palm signer is ever gone, the signers alone can schedule a transfer that runs after about ${wallet.recoveryDelayDays} days.`;
+      + `Each payment pays Palm 0.1% and its own network fee. If the palm approves nothing here for about ${wallet.recoveryDelayDays} days, the signers alone can move the coins; a payment or a refresh starts that wait again.`;
   } else if (palmLocked) {
     // The descriptor is the backup: with it and the recovery phrases, any Taproot wallet can find
     // these coins, and after the delay the signers alone can move them.
@@ -1687,6 +1731,13 @@ function clockText(palm) {
   return `opens in about ${clock.daysLeft} day${clock.daysLeft === 1 ? '' : 's'} for the oldest coin`;
 }
 
+/** A Palm Wallet's recovery path, from the clock the chain keeps. */
+function walletClockText(clock) {
+  if (!clock || clock.opensAt === null) return 'starts once the wallet is built';
+  if (clock.open) return 'is open now: the signers alone could move the coins until the wallet is refreshed';
+  return `opens in about ${clock.daysLeft} day${clock.daysLeft === 1 ? '' : 's'}, unless the palm approves something first`;
+}
+
 /** Said before anyone locks or moves a vault where every signer is needed. */
 function warningFor(required, count, days) {
   return count === 1
@@ -1699,24 +1750,30 @@ function renderRefreshBanner(data) {
   const due = [];
   const own = (data.accounts || []).find(account => account.network === 'bitcoin')?.quorum?.palm;
   if (own?.clock?.refreshDue) due.push({ ownerId: null, label: 'your vault', palm: own });
+  for (const account of data.accounts || []) {
+    const wallet = account.quorum?.palmWallet;
+    if (wallet?.clock?.refreshDue) {
+      due.push({ ownerId: null, label: `your ${account.label} Palm Wallet`, network: account.network, palm: { recoveryDelayDays: wallet.recoveryDelayDays, clock: wallet.clock }, evm: true });
+    }
+  }
   for (const vault of data.signsFor || []) {
     if (vault.holdsKey && vault.palm?.clock?.refreshDue) due.push({ ownerId: vault.ownerId, label: `${vault.ownerLabel}’s vault`, palm: vault.palm });
   }
   $('refresh-lane').hidden = due.length === 0;
   if (!due.length) return;
   const first = due[0];
-  $('refresh-title').textContent = first.palm.clock.blocksLeft === 0
+  $('refresh-title').textContent = (first.evm ? first.palm.clock.open : first.palm.clock.blocksLeft === 0)
     ? `The recovery path of ${first.label} is open`
     : `Time to refresh ${first.label}`;
-  $('refresh-what').textContent = `Its recovery path ${clockText(first.palm)}. Once it is open, the signers' twelve words alone could move the coins, without a palm. A refresh sends them back into the same vault with a palm approval, and the clock starts again at about ${first.palm.recoveryDelayDays} days.`;
+  $('refresh-what').textContent = `Its recovery path ${first.evm ? walletClockText(first.palm.clock) : clockText(first.palm)}. Once it is open, the signers' twelve words alone could move the coins, without a palm. A refresh sends them back into the same vault with a palm approval, and the clock starts again at about ${first.palm.recoveryDelayDays} days.`;
   $('refresh-error').textContent = '';
-  $('refresh-go').onclick = () => startRefresh(first.ownerId, $('refresh-error'));
+  $('refresh-go').onclick = () => startRefresh(first.ownerId, $('refresh-error'), first.network ?? 'bitcoin');
 }
 
-async function startRefresh(ownerId, errorNode = null) {
+async function startRefresh(ownerId, errorNode = null, network = 'bitcoin') {
   if (errorNode) errorNode.textContent = '';
   try {
-    const { operation } = await api('/api/vault/refresh/approval', ownerId ? { vaultOwnerId: ownerId } : {});
+    const { operation } = await api('/api/vault/refresh/approval', { ...(ownerId ? { vaultOwnerId: ownerId } : {}), network });
     openApproval(operation, 'Refreshing the vault…');
   } catch (error) {
     if (errorNode) errorNode.textContent = friendly(error);
@@ -2700,11 +2757,14 @@ const DETAIL_LABELS = {
   approvers: 'Signers', spending_rule: 'Rule', owner_label: 'Your name', derived_from: 'Address from',
   transaction_hash: 'Transaction hash', vault: 'Vault', approvals: 'Approvals', method: 'Approved by',
   approved_at: 'Approved at', key: 'Authorisation key', txid: 'Transaction ID',
+  palm_fee: 'Palm fee', palm_fee_to: 'Palm fee to', network_fee: 'Network fee', total: 'Total', good_until: 'Good until',
+  wallet: 'Wallet',
 };
 
 function detailRows(details) {
   const known = Object.keys(DETAIL_LABELS).filter(key => key in details);
-  const rest = Object.keys(details).filter(key => !(key in DETAIL_LABELS));
+  // The exact numbers behind a line already shown in words are for the palm signer, not for reading.
+  const rest = Object.keys(details).filter(key => !(key in DETAIL_LABELS) && !key.endsWith('_units'));
   return [...known, ...rest].map(key => {
     const raw = details[key];
     const value = key.endsWith('_sats') ? `${fmtSats(raw)} sats (${btc(raw)} tBTC)`
