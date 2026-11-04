@@ -359,9 +359,11 @@ body:has(#view-signin:not([hidden])) header.top { display: none !important; }
   .qv-menu a { display: flex; align-items: center; min-height: 54px; border-bottom: 1px solid var(--line); color: var(--ink); font-size: 16px; font-weight: 500; text-decoration: none; }
   .qv-menu a:active { color: var(--blue); }
   .qv-menu-demo { display: flex; align-items: center; justify-content: center; gap: 8px; height: 50px; margin-top: 18px; border: 0; border-radius: 10px; background: var(--blue); color: #fff; font: inherit; font-size: 15px; font-weight: 600; cursor: pointer; }
-  #view-signin .en-hero { display: block; min-height: auto; padding: clamp(28px, 6vh, 56px) 0 clamp(40px, 8vh, 64px); text-align: center; }
+  #view-signin .en-hero { display: block; min-height: auto; padding: 0 0 clamp(40px, 8vh, 64px); text-align: center; }
   #view-signin .en-hero::after { -webkit-mask-image: radial-gradient(90% 50% at 50% 24%, #000, transparent 78%); mask-image: radial-gradient(90% 50% at 50% 24%, #000, transparent 78%); }
-  .qv-hero-art { position: static; width: auto; max-width: 440px; margin: 0 auto 6px; display: block; }
+  /* the arm comes in from the top right corner, under the header, as it does on desktop */
+  .qv-hero-art { position: static; width: min(100%, 560px); max-width: none; margin: 0 0 6px auto; display: block; }
+  .qv-hero-imgwrap { margin-top: 0; }
   .qv-hero-gl { opacity: .5; }
   .qv-hero-img { max-height: none; }
   .qv-hero-text { max-width: none; text-align: center; margin: 0 auto; }
