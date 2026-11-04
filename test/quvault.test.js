@@ -234,7 +234,10 @@ test('a withdrawal is planned, signed only after the palm scan, and broadcast ex
   assert.ok(view.qr.startsWith('<svg'));
 
   const { operation, plan } = ok(await c.post('/api/withdrawals', { to: DEST, amount: 120_000 }));
-  assert.equal(operation.statement, `Send 0.00120000 tBTC to ${DEST}`);
+  // Never paid before, so the phone says so, and shows the address in short groups to compare.
+  assert.equal(operation.statement, `Send 0.00120000 tBTC to a new address ${DEST}`);
+  assert.equal(operation.details.first_payment, 'yes, this vault has never paid it');
+  assert.equal(operation.details.check_address, 'tb1q w508 d6qe … xpjz sx');
   assert.equal(operation.details.approvals_required, '1 of 1 signer');
   assert.equal(env.world.log.broadcast.length, 0, 'nothing is broadcast before the palm scan');
 

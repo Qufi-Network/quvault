@@ -1396,7 +1396,118 @@ function renderSecurity(data) {
   $('reset-note').textContent = legacy
     ? `Erasing destroys the key this server holds for ${wallet.address}. Anything left at that address goes with it, so sweep it somewhere on the way out.`
     : `Erasing removes the vault here and the key in this browser. Your twelve words are the only way back to ${wallet.address}, so send the coins on or write the words down first.`;
+
+  renderSafety(data);
 }
+
+/* ------------------------------------------------- freeze, saved names, alerts */
+
+function renderSafety(data) {
+  const { wallet } = data;
+  const frozen = wallet.frozen;
+  const by = frozen ? (data.labels?.[frozen.by] || (frozen.by === data.me.id ? 'you' : 'a signer')) : null;
+  const when = frozen ? new Date(frozen.at * 1000).toLocaleString() : null;
+  $('frozen-banner').hidden = !frozen;
+  if (frozen) $('frozen-what').textContent = `Frozen by ${by} on ${when}. Nothing can be approved, signed or sent until your signers unfreeze it.`;
+  $('freeze-state').textContent = frozen ? 'frozen' : 'not frozen';
+  $('freeze-state').classList.toggle('warn', Boolean(frozen));
+  $('freeze-actions').replaceChildren(frozen
+    ? button('Unfreeze with palm scans', 'btn brand sm', startUnfreeze)
+    : button('Freeze this vault now', 'btn ghost sm danger', freezeNow));
+
+  const book = data.addressBook || [];
+  const label = { bitcoin: 'Bitcoin', ethereum: 'Ethereum', bsc: 'BNB Smart Chain' };
+  $('address-rows').replaceChildren(...(book.length ? book.map(entry => el('div', { class: 'member-row' },
+    el('span', { class: 'member-who' },
+      el('b', {}, entry.name),
+      el('small', { class: 'mono wrap' }, `${label[entry.network] || entry.network} · ${entry.address}`)))) : [el('p', { class: 'fine' }, 'No saved addresses yet.')]));
+
+  const count = data.alerts || 0;
+  $('alerts-state').textContent = count ? `on for ${count} device${count === 1 ? '' : 's'}` : 'off';
+  $('alerts-state').classList.toggle('ok', count > 0);
+  const supported = 'serviceWorker' in navigator && 'PushManager' in window && Boolean(state.config?.vapidPublicKey);
+  $('alerts-on').hidden = !supported;
+  $('alerts-off').hidden = !supported || !count;
+  if (!supported) $('alerts-error').textContent = 'This browser cannot show alerts. On an iPhone, add Palm to your home screen first.';
+}
+
+async function freezeNow() {
+  $('freeze-error').textContent = '';
+  if (!window.confirm('Freeze this vault now? Everything waiting is cancelled, and nothing can be sent until your signers unfreeze it with their palms.')) return;
+  try {
+    await api('/api/vault/freeze', {});
+    toast('The vault is frozen.');
+    await refresh();
+  } catch (error) {
+    $('freeze-error').textContent = friendly(error);
+  }
+}
+
+async function startUnfreeze() {
+  $('freeze-error').textContent = '';
+  try {
+    const { operation } = await api('/api/vault/unfreeze/approval', {});
+    openApproval(operation, 'Unfreezing…');
+  } catch (error) {
+    $('freeze-error').textContent = friendly(error);
+  }
+}
+
+$('frozen-unfreeze').addEventListener('click', startUnfreeze);
+
+$('address-save').addEventListener('click', async () => {
+  $('address-error').textContent = '';
+  try {
+    const { operation } = await api('/api/addresses/approval', {
+      network: $('address-network').value,
+      address: $('address-value').value.trim(),
+      name: $('address-name').value.trim(),
+    });
+    $('address-value').value = '';
+    $('address-name').value = '';
+    openApproval(operation, 'Saving the name…');
+  } catch (error) {
+    $('address-error').textContent = friendly(error);
+  }
+});
+
+// The page is handed the public key the alerts are signed with, in the form the browser wants.
+const vapidKey = text => Uint8Array.from(atob(text.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (text.length % 4)) % 4)), c => c.charCodeAt(0));
+
+$('alerts-on').addEventListener('click', async () => {
+  $('alerts-error').textContent = '';
+  try {
+    if ((await Notification.requestPermission()) !== 'granted') {
+      $('alerts-error').textContent = 'Alerts are blocked for this site. Allow notifications in your browser settings, then try again.';
+      return;
+    }
+    const registration = await navigator.serviceWorker.ready;
+    const subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true, applicationServerKey: vapidKey(state.config.vapidPublicKey),
+    });
+    await api('/api/push/subscribe', subscription.toJSON());
+    toast('Alerts are on for this device.');
+    await refresh();
+  } catch (error) {
+    $('alerts-error').textContent = friendly(error);
+  }
+});
+
+$('alerts-off').addEventListener('click', async () => {
+  $('alerts-error').textContent = '';
+  try {
+    const registration = await navigator.serviceWorker.ready;
+    const subscription = await registration.pushManager.getSubscription();
+    if (subscription) {
+      await api('/api/push/unsubscribe', { endpoint: subscription.endpoint });
+      await subscription.unsubscribe();
+    }
+    toast('Alerts are off for this device.');
+    await refresh();
+  } catch (error) {
+    $('alerts-error').textContent = friendly(error);
+  }
+});
 
 /* ------------------------------------------- one account's signers and rules */
 
@@ -2179,6 +2290,8 @@ async function openApproval(operation, busy) {
     attestation: 'Palm approval · authorisation key',
     upgrade: 'Palm approval · moving the vault',
     reset: 'Palm approval · erasing the vault',
+    address: 'Palm approval · saving an address name',
+    unfreeze: 'Palm approval · unfreezing the vault',
   };
   $('approval-kind').textContent = kinds[operation.kind] || 'Palm approval';
   $('approval-statement').textContent = operation.statement;

@@ -243,7 +243,7 @@ export function checkpointsAgree(bundle, verifySignature = null) {
     if (covered.length !== record.count) {
       problems.push(`the bundle has ${entries.length} entries, fewer than the ${record.count} this checkpoint covers`);
     } else if (headThere !== record.head) {
-      problems.push('the log did not pass through the head this checkpoint commits to — it has been rewritten');
+      problems.push('the log did not pass through the head this checkpoint commits to, so it has been rewritten');
     }
     if (verifySignature) {
       const signature = verifySignature(checkpoint);

@@ -29,7 +29,7 @@ export function mockWorld(clock) {
   const { privateKey, publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
   const jwk = { ...publicKey.export({ format: 'jwk' }), kid: 'k1', alg: 'ES256', use: 'sig' };
   const requests = new Map();
-  const log = { created: [], acks: [], cancelled: [], broadcast: [] };
+  const log = { created: [], acks: [], cancelled: [], broadcast: [], push: [] };
   const chain = { utxos: [], feeRate: 2, broadcastError: null, pending: 0, unreachable: false, confirmBroadcasts: true };
   const b64 = value => Buffer.from(JSON.stringify(value)).toString('base64url');
   const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -84,6 +84,11 @@ export function mockWorld(clock) {
       return json(404, { error: 'not_found' });
     }
 
+    // A browser maker's push service: records what it was sent; a "gone" subscription answers 410.
+    if (new URL(url).hostname === 'fcm.googleapis.com') {
+      log.push.push({ url: String(url), headers: init.headers ?? {}, body });
+      return new Response(null, { status: String(url).includes('/gone') ? 410 : 201 });
+    }
     if (pathname === '/jwks.json') return json(200, { keys: [jwk] });
     if (init.headers?.authorization !== 'Basic ' + Buffer.from(`${CLIENT_ID}:${SECRET}`).toString('base64')) {
       return json(401, { error: 'invalid_client' });

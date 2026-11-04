@@ -540,3 +540,15 @@ header.top .link:hover { color: var(--ink); background: var(--wash); border-colo
 
 /* the palm vault's descriptor, shown with the chain lock: long, so it wraps */
 #chain-note code { display: block; margin-top: 6px; word-break: break-all; font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 11.5px; color: var(--ink); }
+
+/* the frozen vault: a red band across every pane until its signers unfreeze it */
+.frozen-banner { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; margin: 0 0 18px; padding: 14px 18px; border-radius: 12px; background: #fff1f1; border: 1px solid #f3b4b4; color: #7a1414; }
+.frozen-banner[hidden] { display: none; }
+.frozen-banner p { margin: 0; font-size: 14px; line-height: 1.5; }
+.frozen-banner .btn { background: #b42318; color: #fff; border: 0; }
+
+/* saving a name for an address */
+.address-form { display: grid; grid-template-columns: 150px 1fr 1fr auto; gap: 8px; align-items: center; }
+.address-form select, .address-form input { height: 38px; padding: 0 10px; border: 1px solid var(--line-2); border-radius: 9px; font: inherit; font-size: 14px; background: #fff; color: var(--ink); min-width: 0; }
+@media (max-width: 760px) { .address-form { grid-template-columns: 1fr; } }
+.mono.wrap { word-break: break-all; }

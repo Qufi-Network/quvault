@@ -2410,6 +2410,12 @@
     </nav>
 
     <div class="panes">
+      <!-- shown across every pane while the vault is frozen -->
+      <div class="frozen-banner" id="frozen-banner" role="alert" hidden>
+        <p><b>This vault is frozen.</b> <span id="frozen-what"></span></p>
+        <button class="btn sm" id="frozen-unfreeze" type="button">Unfreeze with palm scans</button>
+      </div>
+
       <!-- vault: overview -->
       <section class="pane" data-pane="dashboard">
         <header class="pane-head">
@@ -2526,6 +2532,48 @@
             <p class="quiet">Give this to a vault owner so they can add you as a signer.</p>
             <div class="kv"><span>Code</span><code id="my-code">&mdash;</code></div>
             <div class="row"><button class="btn ghost sm" id="copy-code" type="button">Copy code</button></div>
+          </section>
+
+          <section class="card stack danger-card">
+            <header class="card-head">
+              <h2>Emergency freeze</h2>
+              <span class="chip soft" id="freeze-state">not frozen</span>
+            </header>
+            <p class="quiet">If you think a device or your phrase is compromised, freeze the vault. It takes effect at once and needs no palm: everything waiting is cancelled, and nothing can be approved, signed or sent until your signers unfreeze it with their palms.</p>
+            <div class="row" id="freeze-actions">
+              <button class="btn ghost sm danger" id="freeze-vault" type="button">Freeze this vault now</button>
+            </div>
+            <p class="error" id="freeze-error" role="alert"></p>
+          </section>
+
+          <section class="card stack">
+            <header class="card-head"><h2>Saved addresses</h2></header>
+            <p class="quiet">A saved name shows on your phone when you approve a payment to that address. Saving one takes a palm scan, so a name you see there was put there by a palm.</p>
+            <div id="address-rows" class="stack tight"></div>
+            <div class="address-form">
+              <select id="address-network" aria-label="Network">
+                <option value="bitcoin">Bitcoin</option>
+                <option value="ethereum">Ethereum</option>
+                <option value="bsc">BNB Smart Chain</option>
+              </select>
+              <input id="address-value" autocomplete="off" spellcheck="false" placeholder="Address">
+              <input id="address-name" autocomplete="off" maxlength="40" placeholder="Name, for example Savings">
+              <button class="btn ghost sm" id="address-save" type="button">Save with a palm scan</button>
+            </div>
+            <p class="error" id="address-error" role="alert"></p>
+          </section>
+
+          <section class="card stack">
+            <header class="card-head">
+              <h2>Alerts</h2>
+              <span class="chip soft" id="alerts-state">off</span>
+            </header>
+            <p class="quiet">Get an alert on this device whenever someone asks for something in your vault, or freezes it. The alert itself says only that something needs you; open Palm to see what.</p>
+            <div class="row">
+              <button class="btn ghost sm" id="alerts-on" type="button">Turn on alerts on this device</button>
+              <button class="btn ghost sm" id="alerts-off" type="button" hidden>Turn off on this device</button>
+            </div>
+            <p class="error" id="alerts-error" role="alert"></p>
           </section>
 
           <section class="card stack danger-card">

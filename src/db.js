@@ -269,7 +269,8 @@ const SCHEMA = [
      DROP CONSTRAINT IF EXISTS operations_kind_v7,
      DROP CONSTRAINT IF EXISTS operations_kind,
      ADD CONSTRAINT operations_kind
-       CHECK (kind IN ('create', 'withdraw', 'policy', 'recovery', 'account', 'upgrade', 'reset', 'attestation', 'invite', 'join', 'signing', 'lock'))`,
+       CHECK (kind IN ('create', 'withdraw', 'policy', 'recovery', 'account', 'upgrade', 'reset', 'attestation', 'invite', 'join', 'signing', 'lock',
+                       'address', 'unfreeze'))`,
 
   /*
    * v14: rate limiting. One row per (policy, caller, window), counting requests.
@@ -643,6 +644,34 @@ const SCHEMA = [
   'ALTER TABLE accounts ADD COLUMN IF NOT EXISTS palm_key TEXT',
   'ALTER TABLE accounts ADD COLUMN IF NOT EXISTS recovery_delay INTEGER',
   'ALTER TABLE accounts ADD COLUMN IF NOT EXISTS descriptor TEXT',
+
+  /* ============================================== v26 — freeze, saved names, alerts
+   *
+   * A frozen vault refuses every approval, signature and send until its signers' palms
+   * unfreeze it; freezing itself takes no palm, so it is quick in an emergency. Saved names are
+   * added only through a palm approval, so a name shown on a phone was put there by a palm.
+   * A push subscription is where a signer's phone or browser is told that something needs it;
+   * the push itself carries nothing.
+   */
+  'ALTER TABLE wallets ADD COLUMN IF NOT EXISTS frozen_at BIGINT',
+  'ALTER TABLE wallets ADD COLUMN IF NOT EXISTS frozen_by TEXT',
+  `CREATE TABLE IF NOT EXISTS address_book (
+    wallet_user_id TEXT NOT NULL REFERENCES users(id),
+    network        TEXT NOT NULL,
+    address        TEXT NOT NULL,
+    name           TEXT NOT NULL,
+    added_at       BIGINT NOT NULL,
+    added_by       TEXT REFERENCES users(id),
+    PRIMARY KEY (wallet_user_id, network, address)
+  )`,
+  `CREATE TABLE IF NOT EXISTS push_subscriptions (
+    endpoint   TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL REFERENCES users(id),
+    p256dh     TEXT NOT NULL,
+    auth       TEXT NOT NULL,
+    created_at BIGINT NOT NULL
+  )`,
+  'CREATE INDEX IF NOT EXISTS push_subscriptions_user ON push_subscriptions (user_id)',
 ];
 
 /**

@@ -138,6 +138,24 @@ const SQL = {
   insertAccountFull: `INSERT INTO accounts (wallet_user_id, network, address, public_key, policy, signers, created_at)
                       VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (wallet_user_id, network) DO NOTHING`,
   setAccountPolicy: 'UPDATE accounts SET policy = $1, signers = $2 WHERE wallet_user_id = $3 AND network = $4',
+  freezeVault: 'UPDATE wallets SET frozen_at = $1, frozen_by = $2 WHERE user_id = $3 AND frozen_at IS NULL',
+  unfreezeVault: 'UPDATE wallets SET frozen_at = NULL, frozen_by = NULL WHERE user_id = $1',
+  stopOperationsOf: `UPDATE operations SET status = 'cancelled', error = $1, closed_at = $2
+                     WHERE wallet_user_id = $3 AND status IN ('collecting', 'running') AND kind <> 'unfreeze' RETURNING id`,
+  savedAddress: 'SELECT * FROM address_book WHERE wallet_user_id = $1 AND network = $2 AND address = $3',
+  addressBookOf: 'SELECT network, address, name, added_at FROM address_book WHERE wallet_user_id = $1 ORDER BY lower(name)',
+  saveAddress: `INSERT INTO address_book (wallet_user_id, network, address, name, added_at, added_by) VALUES ($1, $2, $3, $4, $5, $6)
+                ON CONFLICT (wallet_user_id, network, address)
+                DO UPDATE SET name = EXCLUDED.name, added_at = EXCLUDED.added_at, added_by = EXCLUDED.added_by`,
+  paidBefore: `SELECT count(*)::int AS n FROM operations WHERE wallet_user_id = $1 AND network = $2 AND kind = 'withdraw'
+               AND status = 'done' AND lower(details::jsonb ->> 'to') = lower($3)`,
+  pushSubscriptionsOf: 'SELECT * FROM push_subscriptions WHERE user_id = ANY($1)',
+  pushCountOf: 'SELECT count(*)::int AS n FROM push_subscriptions WHERE user_id = $1',
+  savePushSubscription: `INSERT INTO push_subscriptions (endpoint, user_id, p256dh, auth, created_at) VALUES ($1, $2, $3, $4, $5)
+                         ON CONFLICT (endpoint)
+                         DO UPDATE SET user_id = EXCLUDED.user_id, p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth, created_at = EXCLUDED.created_at`,
+  deletePushSubscription: 'DELETE FROM push_subscriptions WHERE endpoint = $1',
+  deleteMyPushSubscription: 'DELETE FROM push_subscriptions WHERE endpoint = $1 AND user_id = $2',
   lockAccountToPalm: `UPDATE accounts SET address = $1, public_key = $2, required = $3, quorum_keys = $4, lock_kind = 'palm',
                         palm_vault_id = $5, palm_key = $6, recovery_delay = $7, descriptor = $8,
                         previous_address = COALESCE(previous_address, address)
@@ -320,7 +338,7 @@ export function createApp(options) {
     if (!databaseUrl && options.requireDatabaseUrl) {
       const seen = options.databaseCandidates?.length
         ? ` The deployment has ${options.databaseCandidates.join(', ')}, but none holds a postgres:// URL.`
-        : ' This deployment has no database variable at all — connect Neon to Production, then redeploy.';
+        : ' This deployment has no database variable at all. Connect Neon to Production, then redeploy.';
       return Promise.reject(new HttpError(503, `No database yet.${seen}`));
     }
     dbPromise ??= openDb({ url: databaseUrl, dir: dataDir && path.join(dataDir, 'pgdata') })
@@ -499,6 +517,90 @@ export function createApp(options) {
     });
     return palmSignerPromise;
   };
+
+  /*
+   * Alerts: a nudge to a signer's phone or browser when something in a vault needs them.
+   *
+   * The push carries no content at all, so payment details never pass through the browser
+   * makers' push services and a forged push can say nothing false: the notification only says
+   * to open Palm, and what is there is what is true. Pushes go only to the browser makers' own
+   * push services, never to an address a caller chose, so this cannot be turned into a way of
+   * making this server call somewhere else. The VAPID key that signs them is derived from
+   * WALLET_SEED, so there is nothing new to configure.
+   */
+  const PUSH_HOSTS = [/(^|\.)fcm\.googleapis\.com$/, /(^|\.)push\.services\.mozilla\.com$/, /(^|\.)push\.apple\.com$/, /(^|\.)notify\.windows\.com$/];
+  const isPushEndpoint = value => {
+    try {
+      const url = new URL(String(value));
+      return url.protocol === 'https:' && PUSH_HOSTS.some(host => host.test(url.hostname));
+    } catch {
+      return false;
+    }
+  };
+  let vapidKeys = null;
+  const vapid = () => {
+    if (vapidKeys || !walletSeed) return vapidKeys;
+    const order = BigInt('0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551');
+    const scalar = (BigInt(`0x${crypto.createHmac('sha256', walletSeed).update('quvault vapid key v1').digest('hex')}`) % (order - 1n)) + 1n;
+    const d = Buffer.from(scalar.toString(16).padStart(64, '0'), 'hex');
+    const ecdh = crypto.createECDH('prime256v1');
+    ecdh.setPrivateKey(d);
+    const pub = ecdh.getPublicKey();
+    vapidKeys = {
+      publicKey: pub.toString('base64url'),
+      key: crypto.createPrivateKey({
+        key: { kty: 'EC', crv: 'P-256', d: d.toString('base64url'), x: pub.subarray(1, 33).toString('base64url'), y: pub.subarray(33).toString('base64url') },
+        format: 'jwk',
+      }),
+    };
+    return vapidKeys;
+  };
+
+  /** Pushes an empty alert to every device these people turned alerts on for. Never throws. */
+  async function pushTo(userIds) {
+    try {
+      const keys = vapid();
+      if (!keys || !userIds.length) return;
+      const subscriptions = await all('pushSubscriptionsOf', userIds);
+      await Promise.allSettled(subscriptions.map(async sub => {
+        if (!isPushEndpoint(sub.endpoint)) return;
+        const b64 = value => Buffer.from(JSON.stringify(value)).toString('base64url');
+        const input = `${b64({ typ: 'JWT', alg: 'ES256' })}.${b64({ aud: new URL(sub.endpoint).origin, exp: now() + 12 * 3600, sub: publicOrigin })}`;
+        const signature = crypto.sign('sha256', Buffer.from(input), { key: keys.key, dsaEncoding: 'ieee-p1363' }).toString('base64url');
+        const response = await fetchImpl(sub.endpoint, {
+          method: 'POST',
+          headers: { TTL: '3600', Urgency: 'high', authorization: `vapid t=${input}.${signature}, k=${keys.publicKey}`, 'content-length': '0' },
+          signal: AbortSignal.timeout(4000),
+        });
+        // Gone for good: the browser unsubscribed or the person cleared it.
+        if (response.status === 404 || response.status === 410) await query('deletePushSubscription', sub.endpoint);
+      }));
+    } catch (error) {
+      log.warn(`Alerts not sent: ${error.message}`);
+    }
+  }
+
+  /** Alerts everyone on a vault's roster except the person who just acted. */
+  async function alertOthers(ownerId, exceptUserId) {
+    try {
+      const members = await all('membersOf', ownerId);
+      await pushTo(members.map(m => m.member_id).filter(id => id !== exceptUserId));
+    } catch (error) {
+      log.warn(`Alerts not sent: ${error.message}`);
+    }
+  }
+
+  /*
+   * A frozen vault refuses every approval, signature and send. Freezing takes no palm, so that it
+   * is quick in an emergency; the worst a stolen session can do with it is stop payments, and
+   * unfreezing takes the palms of the vault's signers.
+   */
+  async function assertNotFrozen(ownerId) {
+    const wallet = await one('walletOf', ownerId);
+    if (wallet?.frozen_at) {
+      throw new HttpError(423, 'This vault is frozen, so nothing can be approved, signed or sent. Unfreezing it needs its signers’ palms.');
+    }
+  }
 
   /*
    * The capability to open a legacy wallet's private key, which is a different thing from the
@@ -694,6 +796,7 @@ export function createApp(options) {
     createdAt: w.created_at,
     explorer: chain.explorerAddress(w.address),
     custody: w.custody,
+    frozen: w.frozen_at ? { at: w.frozen_at, by: w.frozen_by } : null,
     // The public half of the owner's attestation key, and the lineage it descends from.
     // The server has never had the other half, and cannot extend the lineage itself.
     attestation: attestationView(w),
@@ -814,7 +917,7 @@ export function createApp(options) {
       }
     }
     subjectForm = null;
-    throw new HttpError(400, `Veyns refused the palm request both ways. ${refusals.join(' — ')} `
+    throw new HttpError(400, `Veyns refused the palm request both ways. ${refusals.join('; ')} `
       + 'Check that this account has its palm scanner connected and is admitted to the palm pilot.');
   }
 
@@ -914,6 +1017,8 @@ export function createApp(options) {
   }
 
   async function newOperation({ walletOwnerId, user, kind, statement, details, payload = null, required = 1, networkId = null }) {
+    // Nothing new starts in a frozen vault, except the request to unfreeze it.
+    if (!['create', 'unfreeze'].includes(kind)) await assertNotFrozen(walletOwnerId);
     const id = randomId(16);
     const time = now();
     const replaced = await transaction(async q => {
@@ -928,6 +1033,8 @@ export function createApp(options) {
       return closed;
     });
     cancelRemote(replaced);
+    // Everyone else on the vault hears that something was asked for, whoever asked.
+    if (!['create', 'signing'].includes(kind)) await alertOthers(walletOwnerId, user.id);
     return one('operationById', id);
   }
 
@@ -1221,7 +1328,7 @@ export function createApp(options) {
         // the ways a legacy vault can still move its money are palm-approved sweeps.
         if (moving) {
           throw new HttpError(409, 'This vault was made before keys lived in the browser and can no longer '
-            + 'spend from the server. Move it into your browser first — every coin comes with it.');
+            + 'spend from the server. Move it into your browser first; every coin comes with it.');
         }
         if (op.kind === 'lock' && !moving) {
           await lockAccount(op);
@@ -1235,6 +1342,8 @@ export function createApp(options) {
         // open the phrase, or derive the new network's address.
         : op.kind === 'invite' ? await issueInvite(op)
         : op.kind === 'join' ? await acceptInvite(op)
+        : op.kind === 'address' ? await saveAddressName(op)
+        : op.kind === 'unfreeze' ? await unfreeze(op)
         : op.kind === 'upgrade' ? await prepareUpgrade(op)
         // Erasing happens when the owner's browser confirms it, so the key is cleared there too.
         : op.kind === 'reset' ? { txid: null }
@@ -1265,6 +1374,8 @@ export function createApp(options) {
       vaultReady: Boolean(walletSeed),
       // Bitcoin palm vaults: the palm signer runs here, so it needs the seed and the Veyns backend.
       palmVault: Boolean(walletSeed && backendSecret),
+      // The key browsers check alerts against. Public by design; the private half derives from WALLET_SEED.
+      vapidPublicKey: vapid()?.publicKey ?? null,
       // Authorisation records are signed by the owner's vault; this server only verifies them.
       attestation: { algorithm: 'ML-DSA-65', signedBy: 'vault' },
       databaseVariable: options.databaseVariable ?? (databaseUrl ? 'local' : null),
@@ -1364,6 +1475,8 @@ export function createApp(options) {
       labels,
       pending: await Promise.all(open.map(withApprovals)),
       history: await Promise.all(closed.map(withApprovals)),
+      addressBook: (await all('addressBookOf', user.id)).map(a => ({ network: a.network, address: a.address, name: a.name, addedAt: a.added_at })),
+      alerts: (await one('pushCountOf', user.id)).n,
     };
 
     // Spending is Bitcoin's today, so the vault-level rules shown are that account's.
@@ -1407,6 +1520,7 @@ export function createApp(options) {
    */
   async function unlockFor({ user, params: [id] }) {
     const op = await ownOperation(id, user);
+    await assertNotFrozen(op.wallet_user_id);
     // Spending from an account the chain guards is signed by each signer in turn, with their
     // own key. Owner or not, what comes back is that person's key and the transaction the
     // quorum is collecting — never the owner's key standing in for everybody's.
@@ -1568,6 +1682,7 @@ export function createApp(options) {
   /** Takes the transaction the owner's browser signed, checks it against the approved plan, sends it. */
   async function broadcastSigned({ user, params: [id], body }) {
     const op = await ownOperation(id, user);
+    await assertNotFrozen(op.wallet_user_id);
     if (op.wallet_user_id !== user.id) throw new HttpError(403, 'Only the account owner can send this.');
     if (op.kind !== 'withdraw' && op.kind !== 'lock') throw new HttpError(409, 'That request does not send a transaction.');
     if (op.status === 'done' && op.txid) return { txid: op.txid };
@@ -1775,6 +1890,7 @@ export function createApp(options) {
 
   async function addSignature({ user, params: [id], body }) {
     const op = await ownOperation(id, user);
+    await assertNotFrozen(op.wallet_user_id);
     if (op.kind !== 'withdraw') throw new HttpError(409, 'That request is not a withdrawal.');
     if (op.status === 'done' && op.txid) return { txid: op.txid, signatures: op.required, required: op.required };
     if (op.status !== 'running') throw new HttpError(409, 'This withdrawal is not ready to sign.');
@@ -2334,6 +2450,136 @@ export function createApp(options) {
    * of them. And the threshold is part of the address, so changing it later means a new
    * address and moving the coins again.
    */
+  /* --------------------------------------------- saved names, and the payee on the phone */
+
+  // bech32 and EVM addresses mean the same in any case, so they are kept in one; base58 is not.
+  const normalAddress = (networkId, address) => (isEvm(networkId) || /^(bc1|tb1|bcrt1)/i.test(address)
+    ? address.toLowerCase() : address);
+
+  /**
+   * How a payee is put to the person approving, on their phone: by the name a palm saved for it
+   * if there is one, plainly marked when this vault has never paid it, and with the address in
+   * short groups so its start and end are easy to compare against what they expect.
+   */
+  async function describeDestination(ownerId, networkId, to) {
+    const saved = await one('savedAddress', ownerId, networkId, normalAddress(networkId, to));
+    const paid = (await one('paidBefore', ownerId, networkId, to))?.n ?? 0;
+    const groups = to.match(/.{1,4}/g) ?? [to];
+    const check = groups.length > 6 ? [...groups.slice(0, 3), '…', ...groups.slice(-2)].join(' ') : groups.join(' ');
+    return {
+      phrase: saved ? `${saved.name} (${to})` : paid ? to : `a new address ${to}`,
+      details: {
+        check_address: check,
+        ...(saved ? { saved_as: saved.name } : {}),
+        first_payment: paid ? `no, paid ${paid} time${paid === 1 ? '' : 's'} before` : 'yes, this vault has never paid it',
+      },
+    };
+  }
+
+  /** Saving a name for an address. It takes a palm, so a name on a phone was put there by a palm. */
+  async function requestAddressName({ user, body }) {
+    requirePalmReady();
+    const wallet = await one('walletOf', user.id);
+    if (!wallet) throw new HttpError(409, 'Create the wallet first.');
+    const networkId = String(body.network ?? 'bitcoin');
+    if (!NETWORKS[networkId] || !(networkId === 'bitcoin' || isEvm(networkId))) {
+      throw new HttpError(400, 'Names can be saved for Bitcoin, Ethereum and BNB Smart Chain addresses.');
+    }
+    const address = String(body.address ?? '').trim();
+    const valid = networkId === 'bitcoin' ? isValidAddress(address) : /^0x[0-9a-fA-F]{40}$/.test(address);
+    if (!valid) throw new HttpError(400, 'That is not a valid address for that network.');
+    const name = String(body.name ?? '').trim().replace(/\s+/g, ' ');
+    if (!/^[\p{L}\p{N} .,'&()]{1,40}$/u.test(name)) {
+      throw new HttpError(400, 'Use a name of up to 40 letters, numbers and spaces.');
+    }
+    const { required, signers } = await changeQuorum(user.id, 'bitcoin');
+    const statement = `Save ${address} as “${name}”`;
+    const details = {
+      action: 'save an address name',
+      network: NETWORKS[networkId].label ?? networkId,
+      address,
+      name,
+      approvals_required: `${required} of ${signers.length}`,
+      effect: 'payments to this address will show this name when they are approved',
+    };
+    const op = await newOperation({
+      walletOwnerId: user.id, user, kind: 'address', statement, details,
+      payload: { network: networkId, address: normalAddress(networkId, address), name }, required, networkId: 'bitcoin',
+    });
+    return { operation: operationView(op, [], user) };
+  }
+
+  async function saveAddressName(op) {
+    const { network: networkId, address, name } = JSON.parse(op.payload);
+    await query('saveAddress', op.wallet_user_id, networkId, address, name, now(), op.started_by);
+    return { txid: null };
+  }
+
+  /* ------------------------------------------------------------------ freeze */
+
+  /** Anyone on a vault's roster can freeze it, at once, without a palm. */
+  async function freezeVault({ user, body }) {
+    const ownerId = String(body.vaultOwnerId ?? user.id);
+    const wallet = await one('walletOf', ownerId);
+    const allowed = wallet && (ownerId === user.id || await one('memberIn', ownerId, user.id));
+    if (!allowed) throw new HttpError(404, 'Vault not found.');
+    const time = now();
+    const stopped = await transaction(async q => {
+      const froze = (await q('freezeVault', time, user.id, ownerId)).count === 1;
+      // Everything in flight stops with it: nothing approved before the freeze can be signed after.
+      const ops = (await q('stopOperationsOf', 'The vault was frozen.', time, ownerId)).rows;
+      const approvals = [];
+      for (const op of ops) approvals.push(...(await q('cancelApprovalsOf', time, op.id)).rows);
+      return { froze, approvals };
+    });
+    cancelRemote(stopped.approvals);
+    if (stopped.froze) await alertOthers(ownerId, user.id);
+    const after = await one('walletOf', ownerId);
+    return { frozen: { at: after.frozen_at, by: after.frozen_by } };
+  }
+
+  /** Unfreezing takes the palms of the vault's signers: the same quorum any other change needs. */
+  async function requestUnfreeze({ user, body }) {
+    requirePalmReady();
+    const ownerId = String(body.vaultOwnerId ?? user.id);
+    const wallet = await one('walletOf', ownerId);
+    const allowed = wallet && (ownerId === user.id || await one('memberIn', ownerId, user.id));
+    if (!allowed) throw new HttpError(404, 'Vault not found.');
+    if (!wallet.frozen_at) throw new HttpError(409, 'This vault is not frozen.');
+    const { required, signers } = await changeQuorum(ownerId, 'bitcoin');
+    const statement = ownerId === user.id ? 'Unfreeze my vault' : 'Unfreeze the vault';
+    const details = {
+      action: 'unfreeze the vault',
+      frozen_since: new Date(wallet.frozen_at * 1000).toUTCString(),
+      approvals_required: `${required} of ${signers.length}`,
+      effect: 'payments and changes can be asked for and approved again',
+    };
+    const op = await newOperation({ walletOwnerId: ownerId, user, kind: 'unfreeze', statement, details, required, networkId: 'bitcoin' });
+    return { operation: operationView(op, [], user) };
+  }
+
+  async function unfreeze(op) {
+    await query('unfreezeVault', op.wallet_user_id);
+    return { txid: null };
+  }
+
+  /* ------------------------------------------------------------------ alerts */
+
+  async function subscribePush({ user, body }) {
+    const endpoint = String(body.endpoint ?? '');
+    const p256dh = String(body.keys?.p256dh ?? '');
+    const auth = String(body.keys?.auth ?? '');
+    if (!isPushEndpoint(endpoint) || endpoint.length > 1000) throw new HttpError(400, 'That is not a browser push address.');
+    if (!/^[\w-]{20,200}$/.test(p256dh) || !/^[\w-]{8,100}$/.test(auth)) throw new HttpError(400, 'That subscription is incomplete.');
+    await query('savePushSubscription', endpoint, user.id, p256dh, auth, now());
+    return { alerts: (await one('pushCountOf', user.id)).n };
+  }
+
+  async function unsubscribePush({ user, body }) {
+    await query('deleteMyPushSubscription', String(body.endpoint ?? ''), user.id);
+    return { alerts: (await one('pushCountOf', user.id)).n };
+  }
+
   async function requestLock({ user, body }) {
     requirePalmReady();
     const wallet = await one('walletOf', user.id);
@@ -3065,9 +3311,10 @@ export function createApp(options) {
     // which is the safe direction (more approvals, never fewer).
     const ladder = await quorumFor(user.id, networkId, Number(value));
     const required = ladder.required;
-    const statement = `Send ${format(value, networkId)} ${net.symbol} to ${to}`;
+    const destination = await describeDestination(user.id, networkId, to);
+    const statement = `Send ${format(value, networkId)} ${net.symbol} to ${destination.phrase}`;
     const details = {
-      action: 'withdraw', network: networkId, to,
+      action: 'withdraw', network: networkId, to, ...destination.details,
       amount_wei: value, chain_id: net.chainId,
       max_fee_per_gas: plan.maxFeePerGas, gas_limit: plan.gasLimit,
       approvals_required: `${required} of ${ladder.signers.length} signer${ladder.signers.length === 1 ? '' : 's'}`,
@@ -3170,7 +3417,7 @@ export function createApp(options) {
       });
       throw new HttpError(409, 'This vault was made before keys lived in the browser, so the server still '
         + 'holds its key and spending from it is no longer allowed. Move the vault into your browser '
-        + 'first — it takes one palm scan and brings every coin with it.');
+        + 'first. It takes one palm scan and brings every coin with it.');
     }
 
     // Which account is spending. Defaults to Bitcoin for back-compatibility; an EVM network
@@ -3192,7 +3439,7 @@ export function createApp(options) {
       if (signers.length > 1) {
         throw new HttpError(409,
           'This vault has more than one signer, so it must be locked to the chain before it can send. '
-          + 'Lock it to a quorum first — until then its coins are guarded only by a rule here, not by Bitcoin.');
+          + 'Lock it to a quorum first: until then its coins are guarded only by a rule here, not by Bitcoin.');
       }
     }
     const lock = lockOfAccount(account, wallet);
@@ -3221,11 +3468,13 @@ export function createApp(options) {
     const required = lock.required ?? ladder.required;
     // The digest of the exact transaction is part of what the palm approves, not a note beside it.
     const bound = bindPlan(lock, plan);
-    const statement = `Send ${toBtc(plan.sentSats)} tBTC to ${to}`;
+    const destination = await describeDestination(user.id, 'bitcoin', to);
+    const statement = `Send ${toBtc(plan.sentSats)} tBTC to ${destination.phrase}`;
     const details = {
       action: 'withdraw',
       network,
       to,
+      ...destination.details,
       amount_sats: plan.sentSats,
       fee_sats: plan.feeSats,
       fee_rate: `${plan.feeRate} sat/vB`,
@@ -3264,6 +3513,7 @@ export function createApp(options) {
   async function joinOperation({ user, params: [id] }) {
     requirePalmReady();
     const op = await ownOperation(id, user);
+    if (op.kind !== 'unfreeze') await assertNotFrozen(op.wallet_user_id);
     if (op.status !== 'collecting') throw new HttpError(409, 'This request is no longer collecting approvals.');
     if (op.expires_at <= now()) throw new HttpError(409, 'This request has expired.');
     if (op.kind === 'join') {
@@ -3443,6 +3693,11 @@ export function createApp(options) {
     { method: 'POST', path: '/api/invites/cancel', handler: cancelInvite, auth: true, limit: RATE.write },
     { method: 'POST', path: '/api/invites/join', handler: requestJoin, auth: true, limit: RATE.palm },
     { method: 'POST', path: '/api/accounts/lock', handler: requestLock, auth: true, limit: RATE.spend },
+    { method: 'POST', path: '/api/addresses/approval', handler: requestAddressName, auth: true, limit: RATE.palm },
+    { method: 'POST', path: '/api/vault/freeze', handler: freezeVault, auth: true, limit: RATE.write },
+    { method: 'POST', path: '/api/vault/unfreeze/approval', handler: requestUnfreeze, auth: true, limit: RATE.palm },
+    { method: 'POST', path: '/api/push/subscribe', handler: subscribePush, auth: true, limit: RATE.write },
+    { method: 'POST', path: '/api/push/unsubscribe', handler: unsubscribePush, auth: true, limit: RATE.write },
     { method: 'POST', path: '/api/signing-key/approval', handler: requestSigningKey, auth: true, limit: RATE.palm },
     { method: 'POST', path: '/api/signing-key/register', handler: registerSigningKey, auth: true, limit: RATE.write },
     { method: 'POST', path: '/api/attestation/approval', handler: requestAttestationRotation, auth: true, limit: RATE.palm },

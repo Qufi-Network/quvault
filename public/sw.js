@@ -13,7 +13,7 @@
  *   - A POST, a cross-origin request to the identity provider, or anything with credentials is
  *     passed straight through and left alone.
  */
-const CACHE = 'veyns-shell-v12';
+const CACHE = 'veyns-shell-v13';
 
 // The shell: enough to render the app offline. Everything else is cached as it is fetched.
 const SHELL = [
@@ -83,4 +83,27 @@ self.addEventListener('fetch', event => {
       return cached || fromNetwork;
     }),
   );
+});
+
+/*
+ * Alerts. The push carries nothing, by design: it only wakes this worker, which says that
+ * something in the vault needs attention. What it is, and whether it is real, is whatever Palm
+ * shows when it is opened, so a forged push can claim nothing.
+ */
+self.addEventListener('push', event => {
+  event.waitUntil(self.registration.showNotification('Palm', {
+    body: 'Something in your vault needs you. Open Palm to see what.',
+    icon: '/icon-192.png',
+    badge: '/palm-favicon.png',
+    tag: 'palm-vault',
+    renotify: true,
+  }));
+});
+
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(windows => {
+    const open = windows.find(w => new URL(w.url).origin === self.location.origin);
+    return open ? open.focus() : self.clients.openWindow('/');
+  }));
 });
