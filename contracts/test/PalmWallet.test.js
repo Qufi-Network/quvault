@@ -237,3 +237,89 @@ describe('PalmWallet', () => {
     await reverts(Wallet.deploy(people, 2, palmAddr, 60), Wallet, 'BadSetup');
   });
 });
+
+/*
+ * The wallet as the app makes it: no factory of ours, but the standard CREATE2 deployment proxy,
+ * an address worked out by src/palm-wallet.js before anything exists, the app's own encoding of
+ * every call, signers signing with the browser's signing code, and transactions signed by the
+ * server's gas account. If any byte of that disagrees with the contract, this fails.
+ */
+describe('Palm Wallet as the app builds it', () => {
+  // Arachnid's deterministic deployment proxy, as it sits at 0x4e59…956c on Sepolia and BSC testnet.
+  const PROXY = '0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3';
+  let relayer;
+  before(async () => { relayer = await import('../../src/palm-relayer.js'); });
+
+  /** Sends a transaction the way the server's gas account does: built and signed by the app's code. */
+  async function relayed(key, { to, data, gasLimit }) {
+    const chainId = (await ethers.provider.getNetwork()).chainId;
+    const from = relayer.relayerAddressOf(key);
+    const block = await ethers.provider.getBlock('latest');
+    const fields = {
+      chainId: chainId.toString(), nonce: String(await ethers.provider.getTransactionCount(from, 'pending')),
+      maxPriorityFeePerGas: '1000000000', maxFeePerGas: (block.baseFeePerGas * 2n + 1000000000n).toString(),
+      gasLimit: String(gasLimit), to, value: '0', data,
+    };
+    const { raw, txid } = relayer.signRelayed(fields, key);
+    const sent = await ethers.provider.send('eth_sendRawTransaction', [raw]);
+    expect(sent).to.equal(txid);
+    return ethers.provider.getTransactionReceipt(sent); // the local chain mines each transaction at once
+  }
+
+  it('is reached at its promised address, receives before it exists, and is built and spent by the gas account', async () => {
+    await ethers.provider.send('hardhat_setCode', [pw.DEPLOYER, PROXY]);
+    const [payer] = await ethers.getSigners();
+    const veyns = mockVeyns();
+    const palm = signerModule.createPalmSigner({ seed: crypto.randomBytes(32), issuer: ISSUER, audience: AUDIENCE, pinnedKeys: [veyns.jwk] });
+    const vaultId = `vault-${crypto.randomBytes(4).toString('hex')}`;
+    const keys = Array.from({ length: 3 }, () => crypto.randomBytes(32));
+    const people = keys.map((key, i) => ({ key, address: pw.addressOfKey(key), sub: `sub-${i}` }))
+      .sort((a, b) => (BigInt(a.address) < BigInt(b.address) ? -1 : 1));
+    const params = pw.walletParams({
+      signers: people.map(p => p.address), threshold: 2, palmSigner: palm.palmAddressFor(vaultId), recoveryDays: 30,
+    });
+    const salt = pw.walletSalt(vaultId);
+    const address = pw.walletAddressOf(params, salt);
+    expect(await ethers.provider.getCode(address)).to.equal('0x');
+
+    // Coins can arrive before the wallet exists.
+    await (await payer.sendTransaction({ to: address, value: ethers.parseEther('3') })).wait();
+
+    // The gas account builds it, through the deployment proxy, at exactly that address.
+    const gasKey = relayer.relayerKeyFrom(crypto.randomBytes(32).toString('base64'));
+    await (await payer.sendTransaction({ to: relayer.relayerAddressOf(gasKey), value: ethers.parseEther('1') })).wait();
+    const built = await relayed(gasKey, { to: pw.DEPLOYER, data: pw.deployCallOf(params, salt), gasLimit: 3_000_000 });
+    expect(built.status).to.equal(1);
+    expect(await ethers.provider.getCode(address)).to.not.equal('0x');
+    const wallet = await ethers.getContractAt('PalmWallet', address);
+    expect(await wallet.threshold()).to.equal(2n);
+    expect(await wallet.recoveryDelay()).to.equal(BigInt(30 * DAY));
+    expect((await wallet.signers()).map(a => a.toLowerCase())).to.deep.equal(params.signers);
+    expect(BigInt(await ethers.provider.call({ to: address, data: pw.NONCE_CALL }))).to.equal(0n);
+    expect(await ethers.provider.getBalance(address)).to.equal(ethers.parseEther('3'), 'what arrived early is there');
+
+    // Two of the three sign the way the browser does, the palm signer adds its signature, and the
+    // gas account submits the app's encoding of the call.
+    const chainId = Number((await ethers.provider.getNetwork()).chainId);
+    const ctx = { palm, veyns, vaultId, subs: people.map(p => p.sub), address, chainId, threshold: 2 };
+    const to = ethers.Wallet.createRandom().address;
+    const transfer = { token: pw.NATIVE, to, amount: ethers.parseEther('1.25').toString(), nonce: '0' };
+    const digest = pw.eip712TransferDigest({ chainId, wallet: address, transfer });
+    const signing = [people[0], people[2]];
+    const sigs = signing.map(p => pw.signDigest(digest, p.key));
+    expect(sigs.map(sig => pw.recoverAddress(digest, sig))).to.deep.equal(signing.map(p => p.address));
+    const { signature: palmSig } = approve(ctx, transfer, { approvers: signing.map(p => p.sub) });
+    const paid = await relayed(gasKey, { to: address, data: pw.transferCallOf(transfer, sigs, palmSig), gasLimit: 300_000 });
+    expect(paid.status).to.equal(1);
+    expect(await ethers.provider.getBalance(to)).to.equal(ethers.parseEther('1.25'));
+    expect(await wallet.nonce()).to.equal(1n);
+
+    // The same call without the palm key's signature is refused by the wallet itself.
+    const next = { ...transfer, nonce: '1' };
+    const nextDigest = pw.eip712TransferDigest({ chainId, wallet: address, transfer: next });
+    const forged = pw.signDigest(nextDigest, people[1].key);
+    await reverts(payer.sendTransaction({
+      to: address, data: pw.transferCallOf(next, signing.map(p => pw.signDigest(nextDigest, p.key)), forged), gasLimit: 300_000,
+    }), wallet, 'NoPalm');
+  });
+});

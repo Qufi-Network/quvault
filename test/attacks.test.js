@@ -305,7 +305,16 @@ test('ATTACK 17 — no server path can sign an authorisation', () => {
   for (const name of readdirSync(src).filter(file => file.endsWith('.js'))) {
     // The module that defines signing is allowed to define it; nothing under src/ may call it.
     if (name === 'authorization.js') continue;
-    const text = readFileSync(path.join(src, name), 'utf8');
+    // migrate.test.js writes a throwaway module into src/ and removes it again; when the two run
+    // side by side it can vanish between the listing and the read. A file that is gone is not code
+    // that ships, so it is skipped rather than failing the guard.
+    let text;
+    try {
+      text = readFileSync(path.join(src, name), 'utf8');
+    } catch (error) {
+      if (error.code === 'ENOENT') continue;
+      throw error;
+    }
     /*
      * Every signing function in the module, not a subset — a guard that only knows the ones
      * that existed when it was written stops guarding the moment another is added.

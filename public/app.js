@@ -679,8 +679,9 @@ const device = {
     const unlocked = await this.unlockFor(operation.id);
     // The same signer: it sees an approval carrying a PSBT and contributes one signature to
     // it rather than signing the whole spend. What comes back is a PSBT, never a key.
-    const { psbt } = await this.signerFor(unlocked).signTransaction(this.signingRequest(unlocked));
-    return api(`/api/operations/${operation.id}/signature`, { psbt });
+    const signed = await this.signerFor(unlocked).signTransaction(this.signingRequest(unlocked));
+    // Bitcoin collects a partly signed transaction; a Palm Wallet on Ethereum or BSC, a signature.
+    return api(`/api/operations/${operation.id}/signature`, signed.psbt ? { psbt: signed.psbt } : { signature: signed.signature });
   },
 
   /**
@@ -1549,10 +1550,12 @@ function drawChainLock(account) {
   const mine = state.data.members?.find(m => m.id === me.id);
   const locked = account.quorum;
   const bitcoin = account.network === 'bitcoin';
-  $('chain-card').closest('.lane').hidden = !bitcoin;
-  if (!bitcoin) return;
+  // Ethereum and BSC lock to the palm too: their coins move into a Palm Wallet contract.
+  const evm = account.family === 'evm';
+  $('chain-card').closest('.lane').hidden = !(bitcoin || evm);
+  if (!bitcoin && !evm) return;
 
-  const palmLocked = Boolean(locked?.palm);
+  const palmLocked = Boolean(locked?.palm || locked?.palmWallet);
   $('chain-state').textContent = !locked ? 'a rule here, not on the chain'
     : palmLocked
       ? (locked.keys.length === 1 ? 'your key and the palm, on the chain' : `${locked.required} of ${locked.keys.length} and the palm, on the chain`)
@@ -1580,7 +1583,11 @@ function drawChainLock(account) {
   const owner = state.data.wallet && me.id === state.data.members?.find(m => m.owner)?.id;
 
   const palmOffered = Boolean(state.config?.palmVault);
-  $('chain-explains').textContent = palmLocked
+  $('chain-explains').textContent = evm
+    ? (palmLocked
+      ? `The ${account.label} network itself needs the palm key here, as well as ${locked.required === 1 ? 'your signature' : `${locked.required} signatures`}. The coins sit in a Palm Wallet contract that checks both, so a stolen recovery phrase is not enough to move them.`
+      : `Today the coins sit in one account, and whoever holds its key could spend alone. Locking to the palm moves them into a Palm Wallet contract that also needs the palm key, so the ${account.label} network refuses any transfer without a palm approval. ${ready} of ${signers.length} signers have made a signing key.`)
+    : palmLocked
     ? `Bitcoin itself needs the palm key here, as well as ${locked.required === 1 ? 'your signature' : `${locked.required} signatures`}. The palm key only signs after real palm approvals for that exact payment, so a stolen recovery phrase is not enough to move these coins.`
     : locked
       ? 'Bitcoin keeps this threshold. Spending takes that many signatures, each from its own signer, and this server cannot produce one.'
@@ -1619,9 +1626,10 @@ function drawChainLock(account) {
   if (!$('chain-warning').hidden) $('chain-warning').textContent = warningFor(required, signers.length, days);
 
   /* once locked: the clock, and what can be done about it */
-  $('chain-clock').hidden = !palmLocked;
-  $('vault-tools').hidden = !palmLocked;
-  if (palmLocked) {
+  // The clock, refresh, replacing a signer and the inheritance sheet are Bitcoin's for now.
+  $('chain-clock').hidden = !(palmLocked && bitcoin);
+  $('vault-tools').hidden = !(palmLocked && bitcoin);
+  if (palmLocked && bitcoin) {
     $('chain-clock-value').textContent = clockText(locked.palm);
     $('vault-tools').replaceChildren(
       button('Refresh now', 'btn ghost sm', () => startRefresh(null, $('lock-error'))),
@@ -1631,7 +1639,12 @@ function drawChainLock(account) {
     );
   }
 
-  if (palmLocked) {
+  if (palmLocked && evm) {
+    const wallet = locked.palmWallet;
+    $('chain-note').textContent = `${wallet.built ? 'The wallet contract is built.' : 'The wallet contract is built on its first payment; coins sent to this address before then are safe.'} `
+      + `Network fees are paid by Palm's gas account ${wallet.gasAccount ?? ''}${wallet.gasBalance !== null ? `, which holds ${wallet.gasBalance} ${wallet.gasSymbol}` : ''}. On a test network, top it up from a faucet. `
+      + `If the palm signer is ever gone, the signers alone can schedule a transfer that runs after about ${wallet.recoveryDelayDays} days.`;
+  } else if (palmLocked) {
     // The descriptor is the backup: with it and the recovery phrases, any Taproot wallet can find
     // these coins, and after the delay the signers alone can move them.
     $('chain-note').replaceChildren(
@@ -1653,10 +1666,10 @@ function drawChainLock(account) {
   if (keysReady && palmOffered) {
     // The palm vault is the recommended lock: Bitcoin then needs the palm as well as the keys.
     const solo = signers.length === 1;
-    const label = solo ? 'Make Bitcoin require my palm' : `Lock to ${wanted} of ${signers.length} and the palm`;
+    const label = solo ? `Make ${bitcoin ? 'Bitcoin' : account.label} require my palm` : `Lock to ${wanted} of ${signers.length} and the palm`;
     actions.push(button(label, 'btn brand sm', () => startLock(account, solo ? 1 : wanted, true, days)));
   }
-  if (keysReady && signers.length >= 2) {
+  if (keysReady && signers.length >= 2 && bitcoin) {
     actions.push(button(`Lock to ${wanted} of ${signers.length} without the palm`, palmOffered ? 'btn ghost sm' : 'btn brand sm',
       () => startLock(account, wanted, false)));
   }
@@ -2055,7 +2068,9 @@ async function startSigningKey(account) {
 async function startLock(account, required, palm = false, recoveryDays = 365) {
   $('chain-error').textContent = '';
   try {
-    const asked = await api('/api/accounts/lock', palm ? { required, palm, recoveryDays } : { required, palm });
+    const asked = await api('/api/accounts/lock', palm
+      ? { network: account.network, required, palm, recoveryDays }
+      : { network: account.network, required, palm });
     openApproval(asked.operation, palm ? 'Locking to the palm on the chain…' : 'Locking to the chain…');
   } catch (error) {
     $('chain-error').textContent = friendly(error);

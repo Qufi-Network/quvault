@@ -93,6 +93,16 @@ export function createEvmChain({ rpcUrl, chainId, explorer = null, fetchImpl = g
       return big(result).toString(10);
     },
 
+    /** The code deployed at an address: '0x' when nothing is there yet. */
+    async code(address) {
+      return String(await rpc('eth_getCode', [address, 'latest']) ?? '0x').toLowerCase();
+    },
+
+    /** A read-only contract call against the latest block, returning the raw result. */
+    async call({ to, data }) {
+      return rpc('eth_call', [{ to, data }, 'latest']);
+    },
+
     /** Posts a signed raw transaction, returning its hash. */
     async broadcast(rawHex) {
       return rpc('eth_sendRawTransaction', [rawHex]);

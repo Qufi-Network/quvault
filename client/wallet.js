@@ -21,6 +21,7 @@ import { base64urlnopad } from '@scure/base';
 import { canonicalTransaction, canonicalBytes } from '../src/canonical.js';
 import { canonicalTransfer, transferBytes, transferDigest, checkErc20Plan } from '../src/canonical-transfer.js';
 import { signingHash, assembleSigned, transactionHash as evmTxHash } from '../src/evm.js';
+import { evmTransferDigest, eip712TransferDigest, signDigest as signEvmDigest } from '../src/palm-wallet.js';
 import {
   deriveAttestationKeys, signAuthorization, signAuthorizationV2, signRegistration,
   signCheckpoint, verifyAuthorization, verifyChain,
@@ -388,6 +389,31 @@ export function signQuorum(mnemonic, { psbt, plan, index, address, transactionHa
   } finally {
     privateKey.fill(0);
   }
+}
+
+/**
+ * One signer's signature towards a Palm Wallet transfer on Ethereum or BSC.
+ *
+ * The same signing key the person holds for this vault's Bitcoin, used here for an EIP-712
+ * digest the wallet contract recomputes. Before anything is signed, the transfer is hashed again
+ * and must be the one the palm approved; what comes back is a signature, never the key.
+ */
+export function signPalmWalletTransfer(mnemonic, { keyIndex, palmWallet, transactionHash }) {
+  const { privateKey, publicKey } = cosignerFrom(mnemonic, keyIndex);
+  try {
+    const { chainId, wallet, transfer } = palmWallet ?? {};
+    if (evmTransferDigest({ chainId, wallet, transfer }) !== transactionHash) {
+      throw new Error('This is not the transfer that was approved. Nothing has been signed.');
+    }
+    const signature = signEvmDigest(eip712TransferDigest({ chainId, wallet, transfer }), privateKey);
+    return { signature, signingKey: toHexKey(publicKey) };
+  } finally {
+    privateKey.fill(0);
+  }
+}
+
+export async function signApprovedPalmWallet(record, unlocked) {
+  return withPhrase(record, unlocked.unlock, mnemonic => signPalmWalletTransfer(mnemonic, unlocked));
 }
 
 /**
@@ -913,6 +939,8 @@ export function browserSigner(record, authorization) {
       // An account-chain transfer (Ethereum, BSC) carries a `transfer` to sign, not a UTXO
       // plan or a PSBT. Which kind of signature this is comes from the authorisation, never
       // the caller, so a page cannot ask for an EVM transfer on a Bitcoin approval.
+      // A Palm Wallet transfer on Ethereum or BSC: one signer's EIP-712 signature, not a transaction.
+      if (authorization.palmWallet) return sealResult(await signApprovedPalmWallet(record, authorization));
       if (authorization.transfer) return sealResult(await signApprovedTransfer(record, authorization, { network }));
       return sealResult(authorization.psbt
         ? await signApprovedQuorum(record, authorization, { network })
