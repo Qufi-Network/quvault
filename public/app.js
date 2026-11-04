@@ -1435,9 +1435,11 @@ function drawChainLock(account) {
   $('chain-card').closest('.lane').hidden = !bitcoin;
   if (!bitcoin) return;
 
-  $('chain-state').textContent = locked
-    ? `${locked.required} of ${locked.keys.length} on the chain`
-    : 'a rule here, not on the chain';
+  const palmLocked = Boolean(locked?.palm);
+  $('chain-state').textContent = !locked ? 'a rule here, not on the chain'
+    : palmLocked
+      ? (locked.keys.length === 1 ? 'your key and the palm, on the chain' : `${locked.required} of ${locked.keys.length} and the palm, on the chain`)
+      : `${locked.required} of ${locked.keys.length} on the chain`;
   $('chain-state').classList.toggle('ok', Boolean(locked));
   $('lock-error').textContent = '';
 
@@ -1460,9 +1462,14 @@ function drawChainLock(account) {
   const ready = signers.filter(s => s.signingKey).length;
   const owner = state.data.wallet && me.id === state.data.members?.find(m => m.owner)?.id;
 
-  $('chain-explains').textContent = locked
-    ? 'Bitcoin keeps this threshold. Spending takes that many signatures, each from its own signer, and this server cannot produce one.'
-    : `Today the threshold is a rule this server remembers: the coins sit behind one key, and whoever holds it could spend alone. Locking moves them into a script naming every signer's key. ${ready} of ${signers.length} signers have made one.`;
+  const palmOffered = Boolean(state.config?.palmVault);
+  $('chain-explains').textContent = palmLocked
+    ? `Bitcoin itself needs the palm key here, as well as ${locked.required === 1 ? 'your signature' : `${locked.required} signatures`}. The palm key only signs after real palm approvals for that exact payment, so a stolen recovery phrase is not enough to move these coins.`
+    : locked
+      ? 'Bitcoin keeps this threshold. Spending takes that many signatures, each from its own signer, and this server cannot produce one.'
+      : palmOffered
+        ? `Today the coins sit behind one key, and whoever holds it could spend alone. Locking to the palm moves them into a Bitcoin script that also needs the palm key, so nothing moves without a palm approval. ${ready} of ${signers.length} signers have made a signing key.`
+        : `Today the threshold is a rule this server remembers: the coins sit behind one key, and whoever holds it could spend alone. Locking moves them into a script naming every signer's key. ${ready} of ${signers.length} signers have made one.`;
 
   /* the threshold that would be locked in */
   const wanted = state.chainThreshold ?? Math.min(2, signers.length);
@@ -1476,17 +1483,34 @@ function drawChainLock(account) {
     }, `${m} of ${signers.length}`)));
   }
 
-  $('chain-note').textContent = locked
-    ? 'Coins sent to the old address still arrive there and are still yours; tell people the new one.'
-    : 'Locking moves every coin in this account to the new address in one transaction, and the amount steps above stop applying: a script cannot read the amount being sent.';
+  if (palmLocked) {
+    // The descriptor is the backup: with it and the recovery phrases, any Taproot wallet can find
+    // these coins, and after the delay the signers alone can move them.
+    $('chain-note').replaceChildren(
+      `If the palm signer is ever gone, the signers alone can move the coins after about ${locked.palm.recoveryDelayDays} days. Keep this with your recovery phrase: `,
+      el('code', { class: 'mono wrap' }, locked.palm.descriptor),
+    );
+  } else {
+    $('chain-note').textContent = locked
+      ? 'Coins sent to the old address still arrive there and are still yours; tell people the new one.'
+      : 'Locking moves every coin in this account to the new address in one transaction, and the amount steps above stop applying: a script cannot read the amount being sent.';
+  }
 
   /* what there is to do about it */
   const actions = [];
   if (!mine?.signingKey && !locked) {
     actions.push(button('Make my signing key', 'btn brand sm', () => startSigningKey(account)));
   }
-  if (!locked && owner && ready === signers.length && signers.length >= 2) {
-    actions.push(button(`Lock to ${wanted} of ${signers.length} with a palm scan`, 'btn brand sm', () => startLock(account, wanted)));
+  const keysReady = !locked && owner && ready === signers.length && ready > 0;
+  if (keysReady && palmOffered) {
+    // The palm vault is the recommended lock: Bitcoin then needs the palm as well as the keys.
+    const solo = signers.length === 1;
+    const label = solo ? 'Make Bitcoin require my palm' : `Lock to ${wanted} of ${signers.length} and the palm`;
+    actions.push(button(label, 'btn brand sm', () => startLock(account, solo ? 1 : wanted, true)));
+  }
+  if (keysReady && signers.length >= 2) {
+    actions.push(button(`Lock to ${wanted} of ${signers.length} without the palm`, palmOffered ? 'btn ghost sm' : 'btn brand sm',
+      () => startLock(account, wanted, false)));
   }
   $('chain-actions').replaceChildren(...actions);
 }
@@ -1503,11 +1527,11 @@ async function startSigningKey(account) {
   void account;
 }
 
-async function startLock(account, required) {
+async function startLock(account, required, palm = false) {
   $('chain-error').textContent = '';
   try {
-    const asked = await api('/api/accounts/lock', { required });
-    openApproval(asked.operation, 'Locking to the chain…');
+    const asked = await api('/api/accounts/lock', { required, palm });
+    openApproval(asked.operation, palm ? 'Locking to the palm on the chain…' : 'Locking to the chain…');
   } catch (error) {
     $('chain-error').textContent = friendly(error);
   }

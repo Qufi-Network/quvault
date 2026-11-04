@@ -299,6 +299,40 @@ export function signPalmPsbt(psbt, privateKey) {
   return base64.encode(tx.toPSBT());
 }
 
+/**
+ * Which of `signerKeys` have signed every input through the normal path. The palm key is not a
+ * signer and is never counted. Keys come back in the form they were given (the account stores
+ * compressed keys), sorted.
+ */
+export function palmSignersOf(vault, psbt, signerKeys) {
+  const tx = readPsbt(psbt);
+  const leafHash = vault.leaves.normal.leafHash;
+  const perInput = [];
+  for (let i = 0; i < tx.inputsLength; i++) {
+    perInput.push(new Set((tx.getInput(i).tapScriptSig ?? [])
+      .filter(([meta]) => equalBytes(meta.leafHash, leafHash))
+      .map(([meta]) => hex.encode(meta.pubKey))));
+  }
+  if (!perInput.length) return [];
+  return signerKeys
+    .filter(key => perInput.every(set => set.has(hex.encode(xOnlyKey(key)))))
+    .sort();
+}
+
+/** Puts signers' work on one palm vault spend together. Work for another transaction is refused. */
+export function combinePalmPsbts(psbts) {
+  const [first, ...rest] = psbts.map(readPsbt);
+  if (!first) throw new WalletError('There is nothing to put together.');
+  for (const part of rest) {
+    try {
+      first.combine(part);
+    } catch (error) {
+      throw new WalletError(`Those signatures are not for this transaction: ${error.message}`);
+    }
+  }
+  return base64.encode(first.toPSBT());
+}
+
 /** Which path every input spends through, or null when they disagree or are not this vault's. */
 export function palmPathOf(vault, psbt) {
   const tx = readPsbt(psbt);

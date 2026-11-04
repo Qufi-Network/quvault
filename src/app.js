@@ -11,8 +11,12 @@ import { serverKeys, seal, open as openSealed, sealRoot, rootSealMatches } from 
 import { createChain, createPrices, ChainError } from './chain.js';
 import {
   createKey, publicKeyOf, addressOf, planSpend, signPlan, isValidAddress, toBtc, verifyAgainstPlan, WalletError,
-  multisigAddressOf, multisigOf, psbtForPlan, signersOfPsbt, combinePsbts, finalizePsbt, signatureCount,
+  multisigAddressOf, multisigOf, psbtForPlan, signersOfPsbt, combinePsbts, finalizePsbt, signatureCount, NETWORK,
 } from './bitcoin.js';
+import {
+  palmVaultOf, planPalmSpend, palmVaultPsbt, palmSignersOf, combinePalmPsbts, finalizePalmPsbt, DEFAULT_RECOVERY_DELAY,
+} from './palm-vault.js';
+import { createPalmSigner, PalmRefused } from './palm-signer.js';
 import { DEFAULT_POLICY, PolicyError, describePolicy, requiredFor, requiredToChange, validatePolicy } from './policy.js';
 import { NETWORKS, createBalances, format, networkList } from './networks.js';
 import { canonicalTransfer, transferBytes, transferDigest, checkErc20Plan } from './canonical-transfer.js';
@@ -134,6 +138,10 @@ const SQL = {
   insertAccountFull: `INSERT INTO accounts (wallet_user_id, network, address, public_key, policy, signers, created_at)
                       VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (wallet_user_id, network) DO NOTHING`,
   setAccountPolicy: 'UPDATE accounts SET policy = $1, signers = $2 WHERE wallet_user_id = $3 AND network = $4',
+  lockAccountToPalm: `UPDATE accounts SET address = $1, public_key = $2, required = $3, quorum_keys = $4, lock_kind = 'palm',
+                        palm_vault_id = $5, palm_key = $6, recovery_delay = $7, descriptor = $8,
+                        previous_address = COALESCE(previous_address, address)
+                      WHERE wallet_user_id = $9 AND network = $10`,
   lockAccountToQuorum: `UPDATE accounts SET address = $1, public_key = $2, required = $3, quorum_keys = $4,
                           previous_address = COALESCE(previous_address, address)
                         WHERE wallet_user_id = $5 AND network = $6`,
@@ -196,7 +204,7 @@ const SQL = {
   claimApproval: `UPDATE approvals SET status = 'approved', proof_id = $1, closed_at = $2 WHERE id = $3 AND status = 'open'`,
   cancelApprovalsOf: `UPDATE approvals SET status = 'cancelled', closed_at = $1 WHERE operation_id = $2 AND status = 'open' RETURNING request_id`,
   setPalmRequest: `UPDATE approvals SET request_id = $1, challenge = $2, approval_url = $3 WHERE id = $4 AND status = 'open'`,
-  setDecision: 'UPDATE approvals SET decision_id = $1 WHERE id = $2',
+  setDecision: 'UPDATE approvals SET decision_id = $1, decision_token = $3 WHERE id = $2',
   markAcked: 'UPDATE approvals SET acked = true WHERE id = $1',
 };
 
@@ -453,6 +461,46 @@ export function createApp(options) {
   };
 
   /*
+   * The palm signer: the holder of every palm vault's palm key, and so the reason Bitcoin
+   * itself refuses a palm vault spend that no palm approved.
+   *
+   * HERE, in this step, it runs inside this server and its seed is derived from WALLET_SEED.
+   * That closes the gap it was built for — a stolen recovery phrase is no longer enough to
+   * move a palm vault's coins, because the thief has the signer keys and not the palm key — but
+   * a compromise of this server still reaches the palm key. Moving the signer into an attested
+   * enclave, with the vault policy recorded there, is the next step and is not this one.
+   *
+   * Each vault's palm key is recorded on its account when the vault is made, and checked
+   * against the signer before every use: if the seed ever changed, the signer would derive a
+   * different key, and a spend is refused rather than signed for a vault it does not hold.
+   *
+   * Veyns' keys are fetched once per process and pinned for its life, so a decision is checked
+   * against the keys the signer started with rather than against whatever is served later.
+   */
+  let palmSignerPromise = null;
+  const palmSigner = () => {
+    if (!walletSeed) return Promise.reject(new HttpError(503, 'The palm signer needs WALLET_SEED.'));
+    palmSignerPromise ??= (async () => {
+      let body;
+      try {
+        const response = await fetchImpl(`${issuer}/jwks.json`, { signal: AbortSignal.timeout(10_000) });
+        if (!response.ok) throw new Error(`status ${response.status}`);
+        body = await response.json();
+      } catch {
+        throw new HttpError(502, 'Could not load the Veyns signing keys for the palm signer.');
+      }
+      const seed = crypto.createHmac('sha256', walletSeed).update('quvault palm signer seed v1').digest();
+      return createPalmSigner({
+        seed, issuer, audience: clientId, pinnedKeys: body.keys ?? [], networkName: network, network: NETWORK, now,
+      });
+    })().catch(error => {
+      palmSignerPromise = null;
+      throw error;
+    });
+    return palmSignerPromise;
+  };
+
+  /*
    * The capability to open a legacy wallet's private key, which is a different thing from the
    * capability to open an unlock secret even though the same bytes derive both.
    *
@@ -581,9 +629,32 @@ export function createApp(options) {
    * chain keeps. Everything that plans, signs or checks a spend asks this, so there is one
    * answer to the question rather than one per call site.
    */
-  const lockOfAccount = (account, wallet) => (account?.required
-    ? { address: account.address, publicKeys: JSON.parse(account.quorum_keys), required: account.required }
-    : { address: wallet.address, publicKey: Buffer.from(wallet.public_key, 'hex'), required: null });
+  const lockOfAccount = (account, wallet) => {
+    if (account?.required && account.lock_kind === 'palm') {
+      const publicKeys = JSON.parse(account.quorum_keys);
+      const vault = palmVaultOf({
+        palmKey: account.palm_key, signerKeys: publicKeys, required: account.required,
+        delay: account.recovery_delay, network: NETWORK,
+      });
+      // The stored address and the one these keys make must be the same vault, or nothing here
+      // can be trusted to describe where the coins are.
+      if (vault.address !== account.address) throw new HttpError(500, 'This palm vault does not match its own keys.');
+      return { kind: 'palm', address: account.address, publicKeys, required: account.required, vault };
+    }
+    return account?.required
+      ? { kind: 'multisig', address: account.address, publicKeys: JSON.parse(account.quorum_keys), required: account.required }
+      : { kind: 'single', address: wallet.address, publicKey: Buffer.from(wallet.public_key, 'hex'), required: null };
+  };
+
+  // The four things a spend does that depend on what the coins are locked to.
+  const planFor = (lock, { utxos, toAddress, amountSats, feeRate }) => (lock.kind === 'palm'
+    ? planPalmSpend({ vault: lock.vault, utxos, toAddress, amountSats, feeRate })
+    : planSpend({ ...lock, utxos, toAddress, amountSats, feeRate }));
+  const unsignedFor = (lock, plan) => (lock.kind === 'palm' ? palmVaultPsbt(lock.vault, plan) : psbtForPlan(lock, plan));
+  const signersOn = (lock, psbt) => (lock.kind === 'palm'
+    ? palmSignersOf(lock.vault, psbt, lock.publicKeys)
+    : signersOfPsbt(psbt));
+  const combineFor = (lock, psbts) => (lock.kind === 'palm' ? combinePalmPsbts(psbts) : combinePsbts(psbts));
 
   const signersOf = (account, members) => {
     const roster = members.map(m => m.member_id);
@@ -1192,6 +1263,8 @@ export function createApp(options) {
       requirePalmSignin,
       network,
       vaultReady: Boolean(walletSeed),
+      // Bitcoin palm vaults: the palm signer runs here, so it needs the seed and the Veyns backend.
+      palmVault: Boolean(walletSeed && backendSecret),
       // Authorisation records are signed by the owner's vault; this server only verifies them.
       attestation: { algorithm: 'ML-DSA-65', signedBy: 'vault' },
       databaseVariable: options.databaseVariable ?? (databaseUrl ? 'local' : null),
@@ -1262,7 +1335,8 @@ export function createApp(options) {
       if (!account?.required) return view;
 
       const plan = JSON.parse(op.payload);
-      const signed = signersOfPsbt(op.psbt || psbtForPlan(lockOfAccount(account), plan));
+      const lock = lockOfAccount(account);
+      const signed = signersOn(lock, op.psbt || unsignedFor(lock, plan));
       const member = await one('memberIn', op.wallet_user_id, user.id);
       const approved = approvals.some(a => a.user_id === user.id && a.status === 'approved');
       view.signatures = { done: signed.length, required: account.required };
@@ -1424,12 +1498,14 @@ export function createApp(options) {
       salt: mine.salt,
       keyIndex: member.key_index,
       signingKey: member.public_key,
-      psbt: op.psbt || psbtForPlan(lockOfAccount(account), plan),
+      psbt: op.psbt || unsignedFor(lockOfAccount(account), plan),
       plan,
       address: account.address,
       transactionHash: plan.transactionHash,
       required: account.required,
-      signatures: signersOfPsbt(op.psbt || psbtForPlan(lockOfAccount(account), plan)).length,
+      signatures: signersOn(lockOfAccount(account), op.psbt || unsignedFor(lockOfAccount(account), plan)).length,
+      // A palm vault spend is signed through a Taproot script, which the browser reads differently.
+      lockKind: lockOfAccount(account).kind,
     };
   }
 
@@ -1658,6 +1734,45 @@ export function createApp(options) {
    * This server can put signatures together. It cannot make one, because no signer's key is
    * here — which is the whole point of moving the threshold onto the chain.
    */
+  /**
+   * The palm key's signature on a palm vault spend that has all its signers.
+   *
+   * The palm signer is handed Veyns' own signed decisions and the transaction itself. It reads
+   * what is being spent out of the transaction, recomputes the digest the palms approved, and
+   * checks each decision with Veyns' key; this server's record that the palms happened is not
+   * part of what it relies on. If it refuses, nothing is signed and nothing is sent.
+   */
+  async function palmFinish(op, account, lock, psbt, approvals) {
+    const signer = await palmSigner();
+    if (signer.publicKeyFor(account.palm_vault_id) !== account.palm_key) {
+      throw new HttpError(409, 'The palm signer no longer holds this vault\'s palm key. Nothing was signed.');
+    }
+    const decisions = approvals
+      .filter(a => a.status === 'approved' && !a.invalidated_at && a.decision_token)
+      .map(a => a.decision_token);
+    // The Veyns subjects of the people who sign for this account, in both forms Veyns uses.
+    const subjects = [];
+    for (const memberId of signersOf(account, await all('membersOf', op.wallet_user_id))) {
+      const person = await one('userById', memberId);
+      if (person?.sub) subjects.push(person.sub, approvalSubject(person.sub));
+    }
+    let signed;
+    try {
+      signed = signer.sign({
+        vaultId: account.palm_vault_id,
+        policy: { signerKeys: lock.publicKeys, required: lock.required, delay: account.recovery_delay, signerSubs: subjects },
+        psbt,
+        action: { statement: op.statement, details: JSON.parse(op.details) },
+        decisions,
+      });
+    } catch (error) {
+      if (error instanceof PalmRefused) throw new HttpError(409, `The palm key refused to sign: ${error.message}.`);
+      throw error;
+    }
+    await query('setPsbt', signed.psbt, op.id);
+    return finalizePalmPsbt(lock.vault, signed.psbt);
+  }
+
   async function addSignature({ user, params: [id], body }) {
     const op = await ownOperation(id, user);
     if (op.kind !== 'withdraw') throw new HttpError(409, 'That request is not a withdrawal.');
@@ -1683,21 +1798,26 @@ export function createApp(options) {
       throw new HttpError(409, 'The stored transaction no longer matches the one that was approved.');
     }
 
-    const base = psbtForPlan(lock, plan);
-    const before = signersOfPsbt(op.psbt || base);
-    let merged;
-    try {
-      merged = combinePsbts([base, op.psbt, String(body.psbt ?? '')].filter(Boolean));
-    } catch (error) {
-      throw new HttpError(400, error instanceof WalletError ? error.message : 'That signature is not for this transaction.');
+    const base = unsignedFor(lock, plan);
+    const before = signersOn(lock, op.psbt || base);
+    // A palm vault spend whose signers are all in, asked again after the palm signer said no
+    // (Veyns unreachable, say): nothing more to add, so go straight back to the palm signer.
+    const retry = lock.kind === 'palm' && before.length >= account.required;
+    let merged = op.psbt || base;
+    if (!retry) {
+      try {
+        merged = combineFor(lock, [base, op.psbt, String(body.psbt ?? '')].filter(Boolean));
+      } catch (error) {
+        throw new HttpError(400, error instanceof WalletError ? error.message : 'That signature is not for this transaction.');
+      }
+      const added = signersOn(lock, merged).filter(key => !before.includes(key));
+      if (added.length !== 1 || added[0] !== member.public_key) {
+        throw new HttpError(400, added.length ? 'A browser may only add a signature from its own key.' : 'That added no signature.');
+      }
+      await query('setPsbt', merged, op.id);
     }
-    const added = signersOfPsbt(merged).filter(key => !before.includes(key));
-    if (added.length !== 1 || added[0] !== member.public_key) {
-      throw new HttpError(400, added.length ? 'A browser may only add a signature from its own key.' : 'That added no signature.');
-    }
-    await query('setPsbt', merged, op.id);
 
-    const signatures = before.length + 1;
+    const signatures = retry ? before.length : before.length + 1;
     if (signatures < account.required) return { signatures, required: account.required, txid: null };
 
     // Enough of them. The finished transaction is checked against the approved plan exactly as
@@ -1705,7 +1825,8 @@ export function createApp(options) {
     // the right people.
     let finished;
     try {
-      finished = finalizePsbt(merged);
+      // A palm vault has one more signature to come, and Bitcoin will not take the spend without it.
+      finished = lock.kind === 'palm' ? await palmFinish(op, account, lock, merged, approvals) : finalizePsbt(merged);
       verifyAgainstPlan(finished.hex, plan);
     } catch (error) {
       if (error instanceof WalletError) throw new HttpError(400, error.message);
@@ -2083,6 +2204,13 @@ export function createApp(options) {
           keys: JSON.parse(row.quorum_keys),
           script: row.public_key,
           previousAddress: row.previous_address,
+          // A palm vault: Bitcoin itself needs the palm key too, and the signers alone only after
+          // the delay. The descriptor is everything another wallet needs to find these coins.
+          palm: row.lock_kind === 'palm' ? {
+            recoveryDelayBlocks: row.recovery_delay,
+            recoveryDelayDays: Math.round((row.recovery_delay * 10) / (60 * 24)),
+            descriptor: row.descriptor,
+          } : null,
         } : null,
         amount,
         formatted: amount === null ? null : format(amount, row.network),
@@ -2224,7 +2352,10 @@ export function createApp(options) {
       const names = without.map(m => m.label).join(', ');
       throw new HttpError(409, `Everyone has to make a signing key first. Still waiting for: ${names}.`);
     }
-    if (signers.length < 2) throw new HttpError(409, 'A quorum needs at least two signers.');
+    // A palm vault may be one person's: Bitcoin then needs their key and the palm key, so even a
+    // vault of one is never spent by one signature.
+    const palm = body.palm === true;
+    if (signers.length < 2 && !palm) throw new HttpError(409, 'A quorum needs at least two signers.');
 
     const required = Number(body.required);
     // A quorum on the chain must never be spendable by one signature: the floor is two.
@@ -2235,9 +2366,21 @@ export function createApp(options) {
 
     const keys = signers.map(m => m.public_key);
     let quorumAddress;
+    let palmVault = null;
     try {
-      quorumAddress = multisigAddressOf(keys, required);
+      if (palm) {
+        // A palm key for this vault alone, made by the palm signer and kept by it.
+        const signer = await palmSigner();
+        const palmVaultId = randomId(16);
+        const palmKey = signer.publicKeyFor(palmVaultId);
+        const made = palmVaultOf({ palmKey, signerKeys: keys, required, delay: DEFAULT_RECOVERY_DELAY, network: NETWORK });
+        palmVault = { kind: 'palm', palmVaultId, palmKey, delay: made.delay, descriptor: made.descriptor };
+        quorumAddress = made.address;
+      } else {
+        quorumAddress = multisigAddressOf(keys, required);
+      }
     } catch (error) {
+      if (error instanceof HttpError) throw error;
       throw new HttpError(400, error instanceof WalletError ? error.message : 'Those keys do not make a quorum.');
     }
 
@@ -2260,16 +2403,24 @@ export function createApp(options) {
     const policy = policyOfAccount(account, wallet);
     const palms = Math.min(signers.length, Math.max(requiredToChange(policy, signers.length), quorumFloor(signers.length)));
     const bound = plan ? bindPlan(wallet, plan) : null;
+    const what = palm
+      ? (signers.length === 1 ? 'my palm' : `${required} of ${signers.length} and the palm`)
+      : `${required} of ${signers.length}`;
     const statement = plan
-      ? `Lock my Bitcoin to ${required} of ${signers.length} on the chain and move ${toBtc(plan.sentSats)} tBTC to it`
-      : `Lock my Bitcoin to ${required} of ${signers.length} on the chain`;
+      ? `Lock my Bitcoin to ${what} on the chain and move ${toBtc(plan.sentSats)} tBTC to it`
+      : `Lock my Bitcoin to ${what} on the chain`;
     const details = {
-      action: 'lock to a quorum on the chain',
+      action: palm ? 'lock to the palm on the chain' : 'lock to a quorum on the chain',
       network,
       approvals_required: `${required} of ${signers.length} signature${signers.length === 1 ? '' : 's'}`,
       signers: signers.map(m => m.label).join(', '),
       to: quorumAddress,
-      effect: 'from now on this account is spent by signatures, not by one key',
+      effect: palm
+        ? 'from now on Bitcoin itself refuses any spend from this account without a palm approval'
+        : 'from now on this account is spent by signatures, not by one key',
+      ...(palm ? {
+        recovery: `if the palm signer is ever gone, the signers alone can move the coins after ${palmVault.delay} blocks, about a year`,
+      } : {}),
       ...(plan ? {
         amount_sats: plan.sentSats,
         fee_sats: plan.feeSats,
@@ -2279,15 +2430,25 @@ export function createApp(options) {
     };
     const op = await newOperation({
       walletOwnerId: user.id, user, kind: 'lock', statement, details,
-      payload: { ...(plan ?? {}), transactionHash: bound?.digest ?? null, quorum: { keys, required, address: quorumAddress } },
+      payload: { ...(plan ?? {}), transactionHash: bound?.digest ?? null, quorum: { keys, required, address: quorumAddress, ...(palmVault ?? {}) } },
       required: palms, networkId: 'bitcoin',
     });
-    return { operation: operationView(op, [], user), quorum: { address: quorumAddress, required, signers: signers.length }, plan };
+    return { operation: operationView(op, [], user), quorum: { address: quorumAddress, required, signers: signers.length, palm }, plan };
   }
 
   /** Writes the quorum onto the account, once the coins are on their way to it. */
   async function lockAccount(op) {
     const { quorum } = JSON.parse(op.payload);
+    if (quorum.kind === 'palm') {
+      const made = palmVaultOf({
+        palmKey: quorum.palmKey, signerKeys: quorum.keys, required: quorum.required, delay: quorum.delay, network: NETWORK,
+      });
+      if (made.address !== quorum.address) throw new HttpError(500, 'The palm vault no longer matches the one that was approved.');
+      await query('lockAccountToPalm', quorum.address, Buffer.from(made.leaves.normal.script).toString('hex'),
+        quorum.required, JSON.stringify(quorum.keys), quorum.palmVaultId, quorum.palmKey, quorum.delay, quorum.descriptor,
+        op.wallet_user_id, 'bitcoin');
+      return;
+    }
     const script = multisigOf(quorum.keys, quorum.required).witnessScript;
     await query('lockAccountToQuorum', quorum.address, Buffer.from(script).toString('hex'),
       quorum.required, JSON.stringify(quorum.keys), op.wallet_user_id, 'bitcoin');
@@ -3046,7 +3207,7 @@ export function createApp(options) {
     try {
       const [utxos, suggested] = await Promise.all([chain.spendableUtxos(lock.address), chain.feeRate()]);
       const feeRate = Number(body.feeRate) > 0 ? Number(body.feeRate) : suggested;
-      plan = planSpend({ ...lock, utxos, toAddress: to, amountSats, feeRate });
+      plan = planFor(lock, { utxos, toAddress: to, amountSats, feeRate });
     } catch (error) {
       if (error instanceof WalletError || error instanceof ChainError) throw new HttpError(400, error.message);
       throw error;
@@ -3083,7 +3244,7 @@ export function createApp(options) {
       transactionHash: bound.digest, threshold: required, sats: plan.sentSats, address: to,
     });
     // A quorum starts collecting signatures from the unsigned transaction itself.
-    if (lock.required) await query('setPsbt', psbtForPlan(lock, plan), op.id);
+    if (lock.required) await query('setPsbt', unsignedFor(lock, plan), op.id);
     return { operation: operationView(op, [], user), plan, rule, transactionHash: bound.digest };
   }
 
@@ -3232,7 +3393,8 @@ export function createApp(options) {
     if (problem) return fail(problem);
     if (op.status !== 'collecting') return fail('the request is no longer collecting approvals');
 
-    await query('setDecision', remote.decision_id, a.id);
+    // Veyns' own signed decision is kept, so a palm vault's signer can check it rather than trust this server.
+    await query('setDecision', remote.decision_id, a.id, remote.decision);
     await query('bindPalm', palmId(claims.sub), now(), op.wallet_user_id, user.id);
     // Record this approval and, if it completes the quorum, claim the right to run the operation.
     const mine = await transaction(async q => {

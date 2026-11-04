@@ -352,7 +352,7 @@ export function signPlan(mnemonic, plan, expectedAddress, approved = {}) {
  * spend is, before anything is signed. What goes back is the same partly signed transaction
  * with one more signature on it — this browser's — and never a key.
  */
-export function signQuorum(mnemonic, { psbt, plan, index, address, transactionHash, network }) {
+export function signQuorum(mnemonic, { psbt, plan, index, address, transactionHash, network, lockKind = 'multisig' }) {
   const { privateKey, publicKey } = cosignerFrom(mnemonic, index);
   try {
     if (transactionHash) {
@@ -361,10 +361,25 @@ export function signQuorum(mnemonic, { psbt, plan, index, address, transactionHa
         throw new Error('This is not the transaction that was approved. Nothing has been signed.');
       }
     }
-    const tx = btc.Transaction.fromPSBT(base64nopadDecode(psbt));
+    // A palm vault spends through a Taproot script the library does not know by name.
+    const palm = lockKind === 'palm';
+    const tx = btc.Transaction.fromPSBT(base64nopadDecode(psbt), palm ? { allowUnknownInputs: true } : {});
+    if (palm) {
+      // The transaction handed over must pay exactly what the plan says, or nothing is signed:
+      // the digest above covers the plan, and this ties the transaction to the plan.
+      const outputs = [...Array(tx.outputsLength).keys()].map(i => {
+        const output = tx.getOutput(i);
+        return { address: btc.Address(NETWORK).encode(btc.OutScript.decode(output.script)), sats: Number(output.amount) };
+      });
+      const planned = plan.outputs.map(o => ({ address: o.address, sats: o.sats }));
+      if (JSON.stringify(outputs) !== JSON.stringify(planned)) {
+        throw new Error('This is not the transaction that was approved. Nothing has been signed.');
+      }
+    }
     let signed = 0;
     try {
-      signed = tx.sign(privateKey);
+      // Taproot's default sighash only, so the signature covers every output.
+      signed = palm ? tx.sign(privateKey, [btc.SigHash.DEFAULT]) : tx.sign(privateKey);
     } catch {
       signed = 0;
     }
@@ -545,6 +560,7 @@ export async function signApprovedQuorum(record, unlocked, { network }) {
     address: unlocked.address,
     transactionHash: unlocked.transactionHash,
     network,
+    lockKind: unlocked.lockKind,
   }));
 }
 

@@ -629,6 +629,20 @@ const SCHEMA = [
       ('approver_revoked', 'role_removed', 'policy_changed', 'plan_changed'))`),
   // Every live quorum count reads only the approvals that still stand.
   'CREATE INDEX IF NOT EXISTS approvals_standing ON approvals (operation_id) WHERE invalidated_at IS NULL',
+
+  /* ============================================== v25 — Bitcoin itself needs the palm
+   *
+   * A palm vault is a Taproot address whose normal path needs the palm key as well as the
+   * signers, and whose only other path needs the signers and a long wait. The account records
+   * which vault it is locked to; the palm signer is given Veyns' own signed decision for each
+   * palm, so it can check them itself rather than trust that this server did.
+   */
+  'ALTER TABLE approvals ADD COLUMN IF NOT EXISTS decision_token TEXT',
+  'ALTER TABLE accounts ADD COLUMN IF NOT EXISTS lock_kind TEXT',
+  'ALTER TABLE accounts ADD COLUMN IF NOT EXISTS palm_vault_id TEXT',
+  'ALTER TABLE accounts ADD COLUMN IF NOT EXISTS palm_key TEXT',
+  'ALTER TABLE accounts ADD COLUMN IF NOT EXISTS recovery_delay INTEGER',
+  'ALTER TABLE accounts ADD COLUMN IF NOT EXISTS descriptor TEXT',
 ];
 
 /**
