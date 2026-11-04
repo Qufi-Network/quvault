@@ -128,12 +128,9 @@ test('a spend answers to the Bitcoin account\'s own threshold', async t => {
   await addAccount(env, alex, { network: 'solana', approvers: [bob], rules: [{ upToSats: null, approvals: 1 }] });
 
   env.world.chain.utxos = [{ txid: 'a'.repeat(64), vout: 0, value: 900_000 }];
-  const big = ok(await alex.post('/api/withdrawals', { to: DEST, amount: 400_000 }));
-  assert.equal(big.operation.required, 2);
-  assert.equal(big.operation.details.approvals_required, '2 of 2 signers');
-
-  await palmApprove(env, alex, big.operation.id);
-  assert.equal(env.world.log.broadcast.length, 0, 'still waiting for the second palm');
-  const done = await palmApprove(env, bob, big.operation.id);
-  assert.equal(done.operation.status, 'running', 'the quorum is in; the owner device signs it');
+  // The Bitcoin account is shared, so it must be locked to the chain before it can spend; the
+  // looser single-signer Solana account does not soften that.
+  const blocked = await alex.post('/api/withdrawals', { to: DEST, amount: 400_000 });
+  assert.equal(blocked.status, 409);
+  assert.match(blocked.body.error, /must be locked to the chain/);
 });

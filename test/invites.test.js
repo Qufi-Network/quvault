@@ -111,14 +111,14 @@ test('a signer is told what is waiting for their palm', async t => {
   await palmApprove(env, bob, join.operation.id);
   await setRules(env, alex, { rules: [{ upToSats: null, approvals: 2 }], approvers: [bob] });
 
-  env.world.chain.utxos = [{ txid: 'a'.repeat(64), vout: 0, value: 600_000 }];
-  const { operation } = ok(await alex.post('/api/withdrawals', { to: DEST, amount: 200_000 }));
+  // A change that needs both palms shows up in each signer's pending view, before a vault is
+  // ever locked. (A shared vault's spend lives on the locked multisig path, covered elsewhere.)
+  const { operation } = ok(await alex.post('/api/policy', { rules: [{ upToSats: 100_000, approvals: 2 }, { upToSats: null, approvals: 2 }] }));
 
   // Bob's own view says it is waiting for him, before he has done anything.
   const waiting = ok(await bob.get('/api/wallet')).pending.find(op => op.id === operation.id);
   assert.ok(waiting, 'he can see it at all');
   assert.equal(waiting.needsYou, true);
-  assert.match(waiting.statement, /Send 0.00200000 tBTC/);
 
   // Once he has approved, it no longer asks him.
   await palmApprove(env, bob, operation.id);

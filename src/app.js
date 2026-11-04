@@ -1502,6 +1502,17 @@ export function createApp(options) {
     // An EVM withdrawal runs the same three gates on the account-chain path.
     if (isEvm(op.network)) return evmBroadcast({ op, user, wallet, body });
 
+    // A shared vault must be locked to the chain to spend. A withdrawal planned while the vault
+    // was still solo cannot be finished once a co-signer has joined — the door check at request
+    // time cannot catch that one, so it is refused here too. Locking (op.kind 'lock') is exempt,
+    // because locking is how a shared vault stops being spendable by one key.
+    if (op.kind === 'withdraw') {
+      const acct = await one('accountOn', user.id, 'bitcoin');
+      if (!acct?.required && signersOf(acct, await all('membersOf', user.id)).length > 1) {
+        throw new HttpError(409, 'This vault now has more than one signer. Lock it to the chain before sending.');
+      }
+    }
+
     const plan = JSON.parse(op.payload);
 
     const event = { operationId: op.id, userId: user.id, vaultId: wallet.address, kind: op.kind, network, chain: 'bitcoin', custody: wallet.custody };
@@ -3011,6 +3022,18 @@ export function createApp(options) {
     }
 
     const account = await one('accountOn', user.id, 'bitcoin');
+    // A shared vault must be locked to the chain before it can send. Until it is, its coins sit
+    // behind the owner's single key and the quorum is only a rule this server keeps — so a lost
+    // phrase, or this server, could move them alone. Inviting and receiving work unlocked;
+    // sending does not. Locking sweeps the coins into the m-of-n script and is a different op.
+    if (!account?.required) {
+      const signers = signersOf(account, await all('membersOf', user.id));
+      if (signers.length > 1) {
+        throw new HttpError(409,
+          'This vault has more than one signer, so it must be locked to the chain before it can send. '
+          + 'Lock it to a quorum first — until then its coins are guarded only by a rule here, not by Bitcoin.');
+      }
+    }
     const lock = lockOfAccount(account, wallet);
 
     const to = String(body.to ?? '').trim();
