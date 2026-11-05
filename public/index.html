@@ -2399,6 +2399,10 @@
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.6 4.4 5v4.3c0 3.3 2.3 6.4 5.6 7.4 3.3-1 5.6-4.1 5.6-7.4V5Z"/><path d="M7.6 10.2 9.3 12l3.2-3.4"/></svg>
         <span>Security</span>
       </button>
+      <button class="nav" data-nav="help" type="button">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.4"/><path d="M7.9 7.9a2.2 2.2 0 1 1 3 2c-.6.3-.9.8-.9 1.4v.3"/><path d="M10 14.2v.1"/></svg>
+        <span>Help</span>
+      </button>
 
       <div class="side-head spaced">
         <p class="side-label">Accounts</p>
@@ -2414,7 +2418,7 @@
       <!-- shown across every pane while the vault is frozen -->
       <div class="frozen-banner" id="frozen-banner" role="alert" hidden>
         <p><b>This vault is frozen.</b> <span id="frozen-what"></span></p>
-        <button class="btn sm" id="frozen-unfreeze" type="button">Unfreeze with palm scans</button>
+        <button class="btn sm" id="frozen-unfreeze" type="button">Unfreeze with your palm</button>
       </div>
 
       <!-- vault: overview -->
@@ -2619,6 +2623,120 @@
             <p class="error" id="reset-error" role="alert"></p>
           </section>
         </div>
+      </section>
+
+      <!-- vault: help -->
+      <section class="pane help" data-pane="help" hidden>
+        <header class="pane-head">
+          <div>
+            <p class="eyebrow">Vault</p>
+            <h1 class="pane-title">Help</h1>
+            <p class="quiet">How Palm keeps your coins safe, and how to use it day to day.</p>
+          </div>
+        </header>
+
+        <section class="card stack help-lead">
+          <header class="card-head"><h2>How Palm protects your coins</h2></header>
+          <p>Once an account is locked, every payment from it needs two things: your signing key and your palm.</p>
+          <div class="help-pair">
+            <div>
+              <h3>Your signing key</h3>
+              <p class="quiet">Made from your recovery phrase of twelve words. It stays in this browser and never reaches Palm’s servers.</p>
+            </div>
+            <div>
+              <h3>Your palm</h3>
+              <p class="quiet">Veyns confirms on your phone that it is really you. Only then does Palm add its own signature.</p>
+            </div>
+          </div>
+          <p class="quiet">The rule is written into the vault on Bitcoin and into the wallet contract on Ethereum, so the network itself enforces it. Palm cannot move your coins on its own, and neither can someone who has only your recovery phrase.</p>
+          <p class="quiet"><b>The recovery path.</b> There is one deliberate exception. If no palm approval happens for the whole recovery delay you chose, the signers’ keys alone can move the coins. This is what lets your family reach them if Palm or Veyns is ever unavailable.</p>
+        </section>
+
+        <div class="grid-2">
+          <section class="card stack">
+            <header class="card-head"><h2>Getting started</h2></header>
+            <ol class="help-steps">
+              <li><div><b>Create your vault.</b> Sign in with your palm and choose <span class="help-ui">Create vault with a palm scan</span>. Write the twelve words on paper and keep them offline.</div></li>
+              <li><div><b>Make your signing key.</b> Open the account, go to <span class="help-ui">Signers and rules</span> and choose <span class="help-ui">Make my signing key</span>.</div></li>
+              <li><div><b>Choose a recovery delay.</b> 90, 180 or 365 days. A longer delay protects you better if your recovery phrase is ever stolen. A shorter one lets your heirs act sooner.</div></li>
+              <li><div><b>Lock the account.</b> On your own, choose <span class="help-ui">Make Bitcoin require my palm</span>, or the same for Ethereum. With other signers, choose <span class="help-ui">Lock to 2 of 3 and the palm</span>. Every coin in the account moves into the vault in a single transaction. From then on, receive only at the address the account shows.</div></li>
+              <li><div><b>Print the inheritance sheet.</b> It holds the vault description. Without it, a recovery phrase alone cannot find the coins.</div></li>
+            </ol>
+          </section>
+
+          <section class="card stack">
+            <header class="card-head"><h2>Sending and receiving</h2></header>
+            <dl class="help-terms">
+              <dt>Sending</dt>
+              <dd>Choose <span class="help-ui">Send</span>, enter the address and the amount, then <span class="help-ui">Review withdrawal</span>. Your phone then asks for your palm. Before you scan, read the message on your phone: it shows the address, the amount and the fees. Palm and your browser both check that these match the transaction, but you are the final check.</dd>
+              <dt>Fees on Ethereum and BSC</dt>
+              <dd>Each payment includes Palm’s fee of 0.1% of the amount and the network fee. Palm’s gas account pays the network fee up front, and your wallet repays it as part of the same payment.</dd>
+              <dt>Receipts</dt>
+              <dd>Every payment comes with a signed receipt. Choose <span class="help-ui">Verify against the chain</span> to confirm that the transaction on the network is exactly the one your palm approved.</dd>
+              <dt>Saved addresses</dt>
+              <dd>Save the addresses you pay often. Your phone then shows the saved name next to the address, so a changed address stands out.</dd>
+            </dl>
+          </section>
+
+          <section class="card stack">
+            <header class="card-head"><h2>When something goes wrong</h2></header>
+            <dl class="help-terms">
+              <dt>A device is lost, or you used a shared one</dt>
+              <dd>In <span class="help-ui">Security</span>, choose <span class="help-ui">Sign out on every device</span>. You then sign in again here with your palm.</dd>
+              <dt>Something looks wrong</dt>
+              <dd>Choose <span class="help-ui">Freeze this vault now</span>. Everything waiting is cancelled and nothing can be sent. The freeze lifts after 72 hours, or sooner with your palm.</dd>
+              <dt>A signer leaves or loses their phrase</dt>
+              <dd>Choose <span class="help-ui">Replace a signer</span>, then print a new inheritance sheet. The old sheet no longer matches the vault.</dd>
+              <dt>After a death</dt>
+              <dd>Once the recovery delay has passed, the heirs open the <span class="help-ui">Recovery door</span> with the inheritance sheet and the signers’ recovery phrases, and move the coins to an address of their choosing.</dd>
+            </dl>
+          </section>
+
+          <section class="card stack">
+            <header class="card-head"><h2>Good practice</h2></header>
+            <ul class="help-list">
+              <li>Keep your recovery phrase on paper or metal, offline. Never photograph it or store it online.</li>
+              <li>Keep the inheritance sheet with your will, in a different place from your recovery phrase.</li>
+              <li>For larger amounts, use 2 of 3 signers you trust, so that one lost or stolen phrase is never enough.</li>
+              <li>When you invite someone, add their approver code so the invitation works only for them. Codes change every 10 minutes, and an invitation lapses after 24 hours.</li>
+              <li>Turn on alerts on this device, so a freeze or a request for your palm reaches you straight away.</li>
+              <li>Try each new kind of payment with a small amount first.</li>
+            </ul>
+          </section>
+
+          <section class="card stack">
+            <header class="card-head"><h2>Keeping the vault active</h2></header>
+            <p class="quiet">Every payment restarts the recovery clock. If the vault has been quiet for a while, Palm reminds you to refresh it.</p>
+            <p class="quiet">Choose <span class="help-ui">Refresh now</span> and approve with your palm. The coins move back into the same vault, and the recovery path stays closed for another full delay. Only the network fee is spent.</p>
+          </section>
+
+          <section class="card stack">
+            <header class="card-head"><h2>Worth knowing</h2></header>
+            <ul class="help-list">
+              <li>Palm cannot stop a payment you approve yourself. Read the message on your phone every time.</li>
+              <li>If you lose both this browser and your recovery phrase, nobody can restore your signing key, Palm included. With 2 of 3 signers, the others can still act.</li>
+              <li>Palm runs on test networks for now: Bitcoin testnet4, Ethereum Sepolia and the BNB Smart Chain test network. Coins on these networks have no value.</li>
+            </ul>
+          </section>
+        </div>
+
+        <section class="card stack">
+          <header class="card-head"><h2>Terms used in Palm</h2></header>
+          <dl class="help-terms help-glossary">
+            <dt>Recovery phrase</dt>
+            <dd>The twelve words your signing keys come from. Anyone who has them holds your half of every signature.</dd>
+            <dt>Signer</dt>
+            <dd>A person whose key and palm count towards approving a payment. The threshold is how many of them a payment needs.</dd>
+            <dt>Palm signer</dt>
+            <dd>Palm’s own key, which signs only after Veyns confirms the right palm approved exactly this transaction.</dd>
+            <dt>Recovery delay</dt>
+            <dd>How long the vault must go without a palm approval before the signers alone can move the coins.</dd>
+            <dt>Inheritance sheet</dt>
+            <dd>A printed record of the vault description and the details needed to recover it, with or without Palm.</dd>
+            <dt>Gas account</dt>
+            <dd>The Palm account that pays Ethereum and BSC network fees on your behalf, repaid by each payment.</dd>
+          </dl>
+        </section>
       </section>
 
       <!-- one account, with its own tabs -->

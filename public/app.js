@@ -288,8 +288,8 @@ function route(hash, { remember = true } = {}) {
   const [first, second] = String(hash || '').replace(/^#/, '').split('/').filter(Boolean);
   const accounts = (state.data?.accounts || []).map(account => account.network);
 
-  if (first === 'security') {
-    state.pane = 'security';
+  if (first === 'security' || first === 'help') {
+    state.pane = first;
   } else if (first && accounts.includes(first)) {
     state.pane = 'account';
     state.account = first;
@@ -1703,7 +1703,7 @@ function drawChainLock(account) {
     // The descriptor is the backup: with it and the recovery phrases, any Taproot wallet can find
     // these coins, and after the delay the signers alone can move them.
     $('chain-note').replaceChildren(
-      `If the palm signer is ever gone, the signers alone can move the coins after about ${locked.palm.recoveryDelayDays} days. Print the inheritance sheet and keep it with your recovery phrase. It holds this vault description: `,
+      `If the palm signer is ever gone, the signers alone can move the coins after about ${locked.palm.recoveryDelayDays} days. Print the inheritance sheet and keep it with your will, apart from your recovery phrase. It holds this vault description: `,
       el('code', { class: 'mono wrap' }, locked.palm.descriptor),
     );
   } else {

@@ -587,3 +587,30 @@ dialog.wide { width: min(780px, calc(100vw - 32px)); max-width: none; }
   body.print-heir-sheet #heir-sheet, body.print-heir-sheet #heir-sheet * { color: #111 !important; border-color: #d5dbe8 !important; }
   body.print-heir-sheet #heir-sheet .sheet { overflow: visible; max-height: none; }
 }
+
+/* help */
+.help .card + .grid-2, .help .grid-2 + .card { margin-top: 16px; }
+.help .help-lead { margin-bottom: 16px; }
+.help p { margin: 0; line-height: 1.6; }
+.help .card-head h2 { margin: 0; }
+.help-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 12px; }
+.help-pair > div { padding: 14px 16px; border-radius: 12px; background: var(--surface-2); }
+.help-pair h3 { margin: 0 0 4px; font-size: 15px; color: var(--text); }
+.help-steps { margin: 0; padding: 0; list-style: none; counter-reset: help-step; display: grid; gap: 14px; }
+.help-steps li { counter-increment: help-step; display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 12px; align-items: start; color: var(--text-2); line-height: 1.6; }
+.help-steps li::before {
+  content: counter(help-step); display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%;
+  background: var(--brand-tint); color: var(--brand); font-size: 13px; font-weight: 700; margin-top: 1px;
+}
+.help-steps b, .help-terms dt { color: var(--text); }
+.help-terms { margin: 0; display: grid; gap: 4px; }
+.help-terms dt { font-weight: 600; margin-top: 10px; }
+.help-terms dt:first-child { margin-top: 0; }
+.help-terms dd { margin: 0; color: var(--text-2); line-height: 1.6; }
+.help-glossary { grid-template-columns: minmax(140px, 200px) minmax(0, 1fr); column-gap: 20px; row-gap: 10px; }
+.help-glossary dt, .help-glossary dt:first-child { margin-top: 0; }
+@media (max-width: 640px) { .help-glossary { grid-template-columns: minmax(0, 1fr); row-gap: 2px; } .help-glossary dt { margin-top: 10px; } }
+.help-list { margin: 0; padding-left: 18px; display: grid; gap: 8px; color: var(--text-2); line-height: 1.6; }
+.help-list li::marker { color: var(--brand); }
+.help-ui { font-weight: 600; color: var(--brand); white-space: nowrap; }
+@media (max-width: 480px) { .help-ui { white-space: normal; } }
