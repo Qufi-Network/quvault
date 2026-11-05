@@ -701,6 +701,26 @@ const SCHEMA = [
   'ALTER TABLE invites ADD COLUMN IF NOT EXISTS approver TEXT',
   'ALTER TABLE wallets ADD COLUMN IF NOT EXISTS last_frozen_at BIGINT',
   'ALTER TABLE wallets ADD COLUMN IF NOT EXISTS last_frozen_by TEXT',
+
+  /* ============================================== v30: payments on notice
+   *
+   * A payment to an address the vault has never paid, or past the daily limit, waits 24 hours
+   * after notice is given. Everyone on the vault hears of it and any of them can cancel it.
+   */
+  `CREATE TABLE IF NOT EXISTS payment_notices (
+    id TEXT PRIMARY KEY,
+    wallet_user_id TEXT NOT NULL,
+    network TEXT NOT NULL,
+    address TEXT NOT NULL,
+    amount TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at BIGINT NOT NULL,
+    ready_at BIGINT NOT NULL,
+    expires_at BIGINT NOT NULL,
+    cancelled_at BIGINT,
+    cancelled_by TEXT
+  )`,
+  'CREATE INDEX IF NOT EXISTS payment_notices_wallet ON payment_notices (wallet_user_id, network)',
 ];
 
 /**

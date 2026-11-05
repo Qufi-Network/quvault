@@ -57,6 +57,17 @@ const PALM_WALLET_DEADLINE = 2 * 3600;
 // owner's own palm lifts it sooner. Whoever froze it cannot freeze it again until this has
 // passed once more after it lifted.
 const FREEZE_SECONDS = 72 * 3600;
+
+/*
+ * Payments on notice. A payment goes straight ahead when it is to an address this vault has paid
+ * before and keeps the last 24 hours within the limit below. Anything else needs 24 hours notice:
+ * everyone on the vault is alerted, any of them can cancel it, and once the 24 hours have passed
+ * that payment can be made, for three days. A scammer or someone forcing a payment cannot wait.
+ */
+const NOTICE_SECONDS = 24 * 3600;
+const NOTICE_LASTS = 3 * 24 * 3600;
+const NOTICE_LIMITS = { bitcoin: 5_000_000n, ethereum: 5n * 10n ** 17n, bsc: 5n * 10n ** 17n };
+const NOTICES_OPEN = 10;
 // An invitation lasts a day, and the code that redeems it changes every ten minutes, like a one
 // time password: only whoever made the invitation can see the current one.
 const INVITE_SECONDS = 24 * 3600;
@@ -188,6 +199,23 @@ const SQL = {
                 DO UPDATE SET name = EXCLUDED.name, added_at = EXCLUDED.added_at, added_by = EXCLUDED.added_by`,
   paidBefore: `SELECT count(*)::int AS n FROM operations WHERE wallet_user_id = $1 AND network = $2 AND kind = 'withdraw'
                AND status = 'done' AND lower(details::jsonb ->> 'to') = lower($3)`,
+  insertNotice: `INSERT INTO payment_notices (id, wallet_user_id, network, address, amount, created_by, created_at, ready_at, expires_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+  noticesOf: `SELECT * FROM payment_notices WHERE wallet_user_id = ANY($1) AND cancelled_at IS NULL AND expires_at > $2
+               AND NOT EXISTS (SELECT 1 FROM operations o WHERE o.kind = 'withdraw' AND o.status = 'done'
+                               AND o.details::jsonb ->> 'notice_id' = payment_notices.id)
+              ORDER BY created_at DESC`,
+  noticeById: 'SELECT * FROM payment_notices WHERE id = $1',
+  noticesTo: `SELECT * FROM payment_notices WHERE wallet_user_id = $1 AND network = $2 AND lower(address) = lower($3)
+               AND cancelled_at IS NULL AND expires_at > $4
+               AND NOT EXISTS (SELECT 1 FROM operations o WHERE o.kind = 'withdraw' AND o.status = 'done'
+                               AND o.details::jsonb ->> 'notice_id' = payment_notices.id)
+              ORDER BY ready_at`,
+  cancelNotice: 'UPDATE payment_notices SET cancelled_at = $1, cancelled_by = $2 WHERE id = $3 AND cancelled_at IS NULL',
+  cancelNoticesOf: 'UPDATE payment_notices SET cancelled_at = $1, cancelled_by = $2 WHERE wallet_user_id = $3 AND cancelled_at IS NULL',
+  deleteNoticesOf: 'DELETE FROM payment_notices WHERE wallet_user_id = $1',
+  recentPayments: `SELECT details FROM operations WHERE wallet_user_id = $1 AND network = $2 AND kind = 'withdraw'
+                    AND created_at > $3 AND status NOT IN ('failed', 'cancelled', 'collecting')`,
   pushSubscriptionsOf: 'SELECT * FROM push_subscriptions WHERE user_id = ANY($1)',
   pushCountOf: 'SELECT count(*)::int AS n FROM push_subscriptions WHERE user_id = $1',
   // A device's push address is its owner's: nobody else can re-register it and take its alerts.
@@ -393,6 +421,8 @@ export function createApp(options) {
     network = 'testnet4',
     chainApi = 'https://mempool.space/testnet4/api',
     requirePalmSignin = false,
+    // Payments to new addresses, or past the daily limit, wait 24 hours after notice. See NOTICE_LIMITS.
+    paymentNotices = true,
     /*
      * Whether `x-forwarded-for` can be believed. True is right behind Vercel, which overwrites
      * the header; set it false for a deployment with no proxy in front, where the header is
@@ -1172,6 +1202,16 @@ export function createApp(options) {
   async function newOperation({ walletOwnerId, user, kind, statement, details, payload = null, required = 1, networkId = null }) {
     // Nothing new starts in a frozen vault, except lifting it, the owner's own words, or a refresh.
     if (kind !== 'create') await assertNotFrozen(walletOwnerId, { kind, details: JSON.stringify(details) });
+    // A payment to someone new, or past the daily limit, goes ahead only on notice given a day before.
+    if (kind === 'withdraw' && details?.action === 'withdraw') {
+      const notice = await noticeFor(walletOwnerId, networkId ?? 'bitcoin', details);
+      if (notice) {
+        details = {
+          ...details, notice_id: notice.id,
+          notice: `given ${new Date(notice.created_at * 1000).toUTCString()}, and everyone on the vault was told`,
+        };
+      }
+    }
     const id = randomId(16);
     const time = now();
     const replaced = await transaction(async q => {
@@ -1189,6 +1229,105 @@ export function createApp(options) {
     // Everyone else on the vault hears that something was asked for, whoever asked.
     if (!['create', 'signing'].includes(kind)) await alertOthers(walletOwnerId, user.id);
     return one('operationById', id);
+  }
+
+  /* ------------------------------------------ payments on notice */
+
+  /** What a payment counts against the daily limit: the coin itself, never a token. */
+  const noticeAmountOf = details => {
+    if (details.token && details.token !== 'native') return null;
+    const value = details.amount_sats ?? details.amount_wei ?? details.amount_units ?? 0;
+    return BigInt(value);
+  };
+  const limitText = networkId => `${format(NOTICE_LIMITS[networkId].toString(), networkId)} ${NETWORKS[networkId].symbol}`;
+
+  /**
+   * The notice this payment goes ahead on, or null when it needs none. Throws when it needs one
+   * and none is ready, saying why and when, so the page can offer to give it.
+   */
+  async function noticeFor(ownerId, networkId, details) {
+    if (!paymentNotices || NOTICE_LIMITS[networkId] === undefined) return null;
+    const to = String(details.to ?? '');
+    const amount = noticeAmountOf(details);
+    const time = now();
+    const known = ((await one('paidBefore', ownerId, networkId, to))?.n ?? 0) > 0;
+    let spent = 0n;
+    for (const row of await all('recentPayments', ownerId, networkId, time - NOTICE_SECONDS)) {
+      const earlier = JSON.parse(row.details ?? '{}');
+      // A payment made on notice was announced in full, so it does not use up the daily limit.
+      if (earlier.action === 'withdraw' && !earlier.notice_id) spent += noticeAmountOf(earlier) ?? 0n;
+    }
+    const overLimit = amount !== null && spent + amount > NOTICE_LIMITS[networkId];
+    if (known && !overLimit) return null;
+
+    const notices = (await all('noticesTo', ownerId, networkId, to, time))
+      .filter(notice => amount === null || BigInt(notice.amount) >= amount);
+    const ready = notices.find(notice => notice.ready_at <= time);
+    if (ready) return ready;
+    const why = known ? `it takes this vault past ${limitText(networkId)} in 24 hours` : 'this vault has never paid that address';
+    if (notices.length) {
+      throw Object.assign(new HttpError(409, `This payment is on notice, because ${why}. It can be sent from ${new Date(notices[0].ready_at * 1000).toUTCString()}.`),
+        { code: 'notice_waiting' });
+    }
+    throw Object.assign(new HttpError(409, `This payment needs 24 hours notice, because ${why}. Give notice now and it can be sent this time tomorrow; everyone on the vault is told, and any of them can cancel it.`),
+      { code: 'notice_needed' });
+  }
+
+  /** Who may give or cancel notice on a vault: its owner and anyone who signs for it. */
+  async function noticeVault(user, vaultOwnerId) {
+    const ownerId = String(vaultOwnerId ?? user.id);
+    if (ownerId !== user.id && !(await one('memberIn', ownerId, user.id))) throw new HttpError(404, 'Vault not found.');
+    if (!(await one('walletOf', ownerId))) throw new HttpError(409, 'Create the vault first.');
+    return ownerId;
+  }
+
+  /** Gives notice of one payment: to this address, up to this amount, from 24 hours on. */
+  async function giveNotice({ user, body }) {
+    const ownerId = await noticeVault(user, body.vaultOwnerId);
+    await assertNotFrozen(ownerId);
+    const networkId = String(body.network ?? 'bitcoin');
+    const net = NETWORKS[networkId];
+    if (!net || NOTICE_LIMITS[networkId] === undefined) throw new HttpError(400, 'Payments from that network are not sent here.');
+    const to = String(body.to ?? '').trim();
+    if (!net.valid(to)) throw new HttpError(400, `That is not a valid ${net.label} address.`);
+    const amount = String(body.amount ?? '').trim();
+    if (!/^[1-9][0-9]{0,77}$/.test(amount)) throw new HttpError(400, 'Give the amount in the smallest unit of the coin or token.');
+    const time = now();
+    if ((await all('noticesOf', [ownerId], time)).length >= NOTICES_OPEN) {
+      throw new HttpError(429, 'This vault already has ten payments on notice. Cancel one first.');
+    }
+    const id = `ntc_${randomId(12)}`;
+    await query('insertNotice', id, ownerId, networkId, to, amount, user.id, time, time + NOTICE_SECONDS, time + NOTICE_SECONDS + NOTICE_LASTS);
+    await alertOthers(ownerId, user.id);
+    return { notice: noticeView(await one('noticeById', id), user) };
+  }
+
+  async function cancelNoticeOf({ user, body }) {
+    const notice = await one('noticeById', String(body.id ?? ''));
+    if (!notice) throw new HttpError(404, 'That notice is not open.');
+    await noticeVault(user, notice.wallet_user_id);
+    const cancelled = await query('cancelNotice', now(), user.id, notice.id);
+    if (!cancelled.count) throw new HttpError(404, 'That notice is not open.');
+    await alertOthers(notice.wallet_user_id, user.id);
+    return { ok: true };
+  }
+
+  function noticeView(notice, user) {
+    const net = NETWORKS[notice.network];
+    return {
+      id: notice.id,
+      vaultOwnerId: notice.wallet_user_id,
+      mine: notice.wallet_user_id === user.id,
+      network: notice.network,
+      to: notice.address,
+      amount: notice.amount,
+      amountText: `${format(notice.amount, notice.network)} ${net?.symbol ?? ''}`.trim(),
+      givenBy: notice.created_by,
+      createdAt: notice.created_at,
+      readyAt: notice.ready_at,
+      expiresAt: notice.expires_at,
+      ready: notice.ready_at <= now(),
+    };
   }
 
   /* ------------------------------------------ what a finished quorum does */
@@ -1664,6 +1803,8 @@ export function createApp(options) {
       addressBook: (await all('addressBookOf', user.id)).map(a => ({ network: a.network, address: a.address, name: a.name, addedAt: a.added_at })),
       signsFor: (await Promise.all(visible.filter(id => id !== user.id).map(id => signedVaultView(id, user)))).filter(Boolean),
       alerts: (await one('pushCountOf', user.id)).n,
+      notices: (await all('noticesOf', visible, now())).map(notice => noticeView(notice, user)),
+      noticeLimits: Object.fromEntries(Object.keys(NOTICE_LIMITS).map(id => [id, limitText(id)])),
     };
 
     // Spending is Bitcoin's today, so the vault-level rules shown are that account's.
@@ -2778,6 +2919,7 @@ export function createApp(options) {
     }
     const stopped = await transaction(async q => {
       const froze = (await q('freezeVault', time, user.id, ownerId)).count === 1;
+      await q('cancelNoticesOf', time, user.id, ownerId);
       // Everything in flight stops with it: nothing approved before the freeze can be signed after.
       const ops = (await q('stopOperationsOf', 'The vault was frozen.', time, ownerId)).rows;
       const approvals = [];
@@ -3194,6 +3336,7 @@ export function createApp(options) {
       // Nothing of the old vault can be redeemed or reused by a new one.
       await q('cancelInvitesOfWallet', user.id);
       await q('deleteAddressBookOf', user.id);
+      await q('deleteNoticesOf', user.id);
       await q('deleteWallet', user.id);
     });
     log.log(`vault erased for ${user.id}${txid ? `, coins swept in ${txid}` : ''}`);
@@ -5327,6 +5470,8 @@ export function createApp(options) {
     { method: 'GET', path: /^\/api\/operations\/([\w-]{8,64})\/evidence$/, handler: exportEvidence, auth: true, limit: RATE.upstream },
     { method: 'GET', path: '/api/random', handler: getRandom, auth: true, limit: RATE.upstream },
     { method: 'GET', path: '/api/wallet', handler: getWallet, auth: true, limit: RATE.upstream },
+    { method: 'POST', path: '/api/notices', handler: giveNotice, auth: true, limit: RATE.write },
+    { method: 'POST', path: '/api/notices/cancel', handler: cancelNoticeOf, auth: true, limit: RATE.write },
     { method: 'POST', path: '/api/wallet/approval', handler: requestWallet, auth: true, limit: RATE.palm },
     { method: 'POST', path: '/api/wallet/register', handler: registerWallet, auth: true, limit: RATE.write },
     { method: 'POST', path: '/api/wallet/upgrade/approval', handler: requestUpgrade, auth: true, limit: RATE.palm },
@@ -5461,7 +5606,10 @@ export function createApp(options) {
     } catch (error) {
       const status = error instanceof HttpError ? error.status : error instanceof ChainError ? 502 : 500;
       if (status === 500) log.error(error);
-      sendJson(res, status, { error: status === 500 ? 'Something went wrong on the server.' : error.message }, outCookies,
+      sendJson(res, status, {
+        error: status === 500 ? 'Something went wrong on the server.' : error.message,
+        ...(error instanceof HttpError && error.code ? { code: error.code } : {}),
+      }, outCookies,
         error.retryAfter ? { 'retry-after': String(error.retryAfter) } : {});
     }
   }

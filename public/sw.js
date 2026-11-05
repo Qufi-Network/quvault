@@ -13,7 +13,7 @@
  *   - A POST, a cross-origin request to the identity provider, or anything with credentials is
  *     passed straight through and left alone.
  */
-const CACHE = 'veyns-shell-v19';
+const CACHE = 'veyns-shell-v21';
 
 // The shell: enough to render the app offline. Everything else is cached as it is fetched.
 const SHELL = [

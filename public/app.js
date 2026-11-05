@@ -57,7 +57,7 @@ async function api(path, body) {
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const out = await response.json().catch(() => ({}));
-  if (!response.ok) throw Object.assign(new Error(out.error || 'Something went wrong.'), { status: response.status });
+  if (!response.ok) throw Object.assign(new Error(out.error || 'Something went wrong.'), { status: response.status, code: out.code });
   return out;
 }
 
@@ -827,7 +827,56 @@ $('create-wallet').addEventListener('click', async () => {
   }
 });
 
+/*
+ * Payments on notice. A payment to an address the vault has never paid, or past the daily limit,
+ * is refused until notice has been given a day before. The refusal comes with a button to give it.
+ */
+function offerNotice(errorEl, error, payment) {
+  errorEl.replaceChildren(friendly(error));
+  if (error.code !== 'notice_needed' || !payment) return;
+  if (payment.amount === 'max') {
+    errorEl.append(' Enter the amount you mean to send, and give notice of that.');
+    return;
+  }
+  errorEl.append(' ', button('Give 24 hours notice', 'btn brand sm', async () => {
+    try {
+      const { notice } = await api('/api/notices', {
+        network: payment.network, to: payment.to, amount: String(payment.amount),
+        ...(payment.vaultOwnerId ? { vaultOwnerId: payment.vaultOwnerId } : {}),
+      });
+      errorEl.textContent = `Notice given. This payment can be sent from ${when(notice.readyAt)}. Everyone on the vault has been told.`;
+      refresh().catch(() => {});
+    } catch (failure) {
+      errorEl.textContent = friendly(failure);
+    }
+  }));
+}
+
+/** Payments on notice across the vaults this person is on, each with a way to cancel it. */
+function renderNotices(data) {
+  const notices = data.notices || [];
+  $('notice-lane').hidden = notices.length === 0;
+  const limits = Object.values(data.noticeLimits || {}).join(', ');
+  $('notice-note').textContent = `Payments to a new address, or above ${limits || 'the daily limit'} in 24 hours, wait a day. Anyone on the vault can cancel one.`;
+  $('notices').replaceChildren(...notices.map(notice => el('div', { class: 'invite-row' },
+    el('span', { class: 'avatar ghost' }, notice.ready ? '✓' : '24'),
+    el('span', { class: 'member-who' },
+      el('b', {}, `${notice.amountText} to ${shortId(notice.to)}`),
+      el('small', {}, `${notice.mine ? '' : `${data.labels?.[notice.vaultOwnerId] ?? 'Another'} vault · `}`
+        + `given by ${data.labels?.[notice.givenBy] ?? 'a signer'} · `
+        + (notice.ready ? `ready to send until ${when(notice.expiresAt)}` : `can be sent from ${when(notice.readyAt)}`))),
+    button('Cancel', 'link', async () => {
+      if (!confirm(`Cancel the notice for ${notice.amountText} to ${notice.to}?`)) return;
+      await api('/api/notices/cancel', { id: notice.id }).catch(error => toast(friendly(error)));
+      refresh().catch(() => {});
+    }))));
+}
+
 function renderWallet(data) {
+  renderNotices(data);
+  let knowsPalm = false;
+  try { knowsPalm = Boolean(localStorage.getItem(SUBJECT_KEY)); } catch { knowsPalm = false; }
+  $('relogin-lane').hidden = knowsPalm;
   const { wallet, balance, spendable, coins, chainHistory, chainError, members, me } = data;
   const total = balance ? balance.confirmed + balance.pending : 0;
   const myName = members.find(m => m.id === me.id)?.label || 'there';
@@ -1327,6 +1376,19 @@ function renderAlerts(data) {
   }
 }
 
+/** Signs and sends a payment whose palm approvals are in, from this device. */
+async function finishOnDevice(op) {
+  try {
+    toast('Signing on this device…');
+    const { txid, receipt } = await device.send(op);
+    toast(`Sent. Transaction ${shortId(txid)} is on the network.`);
+    showReceipt(receipt, txid);
+  } catch (error) {
+    toast(friendly(error));
+  }
+  refresh().catch(() => {});
+}
+
 function renderRequests(container, requests) {
   const { me, labels = {} } = state.data;
   container.replaceChildren(...requests.map(op => {
@@ -1338,6 +1400,10 @@ function renderRequests(container, requests) {
     } else if (op.needsSignature) {
       // An account the chain guards needs this person's signature as well as their palm.
       actions.append(button('Sign with your key', 'btn brand sm', () => addSignature(op)));
+    } else if (op.kind === 'withdraw' && op.status === 'running' && !op.signatures
+      && op.walletOwner === me.id && device.holdsKeyFor(state.data.wallet)) {
+      // Approved, but this device stopped before signing: it can pick up where it left off.
+      actions.append(button('Sign and send', 'btn brand sm', () => finishOnDevice(op)));
     } else if (mine?.status === 'approved') {
       actions.append(el('span', { class: 'quiet' },
         op.signatures ? 'You signed. Waiting for the others.' : 'You approved. Waiting for the others.'));
@@ -1962,11 +2028,13 @@ $('pay-form').addEventListener('submit', async event => {
     return;
   }
   try {
-    const { operation } = await api('/api/withdrawals', { vaultOwnerId: state.pay.ownerId, to: $('pay-to').value.trim(), amount });
+    const body = { vaultOwnerId: state.pay.ownerId, to: $('pay-to').value.trim(), amount };
+    state.lastPayment = { network: 'bitcoin', ...body };
+    const { operation } = await api('/api/withdrawals', body);
     closePay();
     openApproval(operation, 'Sending…');
   } catch (error) {
-    $('pay-error').textContent = friendly(error);
+    offerNotice($('pay-error'), error, state.lastPayment);
   }
 });
 
@@ -2044,6 +2112,7 @@ $('heir-sheet-print').addEventListener('click', () => {
 });
 window.addEventListener('afterprint', () => document.body.classList.remove('print-heir-sheet'));
 $('sheet-open').addEventListener('click', () => openHeirSheet(null, $('inheritance-error')));
+$('relogin-go').addEventListener('click', () => $('signout').click());
 $('logout-everywhere').addEventListener('click', async () => {
   if (!window.confirm('Sign out on every device, this one included?')) return;
   await api('/api/logout/everywhere', {}).catch(() => {});
@@ -2647,10 +2716,11 @@ $('send-form').addEventListener('submit', async event => {
         ...($('send-fee').value ? { feeRate: Number($('send-fee').value) } : {}),
       };
     }
+    state.lastPayment = { network: form.dataset.network || 'bitcoin', ...body };
     const { operation } = await api('/api/withdrawals', body);
     openApproval(operation, 'Sending…');
   } catch (error) {
-    $('send-error').textContent = friendly(error);
+    offerNotice($('send-error'), error, state.lastPayment);
   } finally {
     if (submit) submit.disabled = false;
   }

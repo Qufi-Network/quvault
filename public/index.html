@@ -15,7 +15,7 @@
   <link rel="apple-touch-icon" href="/icon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Sora:wght@300;400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/veyns.css">
   <link rel="stylesheet" href="/enterprise.css">
@@ -2443,6 +2443,17 @@
           </div>
         </section>
 
+        <section class="lane no-top" id="relogin-lane" hidden>
+          <div class="card notice">
+            <div class="notice-body">
+              <p class="eyebrow">One more step on this device</p>
+              <h2>Sign in again with your palm</h2>
+              <p class="quiet">This browser does not yet know which palm is yours, so it will not sign a payment. Sign out and sign in again once, and it will remember.</p>
+            </div>
+            <button class="btn brand" id="relogin-go" type="button">Sign out</button>
+          </div>
+        </section>
+
         <section class="lane no-top" id="legacy-lane" hidden>
           <div class="card notice">
             <div class="notice-body">
@@ -2487,6 +2498,11 @@
         <section class="lane" id="pending-lane" hidden>
           <header class="lane-head"><h2>Waiting for approval</h2><p class="quiet">Each signer scans their own palm.</p></header>
           <div class="requests" id="pending"></div>
+        </section>
+
+        <section class="lane" id="notice-lane" hidden>
+          <header class="lane-head"><h2>Payments on notice</h2><p class="quiet" id="notice-note"></p></header>
+          <div class="card stack" id="notices"></div>
         </section>
 
         <section class="lane">
@@ -2669,6 +2685,8 @@
             <dl class="help-terms">
               <dt>Sending</dt>
               <dd>Choose <span class="help-ui">Send</span>, enter the address and the amount, then <span class="help-ui">Review withdrawal</span>. Your phone then asks for your palm. Before you scan, read the message on your phone: it shows the address, the amount and the fees. Palm and your browser both check that these match the transaction, but you are the final check.</dd>
+              <dt>Payments on notice</dt>
+              <dd>A payment to an address this vault has never paid, or one that takes the last 24 hours above 0.05 tBTC, 0.5 ETH or 0.5 tBNB, needs a day’s notice. Choose <span class="help-ui">Give 24 hours notice</span> when Palm asks. Everyone on the vault is told, any of them can cancel it, and from the next day the payment can be sent as usual for three days. Someone who tricks or pressures you into paying cannot wait that long.</dd>
               <dt>Fees on Ethereum and BSC</dt>
               <dd>Each payment includes Palm’s fee of 0.1% of the amount and the network fee. Palm’s gas account pays the network fee up front, and your wallet repays it as part of the same payment.</dd>
               <dt>Receipts</dt>
@@ -2684,7 +2702,7 @@
               <dt>A device is lost, or you used a shared one</dt>
               <dd>In <span class="help-ui">Security</span>, choose <span class="help-ui">Sign out on every device</span>. You then sign in again here with your palm.</dd>
               <dt>Something looks wrong</dt>
-              <dd>Choose <span class="help-ui">Freeze this vault now</span>. Everything waiting is cancelled and nothing can be sent. The freeze lifts after 72 hours, or sooner with your palm.</dd>
+              <dd>Cancel any payment on notice you do not recognise, or choose <span class="help-ui">Freeze this vault now</span>. A freeze cancels everything waiting, notices included, and nothing can be sent. The freeze lifts after 72 hours, or sooner with your palm.</dd>
               <dt>A signer leaves or loses their phrase</dt>
               <dd>Choose <span class="help-ui">Replace a signer</span>, then print a new inheritance sheet. The old sheet no longer matches the vault.</dd>
               <dt>After a death</dt>
@@ -2715,7 +2733,6 @@
             <ul class="help-list">
               <li>Palm cannot stop a payment you approve yourself. Read the message on your phone every time.</li>
               <li>If you lose both this browser and your recovery phrase, nobody can restore your signing key, Palm included. With 2 of 3 signers, the others can still act.</li>
-              <li>Palm runs on test networks for now: Bitcoin testnet4, Ethereum Sepolia and the BNB Smart Chain test network. Coins on these networks have no value.</li>
             </ul>
           </section>
         </div>

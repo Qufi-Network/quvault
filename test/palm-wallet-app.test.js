@@ -184,7 +184,7 @@ async function startChain(t) {
   const fetchImpl = (url, init = {}) => (evmHosts.has(new URL(url).origin) ? node.fetch(url, init) : world.fetchImpl(url, init));
   const app = createApp({
     publicOrigin: ORIGIN, issuer: ISSUER, chainApi: CHAIN, clientId: CLIENT_ID,
-    backendSecret: SECRET, walletSeed: SEED, now: clock, fetchImpl, log: { info() {}, error() {}, warn() {} },
+    backendSecret: SECRET, walletSeed: SEED, now: clock, fetchImpl, log: { info() {}, error() {}, warn() {} }, paymentNotices: false,
   });
   await new Promise(r => app.server.listen(0, '127.0.0.1', r));
   t.after(() => app.close());

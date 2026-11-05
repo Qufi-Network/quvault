@@ -141,7 +141,7 @@ export async function start(t, overrides = {}) {
   const world = mockWorld(clock);
   const app = createApp({
     publicOrigin: ORIGIN, issuer: ISSUER, chainApi: CHAIN, clientId: CLIENT_ID, backendSecret: SECRET,
-    walletSeed: SEED, now: clock, fetchImpl: world.fetchImpl, log: quiet, ...overrides,
+    walletSeed: SEED, now: clock, fetchImpl: world.fetchImpl, log: quiet, paymentNotices: false, ...overrides,
   });
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   t.after(() => app.close());
