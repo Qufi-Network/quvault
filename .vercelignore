@@ -1,0 +1,12 @@
+# Never upload local secrets, builds or data with a CLI deploy.
+.env
+.env.*
+wallet-seed.txt
+*.ps1
+*.apk
+*.aab
+data/
+contracts/node_modules/
+contracts/artifacts/
+contracts/cache/
+android/

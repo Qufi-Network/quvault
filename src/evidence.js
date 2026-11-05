@@ -146,6 +146,7 @@ export function verifyChainOfEvidence(entries, { expectGenesis = true } = {}) {
   if (!Array.isArray(entries)) return { ok: false, problems: ['the bundle has no entries'], length: 0, head: null };
 
   let previous = null;
+  let redacted = 0;
   for (const [index, entry] of entries.entries()) {
     const where = `entry ${index}${entry?.id ? ` (${entry.id})` : ''}`;
     if (!entry || typeof entry !== 'object') {
@@ -155,8 +156,15 @@ export function verifyChainOfEvidence(entries, { expectGenesis = true } = {}) {
     if (!isKnownKind(entry.kind)) problems.push(`${where} has an unknown kind "${entry.kind}"`);
 
     // The hash has to be the hash of the contents, or the contents were changed after the fact.
-    const recomputed = evidenceHash(entry);
-    if (recomputed !== entry.hash) problems.push(`${where} does not hash to its recorded hash`);
+    // An entry about someone else's vault comes without its contents: only its place in the
+    // chain can be checked, and the result says plainly how many are like that.
+    if (entry.redacted === true) {
+      redacted++;
+      if (typeof entry.hash !== 'string' || !entry.hash) problems.push(`${where} has no hash`);
+    } else {
+      const recomputed = evidenceHash(entry);
+      if (recomputed !== entry.hash) problems.push(`${where} does not hash to its recorded hash`);
+    }
 
     // And it has to commit to the entry before it, or the order was changed.
     const expectedPrev = previous ? previous.hash : GENESIS;
@@ -173,6 +181,7 @@ export function verifyChainOfEvidence(entries, { expectGenesis = true } = {}) {
     ok: problems.length === 0,
     problems,
     length: entries.length,
+    redacted,
     head: previous?.hash ?? null,
   };
 }

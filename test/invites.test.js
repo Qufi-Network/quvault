@@ -31,7 +31,7 @@ test('an invitation is authorised by the vault, and redeemed by the invited palm
   const { invites } = ok(await alex.get('/api/invites'));
   assert.equal(invites.length, 1);
   const code = invites[0].code;
-  assert.match(code, /^QV-[A-Z0-9]{1,8}-[A-Z0-9]{1,8}$/);
+  assert.match(code, /^[A-HJ-NP-Z2-9]{8}$/, 'eight characters, none that read alike');
   assert.equal(invites[0].label, 'Bob');
 
   // Bob is not a signer yet, and the code alone changes nothing.
@@ -96,7 +96,7 @@ test('an invitation takes the account\'s own quorum, and can be cancelled', asyn
   assert.equal(invites.length, 1);
 
   // And an invitation can be withdrawn before it is used.
-  ok(await alex.post('/api/invites/cancel', { code: invites[0].code }));
+  ok(await alex.post('/api/invites/cancel', { id: invites[0].id }));
   assert.equal(ok(await alex.get('/api/invites')).invites.length, 0);
   assert.equal((await cara.post('/api/invites/join', { code: invites[0].code })).status, 404);
 });
@@ -126,4 +126,57 @@ test('a signer is told what is waiting for their palm', async t => {
   assert.equal(after?.needsYou ?? false, false);
   // And Alex, who has not approved yet, is still being asked.
   assert.equal(ok(await alex.get('/api/wallet')).pending.find(op => op.id === operation.id).needsYou, true);
+});
+
+test('an invitation code changes every ten minutes, only its maker sees it, and it lapses in a day', async t => {
+  const env = await start(t);
+  const alex = await signedIn(env, 'sub-alex');
+  const bob = await signedIn(env, 'sub-bob');
+  const cara = await signedIn(env, 'sub-cara');
+  await walletFor(env, alex);
+  const { code: first } = await invite(env, alex, { label: 'Bob' });
+
+  // Bob, who was invited, is not shown the code by the server: only Alex, who made it.
+  assert.equal(ok(await bob.get('/api/invites')).invites.length, 0);
+  assert.equal(ok(await cara.get('/api/invites')).invites.length, 0);
+
+  // Ten minutes on, the code is a different one; the one just before still works for a moment.
+  env.advance(600);
+  const second = ok(await alex.get('/api/invites')).invites[0].code;
+  assert.notEqual(second, first);
+  // Twenty minutes on, the first code is dead, and the current one is what Bob needs.
+  env.advance(600);
+  const third = ok(await alex.get('/api/invites')).invites[0].code;
+  assert.equal((await bob.post('/api/invites/join', { code: first })).status, 404, 'an old code is refused');
+  const join = ok(await bob.post('/api/invites/join', { code: third.toLowerCase() }));
+  assert.equal(join.operation.kind, 'join');
+
+  // An invitation nobody redeems lapses after a day, whatever its code.
+  const { code: forCara } = await invite(env, alex, { label: 'Cara' });
+  assert.ok(forCara);
+  env.advance(24 * 3600 + 1);
+  assert.equal(ok(await alex.get('/api/invites')).invites.some(item => item.label === 'Cara'), false);
+});
+
+test('an invitation made for one person cannot be redeemed by anyone else', async t => {
+  const env = await start(t);
+  const alex = await signedIn(env, 'sub-alex');
+  const bob = await signedIn(env, 'sub-bob');
+  const mallory = await signedIn(env, 'sub-mallory');
+  await walletFor(env, alex);
+
+  // A code nobody has is refused before any palm is asked for.
+  assert.equal((await alex.post('/api/invites/approval', { network: 'bitcoin', label: 'Bob', approverCode: 'nobody' })).status, 400);
+
+  const { operation } = ok(await alex.post('/api/invites/approval', { network: 'bitcoin', label: 'Bob', approverCode: bob.id }));
+  assert.match(JSON.stringify(operation.details), /only_for/);
+  await palmApprove(env, alex, operation.id);
+  const [made] = ok(await alex.get('/api/invites')).invites;
+  assert.equal(made.onlyFor, bob.id);
+
+  // Mallory has the code, and it does her no good.
+  assert.equal((await mallory.post('/api/invites/join', { code: made.code })).status, 403);
+  const join = ok(await bob.post('/api/invites/join', { code: made.code }));
+  await palmApprove(env, bob, join.operation.id);
+  assert.deepEqual(ok(await alex.get('/api/wallet')).members.map(m => m.label).sort(), ['Bob', 'Owner']);
 });

@@ -22,7 +22,8 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
  *
  * Every palm approved payment may carry Palm's fee, paid in the same asset to `feeTo`, which the
  * contract caps at 0.1% of the amount whatever the signatures say, and a refund of the network
- * fee in the native coin to whoever submitted it. Both are in what the signers and the palm sign.
+ * fee in the native coin to `refundTo`, the account that pays it. All of it is in what the signers
+ * and the palm sign, so copying a payment out of the mempool and submitting it first earns nothing.
  *
  * Deliberately narrow: plain transfers only, native coin or ERC-20 `transfer`. No arbitrary
  * calls, no delegatecall, no upgrades, no owner changes; a different set of signers is a new
@@ -31,9 +32,10 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
  */
 contract PalmWallet is EIP712 {
     bytes32 private constant TRANSFER_TYPEHASH = keccak256(
-        "Transfer(address token,address to,uint256 amount,uint256 fee,address feeTo,uint256 gasRefund,uint256 deadline,uint256 nonce)"
+        "Transfer(address token,address to,uint256 amount,uint256 fee,address feeTo,uint256 gasRefund,address refundTo,uint256 deadline,uint256 nonce)"
     );
-    bytes32 private constant REFRESH_TYPEHASH = keccak256("Refresh(uint256 gasRefund,uint256 deadline,uint256 nonce)");
+    bytes32 private constant REFRESH_TYPEHASH =
+        keccak256("Refresh(uint256 gasRefund,address refundTo,uint256 deadline,uint256 nonce)");
     bytes32 private constant RECOVERY_TYPEHASH =
         keccak256("Recovery(address token,address to,uint256 amount,uint256 deadline,uint256 nonce)");
 
@@ -65,6 +67,7 @@ contract PalmWallet is EIP712 {
         uint256 fee;
         address feeTo;
         uint256 gasRefund;
+        address refundTo;
         uint256 deadline;
     }
 
@@ -79,13 +82,14 @@ contract PalmWallet is EIP712 {
     error Expired();
     error FeeTooHigh();
     error NoFeeRecipient();
+    error NoRefundRecipient();
     error NotYetDormant(uint256 opensAt);
     error NotAToken();
     error TransferFailed();
     error BadSetup(string reason);
 
     constructor(address[] memory signers_, uint256 threshold_, address palmSigner_, uint256 recoveryDelay_)
-        EIP712("PalmWallet", "2")
+        EIP712("PalmWallet", "3")
     {
         uint256 count = signers_.length;
         if (count == 0 || count > MAX_SIGNERS) revert BadSetup("between 1 and 20 signers");
@@ -133,13 +137,13 @@ contract PalmWallet is EIP712 {
     /// The digest the signers and the palm key sign for a payment at `nonce_`.
     function transferDigest(Payment calldata p, uint256 nonce_) public view returns (bytes32) {
         return _hashTypedDataV4(keccak256(abi.encode(
-            TRANSFER_TYPEHASH, p.token, p.to, p.amount, p.fee, p.feeTo, p.gasRefund, p.deadline, nonce_
+            TRANSFER_TYPEHASH, p.token, p.to, p.amount, p.fee, p.feeTo, p.gasRefund, p.refundTo, p.deadline, nonce_
         )));
     }
 
     /**
      * Pays `amount` of `token` (NATIVE for the coin) to `to`, Palm's `fee` in the same asset to
-     * `feeTo`, and `gasRefund` of the native coin to whoever submits it. Anyone may submit,
+     * `feeTo`, and `gasRefund` of the native coin to `refundTo`. Anyone may submit,
      * because the signatures are the authority: `signerSignatures` from distinct signers, in
      * ascending order of signer address, at least `threshold` of them, and `palmSignature` from
      * the palm key, all over the same digest, before `deadline`.
@@ -148,6 +152,7 @@ contract PalmWallet is EIP712 {
         if (block.timestamp > p.deadline) revert Expired();
         if (p.fee > p.amount / FEE_DIVISOR) revert FeeTooHigh();
         if (p.fee != 0 && p.feeTo == address(0)) revert NoFeeRecipient();
+        if (p.gasRefund != 0 && p.refundTo == address(0)) revert NoRefundRecipient();
         uint256 used = nonce;
         bytes32 digest = transferDigest(p, used);
         if (ECDSA.recover(digest, palmSignature) != palmSigner) revert NoPalm();
@@ -156,24 +161,31 @@ contract PalmWallet is EIP712 {
         lastActivity = block.timestamp;
         _send(p.token, p.to, p.amount);
         if (p.fee != 0) _send(p.token, p.feeTo, p.fee);
-        if (p.gasRefund != 0) _send(NATIVE, msg.sender, p.gasRefund);
+        if (p.gasRefund != 0) _send(NATIVE, p.refundTo, p.gasRefund);
         emit Transferred(used, p.token, p.to, p.amount, p.fee, p.gasRefund);
     }
 
-    function refreshDigest(uint256 gasRefund, uint256 deadline, uint256 nonce_) public view returns (bytes32) {
-        return _hashTypedDataV4(keccak256(abi.encode(REFRESH_TYPEHASH, gasRefund, deadline, nonce_)));
+    function refreshDigest(uint256 gasRefund, address refundTo, uint256 deadline, uint256 nonce_) public view returns (bytes32) {
+        return _hashTypedDataV4(keccak256(abi.encode(REFRESH_TYPEHASH, gasRefund, refundTo, deadline, nonce_)));
     }
 
     /// Moves nothing: the signers and the palm say they are here, and the recovery path closes again.
-    function refresh(uint256 gasRefund, uint256 deadline, bytes[] calldata signerSignatures, bytes calldata palmSignature) external {
+    function refresh(
+        uint256 gasRefund,
+        address refundTo,
+        uint256 deadline,
+        bytes[] calldata signerSignatures,
+        bytes calldata palmSignature
+    ) external {
         if (block.timestamp > deadline) revert Expired();
+        if (gasRefund != 0 && refundTo == address(0)) revert NoRefundRecipient();
         uint256 used = nonce;
-        bytes32 digest = refreshDigest(gasRefund, deadline, used);
+        bytes32 digest = refreshDigest(gasRefund, refundTo, deadline, used);
         if (ECDSA.recover(digest, palmSignature) != palmSigner) revert NoPalm();
         _checkSigners(digest, signerSignatures);
         nonce = used + 1;
         lastActivity = block.timestamp;
-        if (gasRefund != 0) _send(NATIVE, msg.sender, gasRefund);
+        if (gasRefund != 0) _send(NATIVE, refundTo, gasRefund);
         emit Refreshed(used, gasRefund);
     }
 

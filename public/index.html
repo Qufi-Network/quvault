@@ -2595,6 +2595,12 @@
           </section>
 
           <section class="card stack">
+            <header class="card-head"><h2>Sessions</h2></header>
+            <p class="quiet">Signed in somewhere you no longer use, or lost a device? End every session at once; you sign in again here with your palm.</p>
+            <div class="row"><button class="btn ghost sm" id="logout-everywhere" type="button">Sign out on every device</button></div>
+          </section>
+
+          <section class="card stack">
             <header class="card-head"><h2>Inheritance</h2></header>
             <p class="quiet">Print the inheritance sheet for a vault locked to the palm and keep it with your will, apart from your twelve words. If the palm is ever gone, the recovery door moves the coins with the vault description and the signers' words, once the recovery delay has passed.</p>
             <div class="row">
@@ -2693,6 +2699,10 @@
               <div class="field-row">
                 <label for="send-amount">Amount <span class="optional" id="send-amount-unit">satoshis</span></label>
                 <input id="send-amount" inputmode="numeric" placeholder="50000">
+              </div>
+              <div class="field-row" id="send-token-field" hidden>
+                <label for="send-token">Token contract, to send a token instead of the coin (optional)</label>
+                <input id="send-token" autocomplete="off" spellcheck="false" placeholder="0x…">
               </div>
               <div class="field-row" id="send-fee-field">
                 <label for="send-fee">Fee rate <span class="optional">sat/vB, optional</span></label>
@@ -2853,6 +2863,10 @@
         <label for="invite-name">Their name</label>
         <input id="invite-name" maxlength="40" placeholder="Bob" autocomplete="off">
       </div>
+      <div class="field-row">
+        <label for="invite-approver">Their approver code, so only they can use it (recommended)</label>
+        <input id="invite-approver" maxlength="40" placeholder="from their Palm Security page" autocomplete="off" spellcheck="false">
+      </div>
       <p class="error" id="invite-error" role="alert"></p>
       <footer class="sheet-foot end">
         <button class="btn ghost sm" id="invite-close" type="button">Cancel</button>
@@ -2982,7 +2996,7 @@
       </header>
       <p class="statement" id="invite-code-for">Send this code to them.</p>
       <p class="code-block" id="invite-code-value">&mdash;</p>
-      <p class="fine">They enter it in Palm and approve with their own palm. It works once, expires in seven days, and grants nothing until their palm has been scanned.</p>
+      <p class="fine" id="invite-code-note">They enter it in Palm and approve with their own palm. The code changes every 10 minutes and works once; the invitation lapses after 24 hours. Open Signers and rules to see the current code.</p>
       <footer class="sheet-foot end">
         <button class="btn ghost sm" id="invite-code-copy" type="button">Copy code</button>
         <button class="btn brand sm" id="invite-code-ok" type="button">Done</button>

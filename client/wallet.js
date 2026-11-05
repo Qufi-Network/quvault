@@ -22,10 +22,15 @@ import { canonicalTransaction, canonicalBytes } from '../src/canonical.js';
 import { canonicalTransfer, transferBytes, transferDigest, checkErc20Plan } from '../src/canonical-transfer.js';
 import { signingHash, assembleSigned, transactionHash as evmTxHash } from '../src/evm.js';
 import {
-  evmTransferDigest, eip712TransferDigest, evmRefreshDigest, eip712RefreshDigest, signDigest as signEvmDigest,
+  evmTransferDigest, eip712TransferDigest, evmRefreshDigest, eip712RefreshDigest, eip712RecoveryDigest, NATIVE as EVM_NATIVE,
+  addressOfKey as evmAddressOfKey, signDigest as signEvmDigest,
 } from '../src/palm-wallet.js';
 import { signKeyProof } from '../src/key-proof.js';
 import { checkPalmProof } from '../src/palm-proof.js';
+import { bitcoinWordsProblem, evmWordsProblem, evmTokenWordsProblem } from '../src/approval-words.js';
+import { palmVaultOf } from '../src/palm-vault.js';
+export { chainDigestOf } from '../src/evm-receipt.js';
+import { walletParams, walletSalt, walletAddressOf, evmAddressOfPublicKey } from '../src/palm-wallet.js';
 import {
   deriveAttestationKeys, signAuthorization, signAuthorizationV2, signRegistration,
   signCheckpoint, verifyAuthorization, verifyChain,
@@ -357,7 +362,7 @@ export function signPlan(mnemonic, plan, expectedAddress, approved = {}) {
  * spend is, before anything is signed. What goes back is the same partly signed transaction
  * with one more signature on it — this browser's — and never a key.
  */
-export function signQuorum(mnemonic, { psbt, plan, index, address, transactionHash, network, lockKind = 'multisig' }) {
+export function signQuorum(mnemonic, { psbt, plan, index, address, transactionHash, network, lockKind = 'multisig', vault = null, move = null }) {
   const { privateKey, publicKey } = cosignerFrom(mnemonic, index);
   try {
     if (transactionHash) {
@@ -380,6 +385,7 @@ export function signQuorum(mnemonic, { psbt, plan, index, address, transactionHa
       if (JSON.stringify(outputs) !== JSON.stringify(planned)) {
         throw new Error('This is not the transaction that was approved. Nothing has been signed.');
       }
+      checkPalmVaultSpend(tx, { vault, move, plan, address });
     }
     let signed = 0;
     try {
@@ -448,9 +454,13 @@ export async function signApprovedPalmWallet(record, unlocked) {
  * through the recovery path. The words go no further than this function, and the keys are wiped
  * as soon as they have signed. What comes back is the transaction with signatures added.
  */
-export function signRecovery(psbt, phrases, vaultKeys, { maxBranch = 64 } = {}) {
+export function signRecovery(psbt, phrases, vaultKeys, { maxBranch = 64, payTo = null } = {}) {
   const wanted = new Set(vaultKeys.map(key => String(key).toLowerCase()));
   const tx = btc.Transaction.fromPSBT(base64nopadDecode(psbt), { allowUnknownInputs: true });
+  if (payTo !== null) {
+    const outputs = [...Array(tx.outputsLength).keys()].map(i => btc.Address(NETWORK).encode(btc.OutScript.decode(tx.getOutput(i).script)));
+    if (outputs.length !== 1 || outputs[0] !== payTo) throw new Error('This transaction does not pay where you chose. Nothing has been signed.');
+  }
   const used = [];
   for (const phrase of phrases) {
     const words = String(phrase ?? '').trim().toLowerCase().split(/\s+/).join(' ');
@@ -488,6 +498,51 @@ export function signRecovery(psbt, phrases, vaultKeys, { maxBranch = 64 } = {}) 
     used.push(key);
   }
   return { psbt: base64nopadEncode(tx.toPSBT()), signedWith: used.length };
+}
+
+/**
+ * The recovery door for a Palm Wallet on Ethereum or BSC, signed on this device. Each set of
+ * twelve words is searched for the signing branch whose key is one of the wallet's signers, and
+ * that key signs the recovery the wallet itself will check. The words go no further than this
+ * function; what comes back is signatures, in the order of the signers' addresses, as the wallet
+ * wants them.
+ */
+export function signPalmWalletRecovery(phrases, { chainId, wallet, recovery, signers }, { maxBranch = 64 } = {}) {
+  const wanted = new Set((signers ?? []).map(address => String(address).toLowerCase()));
+  const digest = eip712RecoveryDigest({ chainId, wallet, recovery });
+  const found = new Map();
+  for (const phrase of phrases) {
+    const words = String(phrase ?? '').trim().toLowerCase().split(/\s+/).join(' ');
+    if (!validateMnemonic(words, wordlist)) {
+      throw new Error('One of those is not a valid set of twelve words. Check the spelling and the order.');
+    }
+    const seed = mnemonicToSeedSync(words);
+    let base;
+    try {
+      base = HDKey.fromMasterSeed(seed).derive(COSIGN_PATH(0).replace(/\/0$/, ''));
+    } finally {
+      seed.fill(0);
+    }
+    let signed = false;
+    for (let index = 0; index < maxBranch && !signed; index++) {
+      const child = base.deriveChild(index);
+      const address = evmAddressOfKey(child.privateKey);
+      if (wanted.has(address)) {
+        if (found.has(address)) {
+          child.wipePrivateData();
+          base.wipePrivateData();
+          throw new Error('The same twelve words were entered twice.');
+        }
+        found.set(address, signEvmDigest(digest, child.privateKey));
+        signed = true;
+      }
+      child.wipePrivateData();
+    }
+    base.wipePrivateData();
+    if (!signed) throw new Error('One set of words does not hold a key for this wallet.');
+  }
+  const ordered = [...found.keys()].sort();
+  return { signatures: ordered.map(address => found.get(address)), signers: ordered };
 }
 
 const toHexKey = bytes => hex.encode(bytes);
@@ -617,9 +672,101 @@ export async function createVaultKey({ serverRandom, jitterSeed, unlock, salt, v
   return { address, publicKey, attestationRootKeyId: root.keyId, registration };
 }
 
+/**
+ * Which of `keys` (compressed public keys, hex) this phrase holds, on the signing branches a
+ * person's vault keys live on; or null. Every key derived on the way is wiped.
+ */
+function ownCosignerKey(mnemonic, keys, maxBranch = 64) {
+  const wanted = new Set((keys ?? []).map(key => String(key).toLowerCase()));
+  const seed = mnemonicToSeedSync(mnemonic);
+  let base;
+  try {
+    base = HDKey.fromMasterSeed(seed).derive(COSIGN_PATH(0).replace(/\/0$/, ''));
+  } finally {
+    seed.fill(0);
+  }
+  try {
+    for (let index = 0; index < maxBranch; index++) {
+      const child = base.deriveChild(index);
+      const key = toHexKey(child.publicKey);
+      child.wipePrivateData();
+      if (wanted.has(key)) return { index, key };
+    }
+    return null;
+  } finally {
+    base.wipePrivateData();
+  }
+}
+
+/**
+ * Before coins move into a vault or wallet, this device rebuilds where they are going from the
+ * settings it is shown, and refuses unless the address is exactly that, its own key is one of the
+ * signers, and the number of signatures and the delay are the ones the person approved in words.
+ * So a rewritten database cannot steer a lock or a move into a vault someone else controls.
+ */
+export function checkLockTarget(mnemonic, { quorum, palmProof }, payTo) {
+  const statement = String(palmProof?.statement ?? '');
+  const details = palmProof?.details ?? {};
+  const keys = quorum?.keys ?? [];
+  let address;
+  let days;
+  if (quorum?.kind === 'palm-evm') {
+    const params = walletParams({ signers: keys.map(evmAddressOfPublicKey), threshold: quorum.required, palmSigner: quorum.palmKey, recoveryDays: quorum.recoveryDays });
+    address = walletAddressOf(params, walletSalt(quorum.palmVaultId));
+    days = Number(quorum.recoveryDays);
+  } else if (quorum?.kind === 'palm') {
+    address = palmVaultOf({ palmKey: quorum.palmKey, signerKeys: keys, required: quorum.required, delay: quorum.delay, network: NETWORK }).address;
+    days = Math.round(Number(quorum.delay) / 144);
+  } else {
+    const ordered = keys.map(key => String(key).toLowerCase()).sort();
+    address = btc.p2wsh(btc.p2ms(quorum.required, ordered.map(key => hex.decode(key))), NETWORK).address;
+  }
+  const refuse = why => { throw new Error(`${why}. Nothing has been signed.`); };
+  if (String(address).toLowerCase() !== String(quorum.address).toLowerCase()) refuse('The vault does not match its own settings');
+  if (String(payTo).toLowerCase() !== String(quorum.address).toLowerCase()) refuse('The coins would go somewhere other than the vault');
+  if (!ownCosignerKey(mnemonic, keys)) refuse('Your own signing key is not one of this vault\'s keys');
+  const rule = keys.length === 1 ? 'my palm' : `${quorum.required} of ${keys.length}`;
+  if (!statement.includes(rule)) refuse('The vault\'s signers are not what you approved');
+  if (days !== undefined && !String(details.recovery ?? '').includes(`about ${days} days`)) refuse('The vault\'s recovery delay is not what you approved');
+}
+
+/**
+ * For a signer adding a signature to a palm vault spend: every input must be this vault's coin,
+ * spent through the palm path, exactly the coins the plan names; and a move must go into the
+ * vault its settings describe.
+ */
+function checkPalmVaultSpend(tx, { vault, move, plan, address }) {
+  const refuse = why => { throw new Error(`${why}. Nothing has been signed.`); };
+  if (!vault) return;
+  const made = palmVaultOf({ palmKey: vault.palmKey, signerKeys: vault.keys, required: vault.required, delay: vault.delay, network: NETWORK });
+  if (made.address !== address) refuse('This is not the vault it says it is');
+  const planned = new Set((plan.inputs ?? []).map(input => `${input.txid}:${input.index}:${input.value}`));
+  if (tx.inputsLength !== planned.size) refuse('The transaction spends different coins from the plan');
+  for (let i = 0; i < tx.inputsLength; i++) {
+    const input = tx.getInput(i);
+    const leaves = input.tapLeafScript ?? [];
+    if (leaves.length !== 1 || hex.encode(leaves[0][1].subarray(0, -1)) !== hex.encode(made.leaves.normal.script)) {
+      refuse('An input is not spent through this vault\'s palm path');
+    }
+    if (!input.witnessUtxo || hex.encode(input.witnessUtxo.script) !== hex.encode(made.script)) refuse('An input is not this vault\'s coin');
+    if (!planned.has(`${hex.encode(input.txid)}:${input.index}:${Number(input.witnessUtxo.amount)}`)) refuse('The transaction spends different coins from the plan');
+  }
+  if (move) {
+    const next = palmVaultOf({ palmKey: move.palmKey, signerKeys: move.keys, required: move.required, delay: move.delay, network: NETWORK });
+    if (next.address !== move.address) refuse('The new vault does not match its own settings');
+    const outputs = (plan.outputs ?? []).filter(output => output.address !== address);
+    if (outputs.length !== 1 || outputs[0].address !== next.address) refuse('The coins would go somewhere other than the new vault');
+  }
+}
+
 /** Signs an approved withdrawal and its authorisation record. Returns nothing secret. */
 export async function signApprovedSpend(record, unlocked, { network }) {
   return withPhrase(record, unlocked.unlock, mnemonic => {
+    // A lock moves every coin into a vault: rebuild it here and make sure it is really ours.
+    if (unlocked.quorum) {
+      const payees = (unlocked.plan.outputs ?? []).filter(output => output.address !== record.address);
+      checkLockTarget(mnemonic, unlocked, payees[0]?.address);
+    }
     const signed = signPlan(mnemonic, unlocked.plan, record.address, {
       transactionHash: unlocked.transactionHash,
       network,
@@ -661,6 +808,8 @@ export async function signApprovedQuorum(record, unlocked, { network }) {
     transactionHash: unlocked.transactionHash,
     network,
     lockKind: unlocked.lockKind,
+    vault: unlocked.vault ?? null,
+    move: unlocked.move ?? null,
   }));
 }
 
@@ -728,6 +877,8 @@ export function signTransfer(mnemonic, transfer, { path, expectedDigest = null }
  */
 export async function signApprovedTransfer(record, unlocked, { network }) {
   return withPhrase(record, unlocked.unlock, mnemonic => {
+    // Locking to a Palm Wallet: the wallet is rebuilt here, and must hold this person's own key.
+    if (unlocked.quorum) checkLockTarget(mnemonic, unlocked, unlocked.transfer.to);
     const signed = signTransfer(mnemonic, unlocked.transfer, {
       path: unlocked.path,
       expectedDigest: unlocked.transactionHash,
@@ -919,6 +1070,31 @@ export function checkpointDisagreement(record, serverHeads) {
  * and the interface exists so that when one of those does exist it replaces this object
  * rather than every call site in the page.
  */
+/** Why the words approved do not describe what this authorisation would sign, or null. */
+function wordsProblem(authorization) {
+  const statement = authorization.palmProof?.statement;
+  const details = authorization.palmProof?.details;
+  if (authorization.palmWallet) {
+    const pw = authorization.palmWallet;
+    if (pw.kind === 'refresh') return evmWordsProblem({ statement, fees: pw.refresh?.gasRefund ?? '0' });
+    const t = pw.transfer ?? {};
+    return String(t.token ?? '').toLowerCase() === EVM_NATIVE
+      ? evmWordsProblem({ statement, to: t.to, amount: t.amount, fees: (BigInt(t.fee ?? 0) + BigInt(t.gasRefund ?? 0)).toString() })
+      : evmTokenWordsProblem({ statement, to: t.to, token: t.token, amount: t.amount, fee: t.fee, gasRefund: t.gasRefund });
+  }
+  if (authorization.transfer) return evmWordsProblem({ statement, to: authorization.transfer.to, amount: authorization.transfer.value });
+  if (authorization.plan) return bitcoinWordsProblem({ statement, details, plan: authorization.plan, vaultAddress: authorization.address });
+  return null;
+}
+
+/**
+ * Before the recovery words are shown: this person's own palm approved exactly this request,
+ * checked with Veyns' keys, not the server's say so.
+ */
+export function checkOwnPalm(unlocked, trust) {
+  checkPalmProof(unlocked, trust, { transaction: false });
+}
+
 export function browserSigner(record, authorization, trust = null) {
   return assertSigner({
     isolation: ISOLATION.BROWSER_JAVASCRIPT,
@@ -968,6 +1144,9 @@ export function browserSigner(record, authorization, trust = null) {
         } catch (error) {
           throw new SignerError(error.message);
         }
+        // And the words approved say what this transaction does: payees, amounts, fees.
+        const words = wordsProblem(authorization);
+        if (words) throw new SignerError(`This signer will not sign that: ${words}.`);
       }
       const network = request.network;
       // An account-chain transfer (Ethereum, BSC) carries a `transfer` to sign, not a UTXO

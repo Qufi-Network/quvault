@@ -24,6 +24,7 @@ import { canonicalTransaction } from './canonical.js';
 import { transactionDigest, actionDigest } from './veyns.js';
 import { palmVaultOf, planOfPalmPsbt, palmPathOf, signPalmPsbt } from './palm-vault.js';
 import { NETWORK } from './bitcoin.js';
+import { bitcoinWordsProblem, evmWordsProblem, evmTokenWordsProblem } from './approval-words.js';
 import {
   NATIVE, normalTransfer, normalRefresh, evmTransferDigest, evmRefreshDigest, eip712TransferDigest, eip712RefreshDigest,
   addressOfKey, signDigest,
@@ -124,6 +125,9 @@ export function createPalmSigner({
     }
     const digest = transactionDigest(canonicalTransaction({ chain: 'bitcoin', network: networkName, from: vault.address, plan }));
     if (action?.details?.transaction_hash !== digest) refuse('the approved action names a different transaction');
+    // And the words the palm approved describe this transaction: its payees, amounts and fee.
+    const words = bitcoinWordsProblem({ statement: action.statement, details: action.details, plan, vaultAddress: vault.address });
+    if (words) refuse(words);
     const expected = actionDigest(action.statement, action.details);
 
     // 2. The palms: enough different signers, each bound to exactly this action.
@@ -236,8 +240,14 @@ export function createPalmSigner({
     if (String(details.palm_fee_units ?? '0') !== t.fee) refuse('the approved Palm fee is not this transfer\'s');
     if (t.fee !== '0' && lower(details.palm_fee_to) !== t.feeTo) refuse('the approved Palm fee goes somewhere else');
     if (String(details.network_fee_units ?? '0') !== t.gasRefund) refuse('the approved network fee is not this transfer\'s');
+    if (t.gasRefund !== '0' && lower(details.network_fee_to) !== t.refundTo) refuse('the approved network fee goes somewhere else');
     if (lower(details.wallet) !== lower(wallet.address)) refuse('the approval is for a different wallet');
     if (String(details.chain_id ?? '') !== String(wallet.chainId)) refuse('the approval is for a different chain');
+    // The sentence itself names the payee, the amount and the fees together.
+    const words = t.token === NATIVE
+      ? evmWordsProblem({ statement: action.statement, to: t.to, amount: t.amount, fees: (BigInt(t.fee) + BigInt(t.gasRefund)).toString() })
+      : evmTokenWordsProblem({ statement: action.statement, to: t.to, token: t.token, amount: t.amount, fee: t.fee, gasRefund: t.gasRefund });
+    if (words) refuse(words);
 
     const required = Number(wallet.threshold);
     if (!Number.isInteger(required) || required < 1) refuse('the wallet names no threshold');
@@ -272,8 +282,11 @@ export function createPalmSigner({
     const details = action?.details ?? {};
     if (details.transaction_hash !== digest) refuse('the approved action names a different refresh');
     if (String(details.network_fee_units ?? '0') !== r.gasRefund) refuse('the approved network fee is not this refresh\'s');
+    if (r.gasRefund !== '0' && lower(details.network_fee_to) !== r.refundTo) refuse('the approved network fee goes somewhere else');
     if (lower(details.wallet) !== lower(wallet.address)) refuse('the approval is for a different wallet');
     if (String(details.chain_id ?? '') !== String(wallet.chainId)) refuse('the approval is for a different chain');
+    const refreshWords = evmWordsProblem({ statement: action.statement, fees: r.gasRefund });
+    if (refreshWords) refuse(refreshWords);
     const required = Number(wallet.threshold);
     if (!Number.isInteger(required) || required < 1) refuse('the wallet names no threshold');
     const { approvedBy, requestIds } = checkPalms({

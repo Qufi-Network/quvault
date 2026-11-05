@@ -11,10 +11,11 @@ import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { hex, base64 } from '@scure/base';
 
 // testnet4 shares address formats and version bytes with the older test network.
-export const NETWORK = btc.TEST_NETWORK;
+import { NETWORK, WalletError } from './bitcoin-common.js';
+
+export { NETWORK, WalletError };
 const DUST_SATS = 294n;
 
-export class WalletError extends Error {}
 
 export function createKey() {
   for (;;) {

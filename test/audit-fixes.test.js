@@ -37,7 +37,8 @@ const register = (client, operationId, publicKey, proof) =>
 
 async function trustFor(env, sub) {
   const { keys } = await (await env.world.fetchImpl(`${ISSUER}/jwks.json`)).json();
-  return { issuer: ISSUER, audience: CLIENT_ID, keys, subjects: [sub, `pairwise:${CLIENT_ID}:${sub}`] };
+  // The test world runs on its own clock, so the palm scan's age is judged against that.
+  return { issuer: ISSUER, audience: CLIENT_ID, keys, subjects: [sub, `pairwise:${CLIENT_ID}:${sub}`], get now() { return env.now(); } };
 }
 
 test('audit H1: a signing key needs proof its holder registered it, and nobody can claim someone else\'s', async t => {

@@ -46,7 +46,8 @@ const app = createApp({
   palmFeeAddress: env.PALM_FEE_ADDRESS || '',
   network: env.BITCOIN_NETWORK || 'testnet4',
   chainApi: env.CHAIN_API || 'https://mempool.space/testnet4/api',
-  requirePalmSignin: env.REQUIRE_PALM_SIGNIN === 'true',
+  // Palm sign in is the default; REQUIRE_PALM_SIGNIN=false allows other Veyns methods.
+  requirePalmSignin: env.REQUIRE_PALM_SIGNIN !== 'false',
   // Deliberately not DATABASE_URL: on a dev machine that often belongs to another project.
   databaseUrl: env.QUVAULT_DATABASE_URL || '',
   dataDir,

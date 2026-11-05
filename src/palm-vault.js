@@ -22,11 +22,11 @@
  * without QuVault: the descriptor is everything a wallet needs to rebuild both scripts and
  * spend through the recovery path. It must be handed to every signer when the vault is made.
  */
-import crypto from 'node:crypto';
 import * as btc from '@scure/btc-signer';
 import { hex, base64 } from '@scure/base';
-import { secp256k1 } from '@noble/curves/secp256k1.js';
-import { NETWORK, WalletError } from './bitcoin.js';
+import { secp256k1, schnorr } from '@noble/curves/secp256k1.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { NETWORK, WalletError } from './bitcoin-common.js';
 
 /** BIP341's H: a point nobody knows the private key of, so the key path can never be used. */
 export const NUMS_KEY = btc.TAPROOT_UNSPENDABLE_KEY;
@@ -90,16 +90,26 @@ function leafScripts(palmKey, keys, required, delay) {
 }
 
 const taggedHash = (tag, ...parts) => {
-  const tagHash = crypto.createHash('sha256').update(tag).digest();
-  return crypto.createHash('sha256').update(tagHash).update(tagHash).update(Buffer.concat(parts.map(p => Buffer.from(p)))).digest();
+  const tagHash = sha256(new TextEncoder().encode(tag));
+  return sha256(concatBytes(tagHash, tagHash, ...parts));
 };
-const compactSize = n => (n < 0xfd ? Buffer.from([n])
-  : n <= 0xffff ? Buffer.from([0xfd, n & 0xff, n >> 8])
-    : Buffer.concat([Buffer.from([0xfe]), Buffer.from(Uint32Array.of(n).buffer)]));
+// Plain bytes rather than Buffer, so the browser can rebuild a vault with this same module.
+const concatBytes = (...parts) => {
+  const out = new Uint8Array(parts.reduce((n, part) => n + part.length, 0));
+  let at = 0;
+  for (const part of parts) {
+    out.set(part, at);
+    at += part.length;
+  }
+  return out;
+};
+const compactSize = n => (n < 0xfd ? Uint8Array.of(n)
+  : n <= 0xffff ? Uint8Array.of(0xfd, n & 0xff, n >> 8)
+    : Uint8Array.of(0xfe, n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, (n >>> 24) & 0xff));
 
 /** BIP341 leaf hash: what a script-path signature commits to. */
 export const tapLeafHash = script =>
-  new Uint8Array(taggedHash('TapLeaf', Buffer.from([LEAF_VERSION]), compactSize(script.length), script));
+  taggedHash('TapLeaf', Uint8Array.of(LEAF_VERSION), compactSize(script.length), script);
 
 /* ------------------------------------------------------------- the vault */
 
@@ -368,11 +378,27 @@ export function signPalmPsbt(psbt, privateKey) {
  */
 export function palmSignersOf(vault, psbt, signerKeys) {
   const tx = readPsbt(psbt);
-  const leafHash = vault.leaves.normal.leafHash;
+  const { leafHash, script } = vault.leaves.normal;
+  // A signature counts only if it verifies: over this input's sighash, through the palm path,
+  // with SIGHASH_DEFAULT. Sixty-four random bytes are not a signature, whoever sent them.
+  const scripts = [];
+  const amounts = [];
+  for (let i = 0; i < tx.inputsLength; i++) {
+    const utxo = tx.getInput(i).witnessUtxo;
+    scripts.push(utxo?.script ?? vault.script);
+    amounts.push(utxo?.amount ?? 0n);
+  }
   const perInput = [];
   for (let i = 0; i < tx.inputsLength; i++) {
+    let message = null;
+    try {
+      message = tx.preimageWitnessV1(i, scripts, btc.SigHash.DEFAULT, amounts, undefined, script, LEAF_VERSION);
+    } catch {
+      message = null;
+    }
     perInput.push(new Set((tx.getInput(i).tapScriptSig ?? [])
-      .filter(([meta]) => equalBytes(meta.leafHash, leafHash))
+      .filter(([meta, sig]) => message && equalBytes(meta.leafHash, leafHash) && sig.length === SCHNORR_SIG
+        && (() => { try { return schnorr.verify(sig, message, meta.pubKey); } catch { return false; } })())
       .map(([meta]) => hex.encode(meta.pubKey))));
   }
   if (!perInput.length) return [];

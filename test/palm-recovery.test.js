@@ -182,7 +182,7 @@ test('a refresh sends every coin back into the same vault through the normal pat
   const env = await start(t);
   const { alex, account } = await lockOne(env);
   const { operation, plan } = ok(await alex.post('/api/vault/refresh/approval', {}));
-  assert.match(operation.statement, /^Refresh my vault: move 0\.00\d+ tBTC back into it, so its recovery clock starts again$/);
+  assert.match(operation.statement, /^Refresh my vault: move 0\.00\d+ tBTC back into it, so its recovery clock starts again, network fee 0\.\d{8} tBTC$/);
   assert.equal(operation.details.to, account.address);
   assert.equal(plan.outputs.length, 1);
   assert.equal(plan.outputs[0].address, account.address, 'the only output is the vault itself');
@@ -223,7 +223,7 @@ test('the owner dies: the other two invite a replacement, move the vault to them
   const moved = ok(await cara.post('/api/vault/move/approval', {
     vaultOwnerId: alex.id, signers: [ids.Bea, ids.Cara, ids.Dave], required: 2,
   }));
-  assert.match(moved.operation.statement, /^Move the vault to Bea, Cara, Dave, 2 of 3 and the palm, and send 0\.00\d+ tBTC to it$/);
+  assert.match(moved.operation.statement, /^Move the vault to Bea, Cara, Dave, 2 of 3 and the palm, and send 0\.00\d+ tBTC to it at tb1p[a-z0-9]+, network fee 0\.\d{8} tBTC$/);
   assert.equal(moved.operation.details.leaving, 'Owner');
   assert.equal(moved.operation.details.joining, 'Dave');
   assert.equal(moved.operation.required, 2);

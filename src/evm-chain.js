@@ -99,13 +99,36 @@ export function createEvmChain({ rpcUrl, chainId, explorer = null, fetchImpl = g
     },
 
     /** A read-only contract call against the latest block, returning the raw result. */
-    async call({ to, data }) {
-      return rpc('eth_call', [{ to, data }, 'latest']);
+    async call({ to, data, from = null }) {
+      return rpc('eth_call', [{ to, data, ...(from ? { from } : {}) }, 'latest']);
     },
 
     /** Posts a signed raw transaction, returning its hash. */
     async broadcast(rawHex) {
       return rpc('eth_sendRawTransaction', [rawHex]);
+    },
+
+    /**
+     * One transaction as the chain recorded it, with its receipt's status and logs, or null when
+     * the network has not seen it. Every quantity is a decimal string; a receipt reader rebuilds
+     * the digest the palm approved from this alone (src/evm-receipt.js).
+     */
+    async transaction(txid) {
+      const [tx, r] = await Promise.all([
+        rpc('eth_getTransactionByHash', [txid]),
+        rpc('eth_getTransactionReceipt', [txid]),
+      ]);
+      if (!tx) return null;
+      const dec = value => (value == null ? null : big(value).toString(10));
+      const lower = value => (value ? String(value).toLowerCase() : null);
+      return {
+        hash: lower(tx.hash), from: lower(tx.from), to: lower(tx.to),
+        nonce: dec(tx.nonce), value: dec(tx.value), input: lower(tx.input) || '0x', gas: dec(tx.gas),
+        maxFeePerGas: dec(tx.maxFeePerGas ?? tx.gasPrice), maxPriorityFeePerGas: dec(tx.maxPriorityFeePerGas ?? tx.gasPrice),
+        chainId: dec(tx.chainId), blockNumber: dec(tx.blockNumber),
+        confirmed: Boolean(r), success: r ? r.status === '0x1' : null,
+        logs: (r?.logs ?? []).map(log => ({ address: lower(log.address), topics: (log.topics ?? []).map(lower), data: lower(log.data) })),
+      };
     },
 
     /**

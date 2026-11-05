@@ -249,10 +249,24 @@ export function attestFor(env, c, unlocked, tweak = {}) {
 }
 
 /**
+ * Puts people on a vault's roster as an accepted invitation would, so a test about rules can
+ * name them as signers. Nobody new can be added by code: invites.test.js covers how they join.
+ */
+export async function onRoster(env, owner, add) {
+  const db = await env.app.db();
+  for (const entry of add) {
+    if (!entry.code || entry.code === owner.id) continue;
+    await db.query(`INSERT INTO members (wallet_user_id, member_id, label, is_owner, added_at) VALUES ($1, $2, $3, false, $4)
+                    ON CONFLICT (wallet_user_id, member_id) DO NOTHING`, [owner.id, entry.code, entry.label, env.now()]);
+  }
+}
+
+/**
  * Sets an account's signers and thresholds, through the palm-approved change. The approvals
  * come from whoever signs for it today, which is the point of the rule.
  */
 export async function setRules(env, owner, { network = 'bitcoin', add = [], remove = [], rules, approvers = [] }) {
+  await onRoster(env, owner, add);
   const { operation } = ok(await owner.post('/api/policy', { network, add, remove, rules }));
   const palms = [owner, ...approvers, ...add.map(a => a.client).filter(Boolean)];
   for (let i = 0; i < operation.required; i++) await palmApprove(env, palms[i], operation.id);
@@ -261,6 +275,7 @@ export async function setRules(env, owner, { network = 'bitcoin', add = [], remo
 
 /** Adds an account on another network the way the wizard does, and derives its address. */
 export async function addAccount(env, owner, { network, add = [], signers = [], rules, approvers = [] }) {
+  await onRoster(env, owner, add);
   const { operation } = ok(await owner.post('/api/accounts/approval', { network, add, signers, rules }));
   const palms = [owner, ...approvers];
   for (let i = 0; i < operation.required; i++) await palmApprove(env, palms[i], operation.id);

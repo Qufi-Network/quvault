@@ -5,7 +5,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { start, ok, signedIn, palmApprove, walletFor, setRules, addAccount, ADDRESSES } from './harness.js';
+import { start, ok, signedIn, palmApprove, walletFor, setRules, addAccount, ADDRESSES, onRoster } from './harness.js';
 
 const DEST = 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx';
 const bitcoin = view => view.accounts.find(account => account.network === 'bitcoin');
@@ -75,7 +75,9 @@ test('changing signers or thresholds takes the palms that guard the account toda
   assert.equal(bitcoin(view).signers.length, 3);
   assert.equal(bitcoin(view).changeRequired, 2);
 
-  // Any further change needs two of those three.
+  // Any further change needs two of those three. Dan has accepted an invitation, so he is on
+  // the roster, but he signs for nothing until this change goes through.
+  await onRoster(env, alex, [{ code: dan.id, label: 'Dan' }]);
   const { operation } = ok(await alex.post('/api/policy', {
     add: [{ code: dan.id, label: 'Dan' }],
     rules: [{ upToSats: null, approvals: 1 }],
@@ -84,7 +86,7 @@ test('changing signers or thresholds takes the palms that guard the account toda
 
   // Dan is named in the change but cannot approve his own arrival.
   const dansTry = await dan.post(`/api/operations/${operation.id}/approval`, {});
-  assert.equal(dansTry.status, 404, 'Dan is not part of this vault yet');
+  assert.ok(dansTry.status >= 400, 'Dan does not sign for this account yet');
 
   const first = await palmApprove(env, alex, operation.id);
   assert.equal(first.operation.status, 'collecting', 'one palm is not enough');

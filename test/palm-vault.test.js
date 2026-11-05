@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import * as btc from '@scure/btc-signer';
 import { hex, base64 } from '@scure/base';
-import { createKey, publicKeyOf } from '../src/bitcoin.js';
+import { createKey, publicKeyOf, toBtc } from '../src/bitcoin.js';
 import { canonicalTransaction } from '../src/canonical.js';
 import { transactionDigest, actionDigest } from '../src/veyns.js';
 import {
@@ -60,7 +60,11 @@ function world({ amountSats = 40_000 } = {}) {
   const spend = (to = DEST, amount = amountSats) => {
     const plan = planPalmSpend({ vault, utxos, toAddress: to, amountSats: amount, feeRate: 2 });
     const digest = transactionDigest(canonicalTransaction({ chain: 'bitcoin', network: 'testnet4', from: vault.address, plan }));
-    const action = { statement: `Send ${amount} sats to ${to}`, details: { action: 'withdraw', to, amount_sats: amount, transaction_hash: digest } };
+    // Worded the way the app words it: payee, amount and network fee, all from the plan.
+    const action = {
+      statement: `Send ${toBtc(plan.sentSats)} tBTC to ${to}, network fee ${toBtc(plan.feeSats)} tBTC`,
+      details: { action: 'withdraw', to, amount_sats: plan.sentSats, fee_sats: plan.feeSats, transaction_hash: digest },
+    };
     let psbt = palmVaultPsbt(vault, plan);
     psbt = signPalmPsbt(psbt, people.alex);
     psbt = signPalmPsbt(psbt, people.bea);

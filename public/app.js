@@ -7,15 +7,17 @@
  * not on this list. They still exist in the wallet module, which is where the phrase stays.
  *
  * `revealPhrase` is the single exception: showing someone their own recovery words is what
- * that screen is for. `signRecovery` is the other side of it: on the recovery door an heir types
- * the words in, and they go straight from the boxes into the wallet module and are cleared.
+ * that screen is for. `signRecovery` and `signPalmWalletRecovery` are the other side of it: on the
+ * recovery door an heir types the words in, and they go straight from the boxes into the wallet
+ * module and are cleared.
  * Nothing else in this file ever holds a secret.
  */
 import {
   checkAuthorization, checkChain, clearRecord, fromBase64, loadRecord, planDigest,
   createVaultKey, browserSigner, cosignerKeyWithProof, deriveAccountFor,
   restoreVaultKey, revealPhrase, pinAttestationRoot,
-  signEvidenceCheckpoint, pinCheckpoint, checkpointDisagreement, signRecovery,
+  signEvidenceCheckpoint, pinCheckpoint, checkpointDisagreement, signRecovery, signPalmWalletRecovery, checkOwnPalm,
+  chainDigestOf,
 } from '/vendor/wallet.js';
 
 const $ = id => document.getElementById(id);
@@ -773,7 +775,9 @@ const device = {
    * to the DOM without keeping it.
    */
   async phrase(operation) {
-    return revealPhrase(this.record, await this.unlockFor(operation.id));
+    const unlocked = await this.unlockFor(operation.id);
+    checkOwnPalm(unlocked, await palmTrust());
+    return revealPhrase(this.record, unlocked);
   },
 
   /** Puts an existing phrase back on this device, after the two-scan ceremony. */
@@ -1002,6 +1006,9 @@ function configureSendForm(account) {
   // Gas is chosen for the owner on an EVM chain, and there is nothing to sweep to a change
   // address, so the fee-rate field and the send-everything box belong to Bitcoin only.
   $('send-fee-field').hidden = evm;
+  // A Palm Wallet can send tokens too: the amount then counts in the token's base units.
+  $('send-token-field').hidden = !(evm && account.quorum?.palmWallet);
+  $('send-token').value = '';
   $('send-max-row').hidden = evm;
   if (evm) $('send-max').checked = false;
 }
@@ -1455,11 +1462,11 @@ function renderSafety(data) {
   const by = frozen ? (data.labels?.[frozen.by] || (frozen.by === data.me.id ? 'you' : 'a signer')) : null;
   const when = frozen ? new Date(frozen.at * 1000).toLocaleString() : null;
   $('frozen-banner').hidden = !frozen;
-  if (frozen) $('frozen-what').textContent = `Frozen by ${by} on ${when}. Nothing can be approved, signed or sent until your signers unfreeze it.`;
+  if (frozen) $('frozen-what').textContent = `Frozen by ${by} on ${when}. Nothing can be approved, signed or sent until you unfreeze it with your palm, or it lifts by itself on ${new Date(frozen.until * 1000).toLocaleString()}.`;
   $('freeze-state').textContent = frozen ? 'frozen' : 'not frozen';
   $('freeze-state').classList.toggle('warn', Boolean(frozen));
   $('freeze-actions').replaceChildren(frozen
-    ? button('Unfreeze with palm scans', 'btn brand sm', startUnfreeze)
+    ? button('Unfreeze with your palm', 'btn brand sm', startUnfreeze)
     : button('Freeze this vault now', 'btn ghost sm danger', freezeNow));
 
   const book = data.addressBook || [];
@@ -1480,7 +1487,7 @@ function renderSafety(data) {
 
 async function freezeNow() {
   $('freeze-error').textContent = '';
-  if (!window.confirm('Freeze this vault now? Everything waiting is cancelled, and nothing can be sent until your signers unfreeze it with their palms.')) return;
+  if (!window.confirm('Freeze this vault now? Everything waiting is cancelled, and nothing can be sent until the owner unfreezes it with their palm, or 72 hours pass.')) return;
   try {
     await api('/api/vault/freeze', {});
     toast('The vault is frozen.');
@@ -1684,8 +1691,12 @@ function drawChainLock(account) {
     $('chain-clock').hidden = false;
     $('chain-clock-value').textContent = walletClockText(wallet.clock);
     $('vault-tools').hidden = false;
-    $('vault-tools').replaceChildren(button('Refresh now', 'btn ghost sm', () => startRefresh(null, $('lock-error'), account.network)));
-    $('chain-note').textContent = `${wallet.built ? 'The wallet contract is built.' : 'The wallet contract is built on its first payment; coins sent to this address before then are safe.'} `
+    $('vault-tools').replaceChildren(
+      button('Refresh now', 'btn ghost sm', () => startRefresh(null, $('lock-error'), account.network)),
+      button('Inheritance sheet', 'btn ghost sm', () => openHeirSheet(null, $('lock-error'), account.network)),
+      button('Recovery door', 'btn ghost sm', () => openDoor(wallet.description)),
+    );
+    $('chain-note').textContent = `${wallet.built ? 'The wallet contract is built.' : 'The wallet contract is not built yet: its first payment builds it, or anyone can build it from the details on its inheritance sheet. Keep that sheet; until the wallet is built, it is the only way to reach these coins without Palm.'} `
       + `Network fees are paid by Palm's gas account ${wallet.gasAccount ?? ''}${wallet.gasBalance !== null ? `, which holds ${wallet.gasBalance} ${wallet.gasSymbol}` : ''}. On a test network, top it up from a faucet. `
       + `Each payment pays Palm 0.1% and its own network fee. If the palm approves nothing here for about ${wallet.recoveryDelayDays} days, the signers alone can move the coins; a payment or a refresh starts that wait again.`;
   } else if (palmLocked) {
@@ -1962,11 +1973,11 @@ $('pay-form').addEventListener('submit', async event => {
 /* ------------------------------------------ inheritance sheet and recovery door */
 
 /** The inheritance sheet for a palm vault: your own, or one you sign for. Printable. */
-async function openHeirSheet(ownerId = null, errorNode = null) {
+async function openHeirSheet(ownerId = null, errorNode = null, network = 'bitcoin') {
   if (errorNode) errorNode.textContent = '';
   let sheet;
   try {
-    sheet = await api('/api/vault/inheritance', ownerId ? { vaultOwnerId: ownerId } : {});
+    sheet = await api('/api/vault/inheritance', { ...(ownerId ? { vaultOwnerId: ownerId } : {}), network });
   } catch (error) {
     if (errorNode) errorNode.textContent = friendly(error);
     else toast(friendly(error));
@@ -1980,21 +1991,25 @@ async function openHeirSheet(ownerId = null, errorNode = null) {
   // A QR code this server drew from the vault description; no outside content.
   if (sheet.descriptorQr) qr.innerHTML = sheet.descriptorQr;
   const printed = new Date(sheet.printedAt * 1000).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
+  const evm = sheet.kind === 'evm';
 
   $('heir-sheet-body').replaceChildren(
     // The printed sheet carries the logo; on screen the sheet's own heading says what it is.
     el('img', { class: 'heir-logo print-only', src: '/palm-logo.png', alt: 'Palm' }),
-    el('h2', {}, 'How to recover this Palm vault'),
+    el('h2', {}, evm ? 'How to recover this Palm Wallet' : 'How to recover this Palm vault'),
     el('p', { class: 'quiet small' }, `Printed ${printed}. If the vault is changed later, print a new one.`),
     el('section', { class: 'stack tight' },
       row('Address', sheet.address, true),
-      row('Network', sheet.network === 'testnet4' ? 'Bitcoin testnet4' : `Bitcoin ${sheet.network}`),
+      row('Network', evm ? sheet.networkLabel : sheet.network === 'testnet4' ? 'Bitcoin testnet4' : `Bitcoin ${sheet.network}`),
       row('Signers', names),
+      ...(!evm ? sheet.signers.map(signer => row(`${signer.label}'s key`, `${signer.key} at ${signer.path} of their twelve words`, true)) : []),
       row('Normal spending', count === 1 ? `${names}, with a palm approval` : `${sheet.required} of the ${count} signers, each with a palm approval`),
-      row('Recovery path', `${sheet.required === 1 ? 'One signer’s' : `${sheet.required} signers’`} twelve words alone, once the coins have sat unmoved for about ${days} days (${sheet.recoveryDelayBlocks.toLocaleString('en-US')} blocks)`)),
+      row('Recovery path', evm
+        ? `${sheet.required === 1 ? 'One signer’s' : `${sheet.required} signers’`} twelve words alone, once the palm has approved nothing in this wallet for about ${days} days`
+        : `${sheet.required === 1 ? 'One signer’s' : `${sheet.required} signers’`} twelve words alone, once the coins have sat unmoved for about ${days} days (${sheet.recoveryDelayBlocks.toLocaleString('en-US')} blocks)`)),
     el('div', { class: 'heir-grid' },
       el('div', { class: 'stack tight' },
-        el('b', {}, 'Vault description'),
+        el('b', {}, evm ? 'Wallet description' : 'Vault description'),
         el('p', { class: 'quiet small' }, 'Everything a wallet needs to find these coins. It is public information: on its own it cannot move anything.'),
         el('code', { class: 'mono wrap heir-code' }, sheet.descriptor)),
       qr),
@@ -2003,9 +2018,16 @@ async function openHeirSheet(ownerId = null, errorNode = null) {
       el('li', {}, count === 1
         ? `While ${names} can still use Palm, nothing here is needed.`
         : `While ${sheet.required} of the signers can still use Palm, they carry on as normal, and can replace a signer who cannot.`),
-      el('li', {}, `Otherwise, find the twelve words of ${sheet.required === 1 ? 'the signer' : `${sheet.required} of the signers`}, and wait until the coins have sat unmoved for about ${days} days. A refresh or a deposit restarts that wait for those coins.`),
+      el('li', {}, evm
+        ? `Otherwise, find the twelve words of ${sheet.required === 1 ? 'the signer' : `${sheet.required} of the signers`}, and wait until the palm has approved nothing in the wallet for about ${days} days. A payment or a refresh restarts that wait.`
+        : `Otherwise, find the twelve words of ${sheet.required === 1 ? 'the signer' : `${sheet.required} of the signers`}, and wait until the coins have sat unmoved for about ${days} days. A refresh or a deposit restarts that wait for those coins.`),
       el('li', {}, `Sign in to Palm at ${sheet.palmAt} with your own palm. On the first screen or under Security, open the recovery door, paste the vault description, enter the words, and choose where the coins go. The words stay on that device.`),
-      el('li', {}, 'Any wallet that reads output descriptors, such as Bitcoin Core or Sparrow, can do the same with the description above and the same words.')),
+      el('li', {}, evm
+        ? 'A developer can do the same without Palm, by calling the wallet’s recover function with the signers’ signatures.'
+        : 'Bitcoin Core, version 26 or later, can do the same without Palm: import the description above, and sign with the keys at the paths shown from the same words. Keep this sheet: without the description the words alone cannot find these coins.')),
+    evm && sheet.build ? el('div', { class: 'stack tight' },
+      el('b', {}, 'Build details, to recover without Palm'),
+      el('code', { class: 'mono wrap heir-code' }, JSON.stringify(sheet.build))) : null,
     el('p', { class: 'warn-note' }, 'Keep this sheet apart from the twelve words, and tell the people you trust where both are. Together, and after the delay, they can move the coins. Without the words, nothing can.'),
   );
   $('heir-sheet-error').textContent = '';
@@ -2022,6 +2044,11 @@ $('heir-sheet-print').addEventListener('click', () => {
 });
 window.addEventListener('afterprint', () => document.body.classList.remove('print-heir-sheet'));
 $('sheet-open').addEventListener('click', () => openHeirSheet(null, $('inheritance-error')));
+$('logout-everywhere').addEventListener('click', async () => {
+  if (!window.confirm('Sign out on every device, this one included?')) return;
+  await api('/api/logout/everywhere', {}).catch(() => {});
+  location.reload();
+});
 
 /*
  * The recovery door. The server gets the public vault description and hands back an unsigned
@@ -2059,21 +2086,35 @@ $('door-look').addEventListener('click', async () => {
     const looked = await api('/api/recovery-door/plan', { descriptor: doorDescriptor() });
     door.looked = looked;
     const { clock } = looked;
-    const total = clock.coins.reduce((sum, coin) => sum + coin.value, 0);
+    const evm = looked.kind === 'evm';
     $('door-address').textContent = looked.address;
     $('door-required').textContent = `${looked.required} of ${looked.keys.length}`;
-    $('door-delay').textContent = `about ${looked.recoveryDelayDays} days after each deposit`;
-    $('door-coins').textContent = clock.coins.length ? `${plural(clock.coins.length, 'coin')}, ${btc(total)} tBTC` : 'none confirmed';
-    $('door-state').textContent = clock.readySats
-      ? `${btc(clock.readySats)} tBTC can use the recovery path now.`
-      : clock.coins.length
-        ? `The recovery path opens in about ${plural(clock.daysLeft, 'day')} for the oldest coin. While a signer can still use Palm, they can move the coins normally instead.`
-        : 'There are no confirmed coins in this vault.';
+    $('door-to').placeholder = evm ? '0x…' : 'tb1…';
+    let ready;
+    if (evm) {
+      // A Palm Wallet's whole balance opens at once, when the palm has approved nothing for the delay.
+      ready = clock.open && BigInt(looked.balance) > 0n;
+      $('door-delay').textContent = `about ${looked.recoveryDelayDays} days after the palm last approved anything`;
+      $('door-coins').textContent = looked.balanceText;
+      $('door-state').textContent = BigInt(looked.balance) === 0n ? 'This wallet holds nothing.'
+        : clock.open ? `${looked.balanceText} can use the recovery path now. Palm's gas account pays the network fee.`
+          : `The recovery path opens in about ${plural(clock.daysLeft, 'day')}. While a signer can still use Palm, they can move the coins normally instead.`;
+    } else {
+      const total = clock.coins.reduce((sum, coin) => sum + coin.value, 0);
+      ready = clock.readySats > 0;
+      $('door-delay').textContent = `about ${looked.recoveryDelayDays} days after each deposit`;
+      $('door-coins').textContent = clock.coins.length ? `${plural(clock.coins.length, 'coin')}, ${btc(total)} tBTC` : 'none confirmed';
+      $('door-state').textContent = clock.readySats
+        ? `${btc(clock.readySats)} tBTC can use the recovery path now.`
+        : clock.coins.length
+          ? `The recovery path opens in about ${plural(clock.daysLeft, 'day')} for the oldest coin. While a signer can still use Palm, they can move the coins normally instead.`
+          : 'There are no confirmed coins in this vault.';
+    }
     $('door-words').replaceChildren(...Array.from({ length: looked.required }, (_, i) => el('div', { class: 'field-row' },
       el('label', { for: `door-words-${i}` }, looked.required === 1 ? 'The signer’s twelve words' : `Signer ${i + 1}: twelve words`),
       el('textarea', { id: `door-words-${i}`, rows: '2', spellcheck: 'false', autocomplete: 'off', autocapitalize: 'none' }))));
     $('door-review').hidden = true;
-    $('door-send').hidden = clock.readySats === 0;
+    $('door-send').hidden = !ready;
     $('door-vault').hidden = false;
   } catch (error) {
     $('door-error').textContent = friendly(error);
@@ -2085,10 +2126,16 @@ $('door-prepare').addEventListener('click', async () => {
   $('door-review').hidden = true;
   try {
     door.planned = await api('/api/recovery-door/plan', { descriptor: doorDescriptor(), to: $('door-to').value.trim() });
-    const { plan } = door.planned;
-    $('door-amount').textContent = `${btc(plan.outputs.reduce((sum, o) => sum + o.sats, 0))} tBTC from ${plural(plan.inputs.length, 'coin')}`;
-    $('door-fee').textContent = `${btc(plan.feeSats)} tBTC`;
-    $('door-dest').textContent = plan.outputs[0].address;
+    if (door.planned.kind === 'evm') {
+      $('door-amount').textContent = `everything: ${door.planned.amountText}`;
+      $('door-fee').textContent = 'paid by Palm\'s gas account';
+      $('door-dest').textContent = door.planned.recovery.to;
+    } else {
+      const { plan } = door.planned;
+      $('door-amount').textContent = `${btc(plan.outputs.reduce((sum, o) => sum + o.sats, 0))} tBTC from ${plural(plan.inputs.length, 'coin')}`;
+      $('door-fee').textContent = `${btc(plan.feeSats)} tBTC`;
+      $('door-dest').textContent = plan.outputs[0].address;
+    }
     $('door-review').hidden = false;
   } catch (error) {
     $('door-error').textContent = friendly(error);
@@ -2099,9 +2146,17 @@ $('door-go').addEventListener('click', async () => {
   $('door-error').textContent = '';
   const boxes = [...document.querySelectorAll('#door-words textarea')];
   try {
-    const { psbt } = signRecovery(door.planned.psbt, boxes.map(box => box.value), door.looked.keys);
+    let sending;
+    if (door.planned.kind === 'evm') {
+      const { chainId, address, recovery, keys } = door.planned;
+      const { signatures } = signPalmWalletRecovery(boxes.map(box => box.value), { chainId, wallet: address, recovery, signers: keys });
+      sending = { descriptor: doorDescriptor(), recovery, signatures };
+    } else {
+      const { psbt } = signRecovery(door.planned.psbt, boxes.map(box => box.value), door.looked.keys, { payTo: $('door-to').value.trim() });
+      sending = { descriptor: doorDescriptor(), psbt };
+    }
     for (const box of boxes) box.value = '';
-    const { txid } = await api('/api/recovery-door/send', { descriptor: doorDescriptor(), psbt });
+    const { txid } = await api('/api/recovery-door/send', sending);
     $('door-vault').hidden = true;
     $('door-sent').textContent = `Sent. Transaction ${shortId(txid)} is on the network.`;
     $('door-sent').hidden = false;
@@ -2258,6 +2313,7 @@ $('add-member').addEventListener('click', () => {
   const account = accountNow();
   if (!account) return;
   state.inviteFor = null;
+  $('invite-approver').value = '';
   $('invite-error').textContent = '';
   $('invite-name').value = '';
   $('invite-explains').textContent =
@@ -2278,9 +2334,11 @@ $('invite-form').addEventListener('submit', async event => {
     return;
   }
   try {
-    const { operation } = await api('/api/invites/approval', state.inviteFor
-      ? { network: 'bitcoin', label, vaultOwnerId: state.inviteFor }
-      : { network: state.account, label });
+    const approverCode = $('invite-approver').value.trim();
+    const { operation } = await api('/api/invites/approval', {
+      ...(state.inviteFor ? { network: 'bitcoin', vaultOwnerId: state.inviteFor } : { network: state.account }),
+      label, ...(approverCode ? { approverCode } : {}),
+    });
     $('invite').close();
     openApproval(operation, 'Creating the invitation…');
   } catch (error) {
@@ -2291,8 +2349,8 @@ $('invite-form').addEventListener('submit', async event => {
 /** Shows a code that now exists, big enough to read out over a phone. */
 function showInviteCode(code, label) {
   if (!code) return;
-  $('invite-code-for').textContent = label ? `Send this code to ${label}.` : 'Send this code to them.';
-  $('invite-code-value').textContent = code;
+  $('invite-code-for').textContent = label ? `Send this code to ${label} now.` : 'Send this code to them now.';
+  $('invite-code-value').textContent = `${code.slice(0, 4)} ${code.slice(4)}`;
   state.lastInvite = code;
   $('invite-code').showModal();
 }
@@ -2342,11 +2400,11 @@ async function drawInvites(account) {
   $('invite-rows').replaceChildren(...mine.map(invite => el('div', { class: 'invite-row' },
     el('span', { class: 'avatar ghost' }, initials(invite.label)),
     el('span', { class: 'member-who' },
-      el('b', {}, `${invite.label} · invited`),
-      el('small', {}, `${invite.code} · expires ${when(invite.expiresAt)}`)),
-    button('Copy', 'link', () => copy(invite.code, 'Invitation code copied.')),
+      el('b', {}, `${invite.label} · invited${invite.onlyFor ? ', only for them' : ''}`),
+      el('small', {}, `${invite.code ? `${invite.code.slice(0, 4)} ${invite.code.slice(4)}` : ''} · changes at ${when(invite.changesAt)} · lapses ${when(invite.expiresAt)}`)),
+    button('Copy', 'link', () => copy(invite.code, 'Invitation code copied. It changes every 10 minutes.')),
     button('Cancel', 'link', async () => {
-      await api('/api/invites/cancel', { code: invite.code }).catch(error => toast(friendly(error)));
+      await api('/api/invites/cancel', { id: invite.id }).catch(error => toast(friendly(error)));
       refresh().catch(() => {});
     }))));
 }
@@ -2574,9 +2632,12 @@ $('send-form').addEventListener('submit', async event => {
     let body;
     if (form.dataset.family === 'evm') {
       // The server wants the amount in base units (wei), converted here without floating point.
+      const token = $('send-token').value.trim();
       body = {
         network: form.dataset.network, to,
-        amount: toBaseUnits($('send-amount').value, Number(form.dataset.decimals)),
+        ...(token
+          ? { token, amount: String($('send-amount').value).trim() }
+          : { amount: toBaseUnits($('send-amount').value, Number(form.dataset.decimals)) }),
       };
     } else {
       const max = $('send-max').checked;
@@ -2665,10 +2726,50 @@ function canonicalTransaction({ chain, network, from, plan }) {
   };
 }
 
+/**
+ * The same check for Ethereum and BSC: the digest the palm approved, worked out again from the
+ * transaction the chain recorded (src/evm-receipt.js), whether a Palm Wallet payment or a plain one.
+ */
+async function verifyEvmReceiptOnChain(record, txid, resultEl) {
+  try {
+    const tx = await api(`/api/chain/evm/${encodeURIComponent(record.network)}/tx/${txid}`);
+    const rebuilt = chainDigestOf(tx, { network: record.network });
+    const matches = Boolean(rebuilt.digest) && rebuilt.digest === record.transactionHash;
+    const coins = value => `${(Number(value) / 10 ** tx.decimals).toFixed(8)} ${tx.symbol}`;
+    const what = rebuilt.kind === 'palm wallet refresh'
+      ? `Refreshes the wallet, network fee ${coins(rebuilt.fees)}`
+      : rebuilt.token
+        ? `Pays ${rebuilt.amount} base units of token ${shortId(rebuilt.token)} to ${shortId(rebuilt.payee)}`
+        : `Pays ${coins(rebuilt.amount)} to ${shortId(rebuilt.payee)}${rebuilt.fees ? `, plus ${coins(rebuilt.fees)} in fees` : ''}`;
+    resultEl.className = `verify-result ${matches ? 'ok' : 'bad'}`;
+    resultEl.replaceChildren(
+      el('p', { class: 'verify-head' }, matches ? '✓ Verified against the chain' : '✗ Does not match the chain'),
+      el('ul', { class: 'verify-list' },
+        el('li', {}, 'ML DSA 65 signature, palm approved, already checked in this browser'),
+        el('li', { class: matches ? 'ok' : 'bad' }, matches
+          ? 'The receipt’s transaction digest is the digest of this exact transaction on chain'
+          : rebuilt.problem ?? 'This transaction on chain does not reproduce the receipt’s digest'),
+        el('li', { class: tx.success === false ? 'bad' : '' }, !tx.confirmed
+          ? 'Seen by the network, waiting to confirm'
+          : tx.success
+            ? `Confirmed on chain${tx.blockNumber ? ` at block ${Number(tx.blockNumber).toLocaleString()}` : ''}`
+            : 'Mined, but the chain refused it: nothing moved'),
+        el('li', {}, what)),
+      el('p', { class: 'fine mono' }, `digest ${String(rebuilt.digest ?? 'none').slice(0, 14)}…  ·  receipt ${String(record.transactionHash).slice(0, 14)}…`),
+      tx.explorer ? el('a', { class: 'link', href: tx.explorer, target: '_blank', rel: 'noopener' }, 'Open on the block explorer') : null);
+  } catch (error) {
+    resultEl.className = 'verify-result bad';
+    resultEl.replaceChildren(
+      el('p', { class: 'verify-head' }, 'Could not verify'),
+      el('p', { class: 'quiet small' }, friendly(error)));
+  }
+}
+
 async function verifyReceiptOnChain(record, txid, resultEl) {
   resultEl.hidden = false;
   resultEl.className = 'verify-result';
   resultEl.replaceChildren(el('p', { class: 'quiet small' }, 'Reading the transaction from the chain…'));
+  if (record.chain === 'evm') return verifyEvmReceiptOnChain(record, txid, resultEl);
   try {
     const tx = await api(`/api/chain/tx/${txid}`);
     if ((tx.inputs || []).some(i => i.value == null)) {
@@ -2879,7 +2980,7 @@ async function settled(current, operation) {
     } else if (operation.kind === 'withdraw') {
       // A vault moved to new signers while empty has nothing to sign: it is already done.
       if (operation.status === 'done') {
-        toast(operation.details?.action === 'replace signers' ? 'The vault has its new signers.' : 'Done.');
+        toast(operation.details?.action === 'replace signers' ? 'The vault has its new signers. Print a new inheritance sheet: the old one no longer matches.' : 'Done.');
         return refresh().catch(() => {});
       }
       // Coins the chain guards: this person's signature goes on now, while the palm is fresh.

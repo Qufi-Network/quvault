@@ -235,7 +235,7 @@ test('a withdrawal is planned, signed only after the palm scan, and broadcast ex
 
   const { operation, plan } = ok(await c.post('/api/withdrawals', { to: DEST, amount: 120_000 }));
   // Never paid before, so the phone says so, and shows the address in short groups to compare.
-  assert.equal(operation.statement, `Send 0.00120000 tBTC to a new address ${DEST}`);
+  assert.match(operation.statement, new RegExp(String.raw`^Send 0\.00120000 tBTC to a new address ${DEST}, network fee 0\.\d{8} tBTC$`));
   assert.equal(operation.details.first_payment, 'yes, this vault has never paid it');
   assert.equal(operation.details.check_address, 'tb1q w508 d6qe … xpjz sx');
   assert.equal(operation.details.approvals_required, '1 of 1 signer');
@@ -281,9 +281,12 @@ test('a shared vault cannot send until it is locked to the chain', async t => {
   assert.equal(blocked.status, 409);
   assert.match(blocked.body.error, /must be locked to the chain/);
 
-  // And the one planned while solo cannot be finished now that the vault is shared.
-  await palmApprove(env, alex, planned.operation.id);
-  await assert.rejects(() => signAndSend(env, alex, planned.operation.id), /locked to the chain|more than one signer/);
+  // And the one planned while solo was called off when the signers changed: it cannot be
+  // approved, let alone finished.
+  const stale = await alex.post(`/api/operations/${planned.operation.id}/approval`, {});
+  assert.equal(stale.status, 409);
+  assert.match(stale.body.error, /no longer collecting/);
+  await assert.rejects(() => signAndSend(env, alex, planned.operation.id));
   assert.equal(env.world.log.broadcast.length, 0, 'nothing ever leaves a shared, unlocked vault');
 });
 

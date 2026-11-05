@@ -14,6 +14,8 @@ import { ml_kem768 } from '@noble/post-quantum/ml-kem.js';
 import { x25519 } from '@noble/curves/ed25519.js';
 
 const VERSION = 1;
+// Version 2 binds the sealed secret to a context (whose wallet it is), as AES-GCM associated data.
+const BOUND = 2;
 const KEM_CIPHERTEXT = 1088;
 const X25519_PUBLIC = 32;
 const NONCE = 12;
@@ -65,22 +67,30 @@ const aesKey = (kemShared, x25519Shared) =>
     Buffer.alloc(0), INFO, 32));
 
 /** Seals bytes for this server. Returns base64: version | ML-KEM ciphertext | X25519 public | nonce | ciphertext+tag. */
-export function seal(plaintext, keys) {
+export function seal(plaintext, keys, context = null) {
   const { cipherText, sharedSecret } = ml_kem768.encapsulate(keys.kemPublicKey);
   const ephemeral = x25519.utils.randomSecretKey();
   const classical = x25519.getSharedSecret(ephemeral, keys.x25519Public);
   const nonce = crypto.randomBytes(NONCE);
   const cipher = crypto.createCipheriv('aes-256-gcm', aesKey(sharedSecret, classical), nonce);
+  if (context !== null) cipher.setAAD(Buffer.from(String(context)));
   const body = Buffer.concat([cipher.update(plaintext), cipher.final(), cipher.getAuthTag()]);
   return Buffer.concat([
-    Buffer.from([VERSION]), Buffer.from(cipherText), Buffer.from(x25519.getPublicKey(ephemeral)), nonce, body,
+    Buffer.from([context === null ? VERSION : BOUND]), Buffer.from(cipherText), Buffer.from(x25519.getPublicKey(ephemeral)), nonce, body,
   ]).toString('base64');
 }
 
+/** Whether a sealed secret is bound to a context (version 2) or from before that (version 1). */
+export const sealIsBound = envelopeBase64 => Buffer.from(String(envelopeBase64), 'base64')[0] === BOUND;
+
 /** Opens a sealed key. Throws if the envelope was altered in any way. */
-export function open(envelopeBase64, keys) {
+export function open(envelopeBase64, keys, context = null) {
   const envelope = Buffer.from(envelopeBase64, 'base64');
-  if (envelope[0] !== VERSION) throw new Error('Unknown sealed key version.');
+  // A bound secret opens only for the context it was sealed to; an unbound one only when no
+  // context is asked for, so a caller that binds can never be handed an unbound secret.
+  if (envelope[0] === BOUND ? context === null : (envelope[0] !== VERSION || context !== null)) {
+    throw new Error('That sealed secret does not belong here.');
+  }
   let at = 1;
   const take = length => envelope.subarray(at, (at += length));
   const kemCiphertext = take(KEM_CIPHERTEXT);
@@ -92,6 +102,7 @@ export function open(envelopeBase64, keys) {
   const kemShared = ml_kem768.decapsulate(new Uint8Array(kemCiphertext), keys.kemSecretKey);
   const classical = x25519.getSharedSecret(keys.x25519Secret, new Uint8Array(ephemeralPublic));
   const decipher = crypto.createDecipheriv('aes-256-gcm', aesKey(kemShared, classical), nonce);
+  if (context !== null) decipher.setAAD(Buffer.from(String(context)));
   decipher.setAuthTag(body.subarray(body.length - TAG));
   return Buffer.concat([decipher.update(body.subarray(0, body.length - TAG)), decipher.final()]);
 }

@@ -690,6 +690,17 @@ const SCHEMA = [
    */
   'ALTER TABLE accounts ADD COLUMN IF NOT EXISTS quorum_members TEXT',
   'ALTER TABLE accounts ADD COLUMN IF NOT EXISTS deploy_owed TEXT',
+
+  /* ============================================== v29: one time invitation codes, freezes that lift
+   *
+   * An invitation keeps a secret its code is worked out from, ten minutes at a time, and may name
+   * the one person allowed to redeem it. A freeze records who last froze and when, so the same
+   * person cannot keep a vault frozen by freezing it again and again.
+   */
+  'ALTER TABLE invites ADD COLUMN IF NOT EXISTS secret TEXT',
+  'ALTER TABLE invites ADD COLUMN IF NOT EXISTS approver TEXT',
+  'ALTER TABLE wallets ADD COLUMN IF NOT EXISTS last_frozen_at BIGINT',
+  'ALTER TABLE wallets ADD COLUMN IF NOT EXISTS last_frozen_by TEXT',
 ];
 
 /**

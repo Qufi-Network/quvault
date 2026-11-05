@@ -28,7 +28,7 @@ export const actionDigestOf = (statement, details) =>
  * Why `token` is not a genuine Veyns palm decision for `expected`, made by one of `subjects`; or
  * null when it is. `keys` are Veyns' published JWKs.
  */
-export function decisionProblem(token, { issuer, audience, keys, subjects = null, expected }) {
+export function decisionProblem(token, { issuer, audience, keys, subjects = null, expected, now = Math.floor(Date.now() / 1000), maxAge = 6 * 3600 }) {
   const parts = String(token ?? '').split('.');
   if (parts.length !== 3) return 'it is not a signed decision';
   let header;
@@ -57,6 +57,7 @@ export function decisionProblem(token, { issuer, audience, keys, subjects = null
   if (claims.veyns_intent !== 'action') return 'it is not an approval';
   if (!(Array.isArray(claims.amr) && claims.amr.includes('veyns:palm'))) return 'it was not made with a palm';
   if (claims.veyns_action?.digest !== expected) return 'it approves a different action';
+  if (typeof claims.auth_time !== 'number' || claims.auth_time < now - maxAge || claims.auth_time > now + 300) return 'the palm scan is too old';
   if (subjects && !subjects.includes(String(claims.sub))) return 'it was made by someone else';
   return null;
 }
@@ -65,9 +66,13 @@ export function decisionProblem(token, { issuer, audience, keys, subjects = null
  * Throws unless this request carries this person's own Veyns palm decision for exactly the
  * action shown, and that action names exactly the transaction about to be signed.
  */
-export function checkPalmProof({ palmProof, transactionHash }, trust) {
+export function checkPalmProof({ palmProof, transactionHash }, trust, { transaction = true } = {}) {
   if (!palmProof?.decisions?.length) throw new Error('No palm approval came with this request, so nothing has been signed.');
-  if (!transactionHash || palmProof.details?.transaction_hash !== transactionHash) {
+  // Without knowing who this person is, anyone's palm would do: so it is required, not optional.
+  if (!trust?.subjects?.length) {
+    throw new Error('This device does not yet know which palm is yours. Sign out of Palm and sign in again here, then try again.');
+  }
+  if (transaction && (!transactionHash || palmProof.details?.transaction_hash !== transactionHash)) {
     throw new Error('The approval names a different transaction from the one handed to this device. Nothing has been signed.');
   }
   const expected = actionDigestOf(palmProof.statement, palmProof.details);

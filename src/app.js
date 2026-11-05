@@ -7,14 +7,14 @@ import { openDb, describeDbError } from './db.js';
 import { createVeyns, actionDigest, isFresh, randomId, HttpError, canonicalTransaction, transactionDigest, sha256Base64Url } from './veyns.js';
 import { canonicalJson } from './canonical.js';
 import { verifyAuthorization, verifyChain, keyIdOf, verifyCheckpoint } from './authorization.js';
-import { serverKeys, seal, open as openSealed, sealRoot, rootSealMatches } from './vault.js';
+import { serverKeys, seal, open as openSealed, sealRoot, rootSealMatches, sealIsBound } from './vault.js';
 import { createChain, createPrices, ChainError } from './chain.js';
 import {
   createKey, publicKeyOf, addressOf, planSpend, signPlan, isValidAddress, toBtc, verifyAgainstPlan, WalletError,
   multisigAddressOf, multisigOf, psbtForPlan, signersOfPsbt, combinePsbts, finalizePsbt, signatureCount, NETWORK,
 } from './bitcoin.js';
 import {
-  palmVaultOf, planPalmSpend, palmVaultPsbt, palmSignersOf, combinePalmPsbts, finalizePalmPsbt,
+  palmVaultOf, planPalmSpend, palmVaultPsbt, palmSignersOf, combinePalmPsbts, finalizePalmPsbt, palmInputVsize,
   palmVaultFromDescriptor, palmPathOf, recoveryClock, RECOVERY_CHOICES, delayForDays, daysOfDelay,
 } from './palm-vault.js';
 import { createPalmSigner, PalmRefused } from './palm-signer.js';
@@ -22,8 +22,11 @@ import {
   walletParams, walletSalt, walletAddressOf, deployCallOf, NONCE_CALL, LAST_ACTIVITY_CALL, transferCallOf, refreshCallOf,
   recoverAddress, evmAddressOfPublicKey, evmTransferDigest, evmRefreshDigest, eip712TransferDigest, eip712RefreshDigest,
   normalTransfer, normalRefresh, NATIVE, DEPLOYER, FEE_DIVISOR, PalmWalletError,
+  SIGNERS_CALL, THRESHOLD_CALL, RECOVERY_DELAY_CALL, decodeAddressArray, walletDescription, parseWalletDescription,
+  eip712RecoveryDigest, recoverCallOf,
 } from './palm-wallet.js';
 import { verifyKeyProof } from './key-proof.js';
+import { unitsText } from './approval-words.js';
 import { relayerKeyFrom, relayerAddressOf, signRelayed } from './palm-relayer.js';
 import { DEFAULT_POLICY, PolicyError, describePolicy, requiredFor, requiredToChange, validatePolicy } from './policy.js';
 import { NETWORKS, createBalances, format, networkList } from './networks.js';
@@ -50,6 +53,17 @@ const UNLOCK_SECONDS = 300; // how long the key stays open once a request has op
 // How long a signed Palm Wallet payment stays good: long enough to gather every palm and
 // signature, short enough that a signed payment cannot be held back and used much later.
 const PALM_WALLET_DEADLINE = 2 * 3600;
+// A freeze lifts by itself after this, so nobody can hold a vault hostage by freezing it; the
+// owner's own palm lifts it sooner. Whoever froze it cannot freeze it again until this has
+// passed once more after it lifted.
+const FREEZE_SECONDS = 72 * 3600;
+// An invitation lasts a day, and the code that redeems it changes every ten minutes, like a one
+// time password: only whoever made the invitation can see the current one.
+const INVITE_SECONDS = 24 * 3600;
+const INVITE_WINDOW = 600;
+const INVITE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+// The requests that open the owner's own key: only the owner's palm counts for them.
+const OWNER_KEY_KINDS = new Set(['create', 'recovery', 'signing', 'account', 'attestation', 'upgrade', 'reset', 'lock']);
 
 /*
  * The two custody modes, named rather than spelled out at each of the thirty places that ask.
@@ -95,6 +109,9 @@ const SQL = {
       (id, at, kind, actor, scope, subject_kind, subject_id, payload, prev_hash, hash, idempotency_key)
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
   evidenceAll: 'SELECT * FROM evidence ORDER BY seq',
+  operationIdsOf: 'SELECT id FROM operations WHERE wallet_user_id = ANY($1)',
+  unlockSealsOf: 'SELECT user_id, unlock_sealed FROM wallets WHERE unlock_sealed IS NOT NULL',
+  rebindUnlockSeal: 'UPDATE wallets SET unlock_sealed = $1 WHERE user_id = $2 AND unlock_sealed = $3',
   evidenceForSubject: 'SELECT * FROM evidence WHERE subject_id = $1 ORDER BY seq',
   evidenceCount: 'SELECT count(*)::int AS n FROM evidence',
   insertCheckpoint: `INSERT INTO evidence_checkpoints
@@ -149,8 +166,19 @@ const SQL = {
   insertAccountFull: `INSERT INTO accounts (wallet_user_id, network, address, public_key, policy, signers, created_at)
                       VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (wallet_user_id, network) DO NOTHING`,
   setAccountPolicy: 'UPDATE accounts SET policy = $1, signers = $2 WHERE wallet_user_id = $3 AND network = $4',
-  freezeVault: 'UPDATE wallets SET frozen_at = $1, frozen_by = $2 WHERE user_id = $3 AND frozen_at IS NULL',
+  freezeVault: `UPDATE wallets SET frozen_at = $1, frozen_by = $2, last_frozen_at = $1, last_frozen_by = $2
+                WHERE user_id = $3 AND (frozen_at IS NULL OR frozen_at <= $1 - ${FREEZE_SECONDS})`,
   unfreezeVault: 'UPDATE wallets SET frozen_at = NULL, frozen_by = NULL WHERE user_id = $1',
+  // Requests still collecting palms when who signs, or how many, changes: they were counted under
+  // the old rules, so they end rather than complete under the new ones.
+  cancelCollectingOf: `UPDATE operations SET status = 'cancelled', error = $1, closed_at = $2
+                       WHERE wallet_user_id = $3 AND status = 'collecting' AND id <> $4 RETURNING id`,
+  deleteSessionsOf: 'DELETE FROM sessions WHERE user_id = $1',
+  cancelInvitesOfWallet: `UPDATE invites SET status = 'cancelled' WHERE wallet_user_id = $1 AND status = 'open'`,
+  deleteAddressBookOf: 'DELETE FROM address_book WHERE wallet_user_id = $1',
+  openInvitesAll: `SELECT * FROM invites WHERE status = 'open' AND expires_at > $1`,
+  invitesCreatedBy: `SELECT * FROM invites WHERE created_by = $1 AND status = 'open' AND expires_at > $2 ORDER BY created_at DESC`,
+  lockOperation: 'SELECT id FROM operations WHERE id = $1 FOR UPDATE',
   stopOperationsOf: `UPDATE operations SET status = 'cancelled', error = $1, closed_at = $2
                      WHERE wallet_user_id = $3 AND status IN ('collecting', 'running') AND kind <> 'unfreeze' RETURNING id`,
   savedAddress: 'SELECT * FROM address_book WHERE wallet_user_id = $1 AND network = $2 AND address = $3',
@@ -162,9 +190,11 @@ const SQL = {
                AND status = 'done' AND lower(details::jsonb ->> 'to') = lower($3)`,
   pushSubscriptionsOf: 'SELECT * FROM push_subscriptions WHERE user_id = ANY($1)',
   pushCountOf: 'SELECT count(*)::int AS n FROM push_subscriptions WHERE user_id = $1',
+  // A device's push address is its owner's: nobody else can re-register it and take its alerts.
   savePushSubscription: `INSERT INTO push_subscriptions (endpoint, user_id, p256dh, auth, created_at) VALUES ($1, $2, $3, $4, $5)
                          ON CONFLICT (endpoint)
-                         DO UPDATE SET user_id = EXCLUDED.user_id, p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth, created_at = EXCLUDED.created_at`,
+                         DO UPDATE SET p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth, created_at = EXCLUDED.created_at
+                         WHERE push_subscriptions.user_id = EXCLUDED.user_id`,
   deletePushSubscription: 'DELETE FROM push_subscriptions WHERE endpoint = $1',
   deleteMyPushSubscription: 'DELETE FROM push_subscriptions WHERE endpoint = $1 AND user_id = $2',
   lockAccountToPalm: `UPDATE accounts SET address = $1, public_key = $2, required = $3, quorum_keys = $4, lock_kind = 'palm',
@@ -182,6 +212,8 @@ const SQL = {
   setQuorumMembers: 'UPDATE accounts SET quorum_members = $1 WHERE wallet_user_id = $2 AND network = $3',
   // What building a Palm Wallet cost the gas account, owed back by its first payment or refresh.
   setDeployOwed: 'UPDATE accounts SET deploy_owed = $1 WHERE wallet_user_id = $2 AND network = $3',
+  relayLock: 'SELECT pg_advisory_xact_lock(4242, $1)',
+  palmWalletAt: `SELECT * FROM accounts WHERE network = $1 AND lower(address) = $2 AND lock_kind = 'palm' AND required IS NOT NULL`,
   setReminded: 'UPDATE accounts SET reminded = $1 WHERE wallet_user_id = $2 AND network = $3',
   lockAccountToQuorum: `UPDATE accounts SET address = $1, public_key = $2, required = $3, quorum_keys = $4,
                           previous_address = COALESCE(previous_address, address)
@@ -201,12 +233,12 @@ const SQL = {
   bindPalmId: 'UPDATE members SET palm_id = $1 WHERE wallet_user_id = $2 AND member_id = $3 AND palm_id IS NULL',
   deleteMember: 'DELETE FROM members WHERE wallet_user_id = $1 AND member_id = $2 AND is_owner = false',
 
-  insertInvite: `INSERT INTO invites (code, wallet_user_id, network, label, created_by, created_at, expires_at, status)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, 'open')`,
+  insertInvite: `INSERT INTO invites (code, wallet_user_id, network, label, created_by, created_at, expires_at, status, secret, approver)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, 'open', $8, $9)`,
   inviteByCode: `SELECT * FROM invites WHERE code = $1`,
   openInvitesOf: `SELECT * FROM invites WHERE wallet_user_id = $1 AND status = 'open' AND expires_at > $2 ORDER BY created_at DESC`,
   useInvite: `UPDATE invites SET status = 'used', used_by = $1, used_at = $2 WHERE code = $3 AND status = 'open'`,
-  cancelInvite: `UPDATE invites SET status = 'cancelled' WHERE code = $1 AND wallet_user_id = $2 AND status = 'open'`,
+  cancelInvite: `UPDATE invites SET status = 'cancelled' WHERE code = $1 AND created_by = $2 AND status = 'open'`,
   // Erasing a vault: approvals hang off operations, so they go first.
   deleteApprovalsOfWallet: 'DELETE FROM approvals WHERE operation_id IN (SELECT id FROM operations WHERE wallet_user_id = $1)',
   deleteOperationsOfWallet: 'DELETE FROM operations WHERE wallet_user_id = $1',
@@ -253,6 +285,17 @@ const SQL = {
 
 const sha256 = value => crypto.createHash('sha256').update(value).digest('base64url');
 const fmtSats = n => Number(n).toLocaleString('en-US');
+
+/**
+ * The fee rate a request may use: what was asked for, or the network's suggestion, but never far
+ * above what the network needs now. A fee is burned to miners, so an inflated one is a loss.
+ */
+function feeRateFor(asked, suggested) {
+  const rate = Number(asked) > 0 ? Number(asked) : suggested;
+  const ceiling = Math.min(1000, Math.max(suggested * 3, suggested + 20));
+  if (rate > ceiling) throw new HttpError(400, `That fee rate is far above what the network needs now (about ${suggested} sat/vB). Use at most ${ceiling}.`);
+  return rate;
+}
 // A short, stable name for one person's palm inside this vault, from their pairwise subject.
 const palmId = sub => `PALM-${sha256(`palm:${sub}`).replace(/[-_]/g, '').slice(0, 12).toUpperCase()}`;
 
@@ -625,11 +668,31 @@ export function createApp(options) {
    * is quick in an emergency; the worst a stolen session can do with it is stop payments, and
    * unfreezing takes the palms of the vault's signers.
    */
-  async function assertNotFrozen(ownerId) {
+  const frozenNow = wallet => Boolean(wallet?.frozen_at && now() - wallet.frozen_at < FREEZE_SECONDS);
+
+  /** What may still go ahead in a frozen vault: lifting it, the owner seeing their own words, a refresh. */
+  const allowedWhileFrozen = op => ['unfreeze', 'recovery'].includes(op.kind)
+    || (op.kind === 'withdraw' && /^refresh the (vault|wallet)$/.test(JSON.parse(op.details ?? '{}').action ?? ''));
+
+  async function assertNotFrozen(ownerId, op = null) {
+    if (op && allowedWhileFrozen(op)) return;
     const wallet = await one('walletOf', ownerId);
-    if (wallet?.frozen_at) {
-      throw new HttpError(423, 'This vault is frozen, so nothing can be approved, signed or sent. Unfreezing it needs its signers’ palms.');
+    if (frozenNow(wallet)) {
+      throw new HttpError(423, 'This vault is frozen, so nothing can be approved, signed or sent until the owner unfreezes it with their palm, or it lifts by itself after 72 hours.');
     }
+  }
+
+  /** Requests counted under rules that just changed end now, rather than finishing under the new ones. */
+  async function cancelCollecting(ownerId, exceptId, reason) {
+    const time = now();
+    const closed = await transaction(async q => {
+      const rows = [];
+      for (const op of (await q('cancelCollectingOf', reason, time, ownerId, exceptId ?? '')).rows) {
+        rows.push(...(await q('cancelApprovalsOf', time, op.id)).rows);
+      }
+      return rows;
+    });
+    cancelRemote(closed);
   }
 
   /*
@@ -675,6 +738,10 @@ export function createApp(options) {
   };
 
   const secureCookies = publicOrigin.startsWith('https:');
+  // Over https the cookies take the __Host- prefix: Secure, Path=/ and no Domain, so no other
+  // site under the same parent domain can set or shadow them.
+  const sessionCookie = secureCookies ? `__Host-${SESSION_COOKIE}` : SESSION_COOKIE;
+  const loginCookie = secureCookies ? `__Host-${LOGIN_COOKIE}` : LOGIN_COOKIE;
   const publicHost = new URL(publicOrigin).host;
   /*
    * No code from anywhere else runs on this page. Not a widget, not a frame, and not the
@@ -865,7 +932,7 @@ export function createApp(options) {
     createdAt: w.created_at,
     explorer: chain.explorerAddress(w.address),
     custody: w.custody,
-    frozen: w.frozen_at ? { at: w.frozen_at, by: w.frozen_by } : null,
+    frozen: frozenNow(w) ? { at: w.frozen_at, by: w.frozen_by, until: w.frozen_at + FREEZE_SECONDS } : null,
     // The public half of the owner's attestation key, and the lineage it descends from.
     // The server has never had the other half, and cannot extend the lineage itself.
     attestation: attestationView(w),
@@ -924,8 +991,10 @@ export function createApp(options) {
     error: op.error,
     // Whether a signed record of the human authorisation exists for this request.
     humanVerified: Boolean(op.human_authorization),
-    // Present on an approved invitation: the code to pass to the person invited.
-    inviteCode: op.kind === 'invite' && op.payload ? (JSON.parse(op.payload).code ?? null) : null,
+    // Present on an approved invitation, for whoever made it only: the code as it stands now.
+    inviteCode: op.kind === 'invite' && op.payload && op.started_by === me?.id && JSON.parse(op.payload).secret
+      ? inviteCodeAt(JSON.parse(op.payload).secret, now()) : null,
+    inviteChangesAt: op.kind === 'invite' && op.started_by === me?.id ? (Math.floor(now() / INVITE_WINDOW) + 1) * INVITE_WINDOW : null,
     // Which account the request is about, so the browser knows what to derive or to sign with.
     network: op.network ?? (op.kind === 'account' && op.payload ? JSON.parse(op.payload).network : null),
     startedBy: op.started_by,
@@ -936,6 +1005,13 @@ export function createApp(options) {
 
   /* ------------------------------------------------------------- helpers */
 
+  /** An invitation's code for the ten minute window `time` falls in: like a one time password. */
+  function inviteCodeAt(secret, time) {
+    const window = Math.floor(time / INVITE_WINDOW);
+    const mac = crypto.createHmac('sha256', Buffer.from(secret, 'base64url')).update(`palm invite ${window}`).digest();
+    return Array.from({ length: 8 }, (_, i) => INVITE_ALPHABET[mac[i] % INVITE_ALPHABET.length]).join('');
+  }
+
   const requireConfigured = () => {
     if (!clientId) throw new HttpError(409, 'Set VEYNS_CLIENT_ID first.');
   };
@@ -944,7 +1020,7 @@ export function createApp(options) {
   };
 
   async function requireUser(cookies) {
-    const sid = cookies[SESSION_COOKIE];
+    const sid = cookies[sessionCookie];
     const user = sid && await one('sessionUser', sha256(sid), now());
     if (!user) throw new HttpError(401, 'Please sign in.');
     return user;
@@ -963,11 +1039,12 @@ export function createApp(options) {
 
   /** Asks Veyns for a palm request, trying both ways the service has accepted a subject. */
   async function createPalmRequest(a, user, op) {
+    const safeKey = suffix => `palm${crypto.createHash('sha256').update(`${a.id}:${suffix}`).digest('hex').slice(0, 40)}`;
     const forms = [
-      { name: 'pairwise', subject: approvalSubject(user.sub), key: a.id },
-      { name: 'plain', subject: user.sub, key: `${a.id}-plain` },
-    ].filter(form => (subjectForm ? form.name === subjectForm : true));
-    if (forms.length === 2 && forms[0].subject === forms[1].subject) forms.pop();
+      { name: 'pairwise', subject: approvalSubject(user.sub), key: safeKey('pairwise') },
+      { name: 'plain', subject: user.sub, key: safeKey('plain') },
+    ].sort((x, y) => (x.name === subjectForm ? -1 : y.name === subjectForm ? 1 : 0));
+    if (forms[0].subject === forms[1].subject) forms.pop();
 
     const refusals = [];
     for (const form of forms) {
@@ -986,8 +1063,8 @@ export function createApp(options) {
       }
     }
     subjectForm = null;
-    throw new HttpError(400, `Veyns refused the palm request both ways. ${refusals.join('; ')} `
-      + 'Check that this account has its palm scanner connected and is admitted to the palm pilot.');
+    throw new HttpError(400, `Veyns refused the palm request (${refusals.join('; ')}). `
+      + 'If you just cancelled a request, wait a minute and try again. Otherwise check that the Veyns app is signed in and its palm scanner connected.');
   }
 
   /** Ends operations whose quorum never arrived, or that were approved but never signed. */
@@ -1038,8 +1115,11 @@ export function createApp(options) {
     throw Object.assign(new HttpError(429, refusalMessage(retryAfter)), { retryAfter });
   }
 
+  let expiredAt = 0;
   async function expireOperations() {
     const time = now();
+    if (time - expiredAt < 20) return;
+    expiredAt = time;
     const closed = await transaction(async q => {
       const rows = [];
       for (const op of (await q('expireOperations', time)).rows) {
@@ -1090,8 +1170,8 @@ export function createApp(options) {
   }
 
   async function newOperation({ walletOwnerId, user, kind, statement, details, payload = null, required = 1, networkId = null }) {
-    // Nothing new starts in a frozen vault, except the request to unfreeze it.
-    if (!['create', 'unfreeze'].includes(kind)) await assertNotFrozen(walletOwnerId);
+    // Nothing new starts in a frozen vault, except lifting it, the owner's own words, or a refresh.
+    if (kind !== 'create') await assertNotFrozen(walletOwnerId, { kind, details: JSON.stringify(details) });
     const id = randomId(16);
     const time = now();
     const replaced = await transaction(async q => {
@@ -1123,7 +1203,7 @@ export function createApp(options) {
     if (await one('walletOf', owner.id)) throw new HttpError(409, 'This account already has a wallet.');
     const unlock = crypto.randomBytes(32);
     const payload = {
-      unlockSealed: seal(unlock, vault()),
+      unlockSealed: seal(unlock, vault(), unlockContext(owner.id)),
       salt: crypto.randomBytes(16).toString('base64'),
       decisionId,
       label: JSON.parse(op.details).owner_label || 'Owner',
@@ -1140,7 +1220,7 @@ export function createApp(options) {
    */
   async function prepareUpgrade(op) {
     const unlock = crypto.randomBytes(32);
-    const payload = { unlockSealed: seal(unlock, vault()), salt: crypto.randomBytes(16).toString('base64') };
+    const payload = { unlockSealed: seal(unlock, vault(), unlockContext(op.wallet_user_id)), salt: crypto.randomBytes(16).toString('base64') };
     unlock.fill(0);
     await query('setPayload', JSON.stringify(payload), op.id);
     return { txid: null };
@@ -1159,6 +1239,7 @@ export function createApp(options) {
     });
     for (const member of payload.members) await assignPalmId(op.wallet_user_id, member.id);
     await pruneRoster(op.wallet_user_id);
+    await cancelCollecting(op.wallet_user_id, op.id, 'Who signs changed, so this needs asking again.');
     return { txid: null };
   }
 
@@ -1186,12 +1267,15 @@ export function createApp(options) {
       chosen.set(member.member_id, { id: member.member_id, label: member.label, owner: member.is_owner });
     }
     for (const entry of add) {
+      // Only people already on the roster: anyone new joins through an invitation they accept
+      // with their own palm, never because someone typed their code.
       const code = String(entry.code ?? '').trim();
       const label = String(entry.label ?? '').replace(/\s+/g, ' ').trim().slice(0, 40);
       if (!label) throw new HttpError(400, 'Give each signer a name.');
-      const person = await one('userById', code);
-      if (!person) throw new HttpError(400, `No one has the approver code "${code}". They must sign in to Veyns once first.`);
-      chosen.set(person.id, { id: person.id, label, owner: person.id === user.id });
+      if (code !== user.id && !roster.some(m => m.member_id === code)) {
+        throw new HttpError(400, 'Invite them instead: they join by accepting the invitation with their own palm.');
+      }
+      chosen.set(code, { id: code, label, owner: code === user.id });
     }
     return chosen;
   }
@@ -1459,8 +1543,9 @@ export function createApp(options) {
       vapidPublicKey: vapid()?.publicKey ?? null,
       // Authorisation records are signed by the owner's vault; this server only verifies them.
       attestation: { algorithm: 'ML-DSA-65', signedBy: 'vault' },
-      databaseVariable: options.databaseVariable ?? (databaseUrl ? 'local' : null),
-      databaseCandidates: options.databaseCandidates ?? [],
+      // Only while there is no database, to help set one up; never which variables a working one uses.
+      databaseVariable: databaseUrl ? null : (options.databaseVariable ?? null),
+      databaseCandidates: databaseUrl ? [] : (options.databaseCandidates ?? []),
     };
   }
 
@@ -1471,14 +1556,14 @@ export function createApp(options) {
     const nonce = randomId(32);
     await query('purgeLogins', time);
     await query('insertLogin', id, nonce, time + LOGIN_SECONDS);
-    setCookie(LOGIN_COOKIE, id, LOGIN_SECONDS);
+    setCookie(loginCookie, id, LOGIN_SECONDS);
     return { nonce };
   }
 
   async function loginFinish({ body, cookies, setCookie }) {
     requireConfigured();
-    const pending = cookies[LOGIN_COOKIE] ? await one('takeLogin', cookies[LOGIN_COOKIE]) : undefined;
-    setCookie(LOGIN_COOKIE, '', 0);
+    const pending = cookies[loginCookie] ? await one('takeLogin', cookies[loginCookie]) : undefined;
+    setCookie(loginCookie, '', 0);
     const time = now();
     if (!pending || pending.expires_at <= time) throw new HttpError(401, 'That sign-in expired. Please try again.');
 
@@ -1493,13 +1578,20 @@ export function createApp(options) {
     const sid = randomId(32);
     await query('purgeSessions', time);
     await query('insertSession', sha256(sid), user.id, time + SESSION_SECONDS);
-    setCookie(SESSION_COOKIE, sid, SESSION_SECONDS);
+    setCookie(sessionCookie, sid, SESSION_SECONDS);
+    return { ok: true };
+  }
+
+  /** Ends every session this person has, on every device. */
+  async function logoutEverywhere({ user, setCookie }) {
+    await query('deleteSessionsOf', user.id);
+    setCookie(sessionCookie, '', 0);
     return { ok: true };
   }
 
   async function logout({ cookies, setCookie }) {
-    if (cookies[SESSION_COOKIE]) await query('deleteSession', sha256(cookies[SESSION_COOKIE]));
-    setCookie(SESSION_COOKIE, '', 0);
+    if (cookies[sessionCookie]) await query('deleteSession', sha256(cookies[sessionCookie]));
+    setCookie(sessionCookie, '', 0);
     return { ok: true };
   }
 
@@ -1615,7 +1707,7 @@ export function createApp(options) {
    */
   async function unlockFor({ user, params: [id] }) {
     const op = await ownOperation(id, user);
-    await assertNotFrozen(op.wallet_user_id);
+    await assertNotFrozen(op.wallet_user_id, op);
     // Spending from an account the chain guards is signed by each signer in turn, with their
     // own key. Owner or not, what comes back is that person's key and the transaction the
     // quorum is collecting — never the owner's key standing in for everybody's.
@@ -1643,13 +1735,13 @@ export function createApp(options) {
     if (op.kind === 'create') {
       if (wallet) throw new HttpError(409, 'This account already has a wallet.');
       const payload = JSON.parse(op.payload);
-      return { unlock: openSealed(payload.unlockSealed, vault()).toString('base64'), salt: payload.salt, label: payload.label };
+      return { unlock: (await openUnlock(payload.unlockSealed, user.id)).toString('base64'), salt: payload.salt, label: payload.label };
     }
     if (op.kind === 'signing' && wallet?.custody === CUSTODY.BROWSER) {
       // What the new key's proof must name: the vault it signs for and the person it belongs to.
       const { vaultOwnerId } = JSON.parse(op.payload);
       return {
-        unlock: openSealed(wallet.unlock_sealed, vault()).toString('base64'), salt: wallet.salt,
+        unlock: (await openUnlock(wallet.unlock_sealed, user.id)).toString('base64'), salt: wallet.salt,
         keyBinding: { vaultOwnerId, memberId: user.id },
       };
     }
@@ -1658,7 +1750,7 @@ export function createApp(options) {
       // The secret for the key this browser is about to make, not the one being retired.
       if (wallet.custody === CUSTODY.BROWSER) throw new HttpError(409, 'This vault already lives in your browser.');
       const payload = JSON.parse(op.payload);
-      return { unlock: openSealed(payload.unlockSealed, vault()).toString('base64'), salt: payload.salt };
+      return { unlock: (await openUnlock(payload.unlockSealed, user.id)).toString('base64'), salt: payload.salt };
     }
     if (wallet.custody !== CUSTODY.BROWSER) throw new HttpError(409, 'This wallet signs on the server.');
     // An EVM withdrawal unlocks to a transfer and a derivation path, not a UTXO plan.
@@ -1666,10 +1758,12 @@ export function createApp(options) {
       return evmWithdrawalUnlock(op, wallet);
     }
     return {
-      unlock: openSealed(wallet.unlock_sealed, vault()).toString('base64'),
+      unlock: (await openUnlock(wallet.unlock_sealed, user.id)).toString('base64'),
       salt: wallet.salt,
       ...(['withdraw', 'lock'].includes(op.kind) && op.payload && JSON.parse(op.payload).inputs
         ? await withdrawalUnlock(op, wallet) : {}),
+      // Before the words are shown, the browser checks this person's own palm asked for them.
+      ...(op.kind === 'recovery' ? await palmProofFor(op, user) : {}),
     };
   }
 
@@ -1715,11 +1809,17 @@ export function createApp(options) {
       // The signer for a quorum share checks against the same descriptor, but the wallet it
       // names is the signer's own — this person signs with their key, not the owner's.
       ...await authorizationDescriptor(op, mine, { transactionHash: plan.transactionHash }),
-      unlock: openSealed(mine.unlock_sealed, vault()).toString('base64'),
+      unlock: (await openUnlock(mine.unlock_sealed, user.id)).toString('base64'),
       salt: mine.salt,
       keyIndex: member.key_index,
       signingKey: member.public_key,
       psbt: op.psbt || unsignedFor(lockOfAccount(account), plan),
+      // What the browser rebuilds the vault from, so it checks the coins it signs for are this
+      // vault's, through its palm path, and that a move goes into the vault its settings describe.
+      ...(account.lock_kind === 'palm' ? {
+        vault: { palmKey: account.palm_key, keys: JSON.parse(account.quorum_keys), required: account.required, delay: account.recovery_delay },
+        move: plan.move ? { palmKey: plan.move.palmKey, keys: plan.move.keys, required: plan.move.required, delay: plan.move.delay, address: plan.move.address } : null,
+      } : {}),
       plan,
       address: account.address,
       transactionHash: plan.transactionHash,
@@ -1738,6 +1838,7 @@ export function createApp(options) {
     return {
       ...await authorizationDescriptor(op, wallet, { transactionHash: expected.transactionHash }),
       plan: JSON.parse(op.payload),
+      ...(op.kind === 'lock' ? { quorum: JSON.parse(op.payload).quorum } : {}),
       address: wallet.address,
       transactionHash: expected.transactionHash,
       statementDigest: expected.statementDigest,
@@ -1791,7 +1892,7 @@ export function createApp(options) {
   /** Takes the transaction the owner's browser signed, checks it against the approved plan, sends it. */
   async function broadcastSigned({ user, params: [id], body }) {
     const op = await ownOperation(id, user);
-    await assertNotFrozen(op.wallet_user_id);
+    await assertNotFrozen(op.wallet_user_id, op);
     if (op.wallet_user_id !== user.id) throw new HttpError(403, 'Only the account owner can send this.');
     if (op.kind !== 'withdraw' && op.kind !== 'lock') throw new HttpError(409, 'That request does not send a transaction.');
     if (op.status === 'done' && op.txid) return { txid: op.txid };
@@ -2001,7 +2102,7 @@ export function createApp(options) {
 
   async function addSignature({ user, params: [id], body }) {
     const op = await ownOperation(id, user);
-    await assertNotFrozen(op.wallet_user_id);
+    await assertNotFrozen(op.wallet_user_id, op);
     if (op.kind !== 'withdraw') throw new HttpError(409, 'That request is not a withdrawal.');
     if (op.status === 'done' && op.txid) return { txid: op.txid, signatures: op.required, required: op.required };
     if (op.status !== 'running') throw new HttpError(409, 'This withdrawal is not ready to sign.');
@@ -2368,7 +2469,14 @@ export function createApp(options) {
   async function exportAllEvidence({ user }) {
     const wallet = await one('walletOf', user.id);
     if (!wallet) throw new HttpError(409, 'This account has no wallet.');
-    const entries = (await all('evidenceAll')).map(toEvidenceEntry);
+    // The whole chain, so it still verifies end to end; but other customers' entries only as the
+    // links that hold it together, with nothing of what they say.
+    const visible = await walletsVisibleTo(user);
+    const ops = new Set((await all('operationIdsOf', visible)).map(row => row.id));
+    const entries = (await all('evidenceAll')).map(toEvidenceEntry).map(entry => (
+      entry.actor === user.id || ops.has(entry.subjectId) || visible.includes(entry.scope)
+        ? entry
+        : { id: entry.id, seq: entry.seq, at: entry.at, kind: entry.kind, prev: entry.prev, hash: entry.hash, redacted: true }));
     const checkpoints = (await all('checkpointsOf', user.id)).map(row => JSON.parse(row.checkpoint));
     const bundle = buildBundle({ entries, exportedAt: now(), complete: true, checkpoints });
     const lineage = attestationOf(wallet);
@@ -2558,6 +2666,10 @@ export function createApp(options) {
     if ((await all('membersOf', vaultOwnerId)).some(m => m.public_key === publicKey && m.member_id !== user.id)) {
       throw new HttpError(409, 'That signing key already belongs to someone else in this vault.');
     }
+    // Two requests made at once could have picked the same branch: one branch is one vault's key.
+    if ((await all('keysOfMember', user.id)).some(row => row.key_index === index)) {
+      throw new HttpError(409, 'That signing branch is already used by another vault. Make the key again.');
+    }
     await query('setMemberKey', publicKey, index, now(), vaultOwnerId, user.id);
     return { signingKey: publicKey, index };
   }
@@ -2642,13 +2754,28 @@ export function createApp(options) {
 
   /* ------------------------------------------------------------------ freeze */
 
-  /** Anyone on a vault's roster can freeze it, at once, without a palm. */
+  /**
+   * The owner, or someone whose key the vault's coins are locked to, can freeze it at once without
+   * a palm. Somebody merely on the roster cannot. A freeze lifts by itself after 72 hours, and
+   * whoever froze it cannot freeze it again until the same time has passed once more.
+   */
   async function freezeVault({ user, body }) {
     const ownerId = String(body.vaultOwnerId ?? user.id);
     const wallet = await one('walletOf', ownerId);
-    const allowed = wallet && (ownerId === user.id || await one('memberIn', ownerId, user.id));
-    if (!allowed) throw new HttpError(404, 'Vault not found.');
+    if (!wallet) throw new HttpError(404, 'Vault not found.');
+    if (ownerId !== user.id) {
+      const [members, accounts] = await Promise.all([all('membersOf', ownerId), all('accountsOf', ownerId)]);
+      if (!members.some(m => m.member_id === user.id)) throw new HttpError(404, 'Vault not found.');
+      const locked = accounts.filter(a => a.required);
+      const mayFreeze = locked.length
+        ? locked.some(a => keyHoldersOf(a, members).some(m => m.member_id === user.id))
+        : signersOf(accounts.find(a => a.network === 'bitcoin'), members).includes(user.id);
+      if (!mayFreeze) throw new HttpError(403, 'Only the owner or someone who signs for this vault can freeze it.');
+    }
     const time = now();
+    if (wallet.last_frozen_by === user.id && wallet.last_frozen_at && time - wallet.last_frozen_at < 2 * FREEZE_SECONDS && !frozenNow(wallet)) {
+      throw new HttpError(429, 'You froze this vault recently. You can freeze it again once three more days have passed.');
+    }
     const stopped = await transaction(async q => {
       const froze = (await q('freezeVault', time, user.id, ownerId)).count === 1;
       // Everything in flight stops with it: nothing approved before the freeze can be signed after.
@@ -2660,26 +2787,23 @@ export function createApp(options) {
     cancelRemote(stopped.approvals);
     if (stopped.froze) await alertOthers(ownerId, user.id);
     const after = await one('walletOf', ownerId);
-    return { frozen: { at: after.frozen_at, by: after.frozen_by } };
+    return { frozen: { at: after.frozen_at, by: after.frozen_by, until: after.frozen_at + FREEZE_SECONDS } };
   }
 
-  /** Unfreezing takes the palms of the vault's signers: the same quorum any other change needs. */
-  async function requestUnfreeze({ user, body }) {
+  /** The owner's own palm lifts a freeze. Nobody else's is needed, so nobody else can keep it on. */
+  async function requestUnfreeze({ user }) {
     requirePalmReady();
-    const ownerId = String(body.vaultOwnerId ?? user.id);
-    const wallet = await one('walletOf', ownerId);
-    const allowed = wallet && (ownerId === user.id || await one('memberIn', ownerId, user.id));
-    if (!allowed) throw new HttpError(404, 'Vault not found.');
-    if (!wallet.frozen_at) throw new HttpError(409, 'This vault is not frozen.');
-    const { required, signers } = await changeQuorum(ownerId, 'bitcoin');
-    const statement = ownerId === user.id ? 'Unfreeze my vault' : 'Unfreeze the vault';
+    const wallet = await one('walletOf', user.id);
+    if (!wallet) throw new HttpError(404, 'Vault not found.');
+    if (!frozenNow(wallet)) throw new HttpError(409, 'This vault is not frozen.');
+    const statement = 'Unfreeze my vault';
     const details = {
       action: 'unfreeze the vault',
       frozen_since: new Date(wallet.frozen_at * 1000).toUTCString(),
-      approvals_required: `${required} of ${signers.length}`,
+      lifts_by_itself: new Date((wallet.frozen_at + FREEZE_SECONDS) * 1000).toUTCString(),
       effect: 'payments and changes can be asked for and approved again',
     };
-    const op = await newOperation({ walletOwnerId: ownerId, user, kind: 'unfreeze', statement, details, required, networkId: 'bitcoin' });
+    const op = await newOperation({ walletOwnerId: user.id, user, kind: 'unfreeze', statement, details, required: 1, networkId: 'bitcoin' });
     return { operation: operationView(op, [], user) };
   }
 
@@ -2696,6 +2820,7 @@ export function createApp(options) {
     const auth = String(body.keys?.auth ?? '');
     if (!isPushEndpoint(endpoint) || endpoint.length > 1000) throw new HttpError(400, 'That is not a browser push address.');
     if (!/^[\w-]{20,200}$/.test(p256dh) || !/^[\w-]{8,100}$/.test(auth)) throw new HttpError(400, 'That subscription is incomplete.');
+    if ((await one('pushCountOf', user.id)).n >= 10) throw new HttpError(409, 'Alerts are on for ten devices already. Turn one off first.');
     await query('savePushSubscription', endpoint, user.id, p256dh, auth, now());
     return { alerts: (await one('pushCountOf', user.id)).n };
   }
@@ -2766,7 +2891,7 @@ export function createApp(options) {
     let plan = null;
     try {
       const [utxos, suggested] = await Promise.all([chain.spendableUtxos(wallet.address), chain.feeRate()]);
-      const feeRate = Number(body.feeRate) > 0 ? Number(body.feeRate) : suggested;
+      const feeRate = feeRateFor(body.feeRate, suggested);
       if (utxos.length) {
         plan = planSpend({
           publicKey: Buffer.from(wallet.public_key, 'hex'),
@@ -2785,7 +2910,7 @@ export function createApp(options) {
       ? (signers.length === 1 ? 'my palm' : `${required} of ${signers.length} and the palm`)
       : `${required} of ${signers.length}`;
     const statement = plan
-      ? `Lock my Bitcoin to ${what} on the chain and move ${toBtc(plan.sentSats)} tBTC to it`
+      ? `Lock my Bitcoin to ${what} on the chain and move ${toBtc(plan.sentSats)} tBTC to it at ${quorumAddress}, network fee ${toBtc(plan.feeSats)} tBTC`
       : `Lock my Bitcoin to ${what} on the chain`;
     const details = {
       action: palm ? 'lock to the palm on the chain' : 'lock to a quorum on the chain',
@@ -2884,6 +3009,21 @@ export function createApp(options) {
     }
   }
 
+  /** One Ethereum or BSC transaction with its receipt, so the page can check a receipt against it. */
+  async function evmChainTransaction({ params: [networkId, txid] }) {
+    if (!NETWORKS[networkId]?.rpc || !NETWORKS[networkId]?.chainId) throw new HttpError(404, 'That is not an Ethereum or BSC network here.');
+    const evm = evmChainFor(networkId);
+    let tx;
+    try {
+      tx = await evm.transaction(txid);
+    } catch {
+      throw new HttpError(502, 'Could not read that transaction from the network.');
+    }
+    if (!tx) throw new HttpError(404, 'The network has not seen that transaction yet.');
+    const net = NETWORKS[networkId];
+    return { ...tx, symbol: net.symbol, decimals: net.decimals ?? 18, explorer: evm.explorerTx(txid) };
+  }
+
   /** Everything an independent check of one authorisation needs, and nothing private. */
   async function getReceipt({ user, params: [id] }) {
     const op = await ownOperation(id, user);
@@ -2932,7 +3072,15 @@ export function createApp(options) {
    */
   async function lockedHoldings(ownerId) {
     const holding = [];
-    for (const account of await all('accountsOf', ownerId)) {
+    // This person's own locked accounts, and every other vault's locked account their key holds up.
+    const own = await all('accountsOf', ownerId);
+    const others = [];
+    for (const { wallet_user_id: vaultId } of await all('walletsForMember', ownerId)) {
+      if (vaultId === ownerId) continue;
+      const [accounts, members] = await Promise.all([all('accountsOf', vaultId), all('membersOf', vaultId)]);
+      others.push(...accounts.filter(a => keyHoldersOf(a, members).some(m => m.member_id === ownerId)));
+    }
+    for (const account of [...own, ...others]) {
       if (!account.required) continue;
       const net = NETWORKS[account.network];
       let amount = null;
@@ -2950,6 +3098,28 @@ export function createApp(options) {
     return holding;
   }
 
+  /**
+   * Another person's locked vault that this person's key is built into. Even empty, it is
+   * refused: the vault's address stays the same, so the next coin sent to it would need a key
+   * that erasing just removed from this device. The owner replaces the signer first.
+   */
+  async function refuseWhileSigningForOthers(personId) {
+    const found = [];
+    for (const { wallet_user_id: vaultId } of await all('walletsForMember', personId)) {
+      if (vaultId === personId) continue;
+      const [accounts, members] = await Promise.all([all('accountsOf', vaultId), all('membersOf', vaultId)]);
+      for (const account of accounts) {
+        if (account.required && keyHoldersOf(account, members).some(m => m.member_id === personId)) {
+          found.push(`${NETWORKS[account.network]?.label ?? account.network} at ${account.address}`);
+        }
+      }
+    }
+    if (found.length) {
+      throw new HttpError(409, `Your key signs for someone else's vault: ${found.join('; ')}. `
+        + 'Erasing would take it away while that vault still needs it. Ask its owner to replace you as a signer first.');
+    }
+  }
+
   async function requestReset({ user }) {
     requirePalmReady();
     const wallet = await one('walletOf', user.id);
@@ -2959,6 +3129,7 @@ export function createApp(options) {
       throw new HttpError(409, `This vault cannot be erased while coins are locked to the chain: ${locked.join('; ')}. `
         + 'Erasing would remove what opens them. Send them out first.');
     }
+    await refuseWhileSigningForOthers(user.id);
     const [accounts, balance] = await Promise.all([
       all('accountsOf', user.id),
       chain.balance(wallet.address).catch(() => null),
@@ -2990,6 +3161,7 @@ export function createApp(options) {
     if (!wallet) return { ok: true, txid: null, sweptSats: 0 };
     const locked = await lockedHoldings(user.id);
     if (locked.length) throw new HttpError(409, `This vault cannot be erased while coins are locked to the chain: ${locked.join('; ')}.`);
+    await refuseWhileSigningForOthers(user.id);
 
     const balance = await chain.balance(wallet.address).catch(() => null);
     const holding = balance ? balance.confirmed + balance.pending : 0;
@@ -3019,6 +3191,9 @@ export function createApp(options) {
       await q('deleteOperationsOfWallet', user.id);
       await q('deleteAccountsOfWallet', user.id);
       await q('deleteMembersOfWallet', user.id);
+      // Nothing of the old vault can be redeemed or reused by a new one.
+      await q('cancelInvitesOfWallet', user.id);
+      await q('deleteAddressBookOf', user.id);
       await q('deleteWallet', user.id);
     });
     log.log(`vault erased for ${user.id}${txid ? `, coins swept in ${txid}` : ''}`);
@@ -3109,8 +3284,6 @@ export function createApp(options) {
     return { attestation: attestationView(await one('walletOf', user.id)) };
   }
 
-  const INVITE_SECONDS = 7 * 24 * 3600;
-
   /**
    * An invitation to sign for one account. The quorum that could change the signers is the
    * quorum that authorises this; afterwards the code itself is what the invited person needs,
@@ -3131,6 +3304,9 @@ export function createApp(options) {
     if (!account) throw new HttpError(409, `This vault has no ${network.label} account.`);
     const label = String(body.label ?? '').replace(/\s+/g, ' ').trim().slice(0, 40);
     if (!label) throw new HttpError(400, 'Give the person a name so the others know who they are.');
+    // Optionally, the invited person's approver code: then nobody else can redeem it, whoever sees it.
+    const approver = String(body.approverCode ?? '').trim() || null;
+    if (approver && !(await one('userById', approver))) throw new HttpError(400, 'Nobody has that approver code. They must sign in to Palm once first.');
 
     const { required, signers } = await changeQuorum(ownerId, networkId);
     const statement = `Invite ${label} to approve for ${ownerId === user.id ? 'my' : 'the'} ${network.label} account`;
@@ -3140,11 +3316,12 @@ export function createApp(options) {
       invitee: label,
       effect: 'whoever redeems the code with their own palm becomes a signer',
       signers_after: String(signers.length + 1),
-      expires: '7 days',
+      expires: 'in 24 hours; the code itself changes every 10 minutes',
+      ...(approver ? { only_for: `the person with approver code ${approver}` } : {}),
     };
     const op = await newOperation({
       walletOwnerId: ownerId, user, kind: 'invite', statement, details,
-      payload: { network: networkId, label }, required, networkId,
+      payload: { network: networkId, label, approver }, required, networkId,
     });
     return { operation: operationView(op, [], user) };
   }
@@ -3152,21 +3329,38 @@ export function createApp(options) {
   /** Once approved, the code exists. It is written into the operation so the owner can read it. */
   async function issueInvite(op) {
     const payload = JSON.parse(op.payload);
-    const code = `QV-${randomId(6).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6)}-${randomId(6).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6)}`;
+    const id = `inv_${randomId(12)}`;
+    const secret = randomId(32);
     const time = now();
-    await query('insertInvite', code, op.wallet_user_id, payload.network, payload.label, op.started_by, time, time + INVITE_SECONDS);
-    await query('setPayload', JSON.stringify({ ...payload, code, expiresAt: time + INVITE_SECONDS }), op.id);
+    await query('insertInvite', id, op.wallet_user_id, payload.network, payload.label, op.started_by, time, time + INVITE_SECONDS,
+      secret, payload.approver ?? null);
+    await query('setPayload', JSON.stringify({ ...payload, inviteId: id, secret, expiresAt: time + INVITE_SECONDS }), op.id);
     return { txid: null };
+  }
+
+  /** The open invitation this code redeems right now: this window's code, or the one just before. */
+  async function inviteForCode(code) {
+    const wanted = String(code ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (wanted.length !== 8) return null;
+    const time = now();
+    for (const invite of await all('openInvitesAll', time)) {
+      if (!invite.secret) continue;
+      const current = inviteCodeAt(invite.secret, time);
+      const previous = inviteCodeAt(invite.secret, time - INVITE_WINDOW);
+      if (crypto.timingSafeEqual(Buffer.from(current), Buffer.from(wanted))
+        || crypto.timingSafeEqual(Buffer.from(previous), Buffer.from(wanted))) return invite;
+    }
+    return null;
   }
 
   /** The invited person redeems a code with their own palm, and joins on approval. */
   async function requestJoin({ user, body }) {
     requirePalmReady();
-    const code = String(body.code ?? '').trim().toUpperCase();
-    const invite = await one('inviteByCode', code);
-    if (!invite || invite.status !== 'open') throw new HttpError(404, 'That invitation code is not open. Ask for a new one.');
-    if (invite.expires_at <= now()) throw new HttpError(409, 'That invitation has expired. Ask for a new one.');
+    const invite = await inviteForCode(body.code);
+    if (!invite) throw new HttpError(404, 'That code is not open. Codes change every 10 minutes: ask for the current one.');
+    if (invite.approver && invite.approver !== user.id) throw new HttpError(403, 'That invitation is for someone else.');
     if (invite.wallet_user_id === user.id) throw new HttpError(409, 'That is an invitation to your own vault.');
+    const code = invite.code;
     if (await one('memberIn', invite.wallet_user_id, user.id)) throw new HttpError(409, 'You already sign for that vault.');
 
     const wallet = await one('walletOf', invite.wallet_user_id);
@@ -3208,22 +3402,29 @@ export function createApp(options) {
 
     await transaction(async q => {
       const used = await q('useInvite', joiner.id, time, payload.code);
+      if (invite.approver && invite.approver !== joiner.id) throw new HttpError(403, 'That invitation is for someone else.');
       if (!used.count) throw new HttpError(409, 'That invitation was already used.');
       await q('insertMember', op.wallet_user_id, joiner.id, payload.label, false, time);
       await q('setAccountPolicy', JSON.stringify(nextPolicy), JSON.stringify(signers), op.wallet_user_id, payload.network);
     });
     await assignPalmId(op.wallet_user_id, joiner.id);
+    await cancelCollecting(op.wallet_user_id, op.id, 'Someone joined the vault, so this needs asking again.');
     return { txid: null };
   }
 
   /** The invitations this vault has out, so the owner can pass the code on again or cancel it. */
+  /** The invitations this person made and that are still open, each with its code as it stands now. */
   async function listInvites({ user }) {
-    const rows = await all('openInvitesOf', user.id, now());
+    const time = now();
+    const rows = await all('invitesCreatedBy', user.id, time);
     return {
       invites: rows.map(row => ({
-        code: row.code,
+        id: row.code,
+        code: row.secret ? inviteCodeAt(row.secret, time) : null,
+        changesAt: (Math.floor(time / INVITE_WINDOW) + 1) * INVITE_WINDOW,
         network: row.network,
         label: row.label,
+        onlyFor: row.approver ?? null,
         createdAt: row.created_at,
         expiresAt: row.expires_at,
       })),
@@ -3231,7 +3432,7 @@ export function createApp(options) {
   }
 
   async function cancelInvite({ user, body }) {
-    const cancelled = await query('cancelInvite', String(body.code ?? '').trim().toUpperCase(), user.id);
+    const cancelled = await query('cancelInvite', String(body.id ?? body.code ?? '').trim(), user.id);
     if (!cancelled.count) throw new HttpError(404, 'That invitation is not open.');
     return { ok: true };
   }
@@ -3343,11 +3544,20 @@ export function createApp(options) {
     const policy = readRules(body.rules, policyOfAccount(account, wallet), members.length);
 
     const removed = current.filter(id => !chosen.has(id));
+    const lowered = members.map(m => m.label.toLowerCase());
+    if (new Set(lowered).size !== lowered.length) throw new HttpError(400, 'Two signers have the same name. Give each a different one.');
+    const byPalm = async id => {
+      const person = await one('userById', id);
+      return `${(keep.get(id) ?? chosen.get(id) ?? byId.get(id))?.label ?? byId.get(id)?.label ?? 'Signer'} (${person ? palmId(person.sub) : 'unknown'})`;
+    };
+    const added = [...chosen.keys()].filter(id => !current.includes(id));
     const statement = `Change who can approve for my ${network.label} account and how many palms it takes`;
     const details = {
       action: 'change signers and thresholds',
       network: `${network.label} ${network.chain}`,
       signers: members.map(m => m.label).join(', '),
+      adding: added.length ? (await Promise.all(added.map(byPalm))).join(', ') : 'nobody',
+      removing: removed.length ? (await Promise.all(removed.map(id => byPalm(id)))).join(', ') : 'nobody',
       rules: describePolicy(policy, members),
       approvers: members.length,
     };
@@ -3428,9 +3638,11 @@ export function createApp(options) {
     const expected = await evmExpectedAuthorization(op, wallet);
     const owner = await one('userById', op.wallet_user_id);
     return {
-      unlock: openSealed(wallet.unlock_sealed, vault()).toString('base64'),
+      unlock: (await openUnlock(wallet.unlock_sealed, wallet.user_id)).toString('base64'),
       salt: wallet.salt,
       transfer: JSON.parse(op.payload),
+      // Locking to a Palm Wallet: what the browser rebuilds the wallet from before it pays into it.
+      ...(op.kind === 'lock' ? { quorum: JSON.parse(op.payload).quorum } : {}),
       path: NETWORKS[op.network]?.path ?? "m/44'/60'/0'/0/0",
       address: wallet.address,
       walletId: wallet.address,
@@ -3461,6 +3673,10 @@ export function createApp(options) {
   async function evmWithdrawal({ user, wallet, account, networkId, body }) {
     if (account.lock_kind === 'palm' && account.required) {
       return palmWalletWithdrawal({ user, ownerId: user.id, account, networkId, body });
+    }
+    // As for Bitcoin: with more than one signer, a rule here is not enough when one key could move it.
+    if (signersOf(account, await all('membersOf', user.id)).length > 1) {
+      throw new HttpError(409, 'This account has more than one signer, so lock it to the palm before it can send. Until then one key could move it, whatever the rules here say.');
     }
     const net = NETWORKS[networkId];
     const evm = evmChainFor(networkId);
@@ -3654,7 +3870,7 @@ export function createApp(options) {
     let plan;
     try {
       const [utxos, suggested] = await Promise.all([chain.spendableUtxos(lock.address), chain.feeRate()]);
-      const feeRate = Number(body.feeRate) > 0 ? Number(body.feeRate) : suggested;
+      const feeRate = feeRateFor(body.feeRate, suggested);
       plan = planFor(lock, { utxos, toAddress: to, amountSats, feeRate });
     } catch (error) {
       if (error instanceof WalletError || error instanceof ChainError) throw new HttpError(400, error.message);
@@ -3670,7 +3886,7 @@ export function createApp(options) {
     // The digest of the exact transaction is part of what the palm approves, not a note beside it.
     const bound = bindPlan(lock, plan);
     const destination = await describeDestination(ownerId, 'bitcoin', to);
-    const statement = `Send ${toBtc(plan.sentSats)} tBTC to ${destination.phrase}`;
+    const statement = `Send ${toBtc(plan.sentSats)} tBTC to ${destination.phrase}, network fee ${toBtc(plan.feeSats)} tBTC`;
     const details = {
       action: 'withdraw',
       network,
@@ -3719,8 +3935,15 @@ export function createApp(options) {
     const lock = lockOfAccount(account);
     let plan = null;
     try {
-      const [utxos, suggested] = await Promise.all([chain.spendableUtxos(lock.address), chain.feeRate()]);
-      const rate = Number(feeRate) > 0 ? Number(feeRate) : suggested;
+      const [found, suggested] = await Promise.all([chain.spendableUtxos(lock.address), chain.feeRate()]);
+      const rate = feeRateFor(feeRate, suggested);
+      // A refresh takes the coins worth moving, at most 400 of them: dust someone sent to the vault
+      // can neither push it past the size a transaction may be nor eat its value in fees.
+      const inputCost = Math.ceil(palmInputVsize(lock.vault) * rate);
+      const utxos = toAddress === lock.address
+        ? [...found].filter(coin => coin.value > 2 * inputCost).sort((a, b) => b.value - a.value).slice(0, 400)
+        : found;
+      if (!move && found.length && !utxos.length) throw new HttpError(409, 'The coins in this vault are too small to be worth refreshing at today’s fees.');
       if (utxos.length) plan = planPalmSpend({ vault: lock.vault, utxos, toAddress, amountSats: 'max', feeRate: rate });
     } catch (error) {
       if (error instanceof WalletError || error instanceof ChainError) throw new HttpError(400, error.message);
@@ -3742,7 +3965,8 @@ export function createApp(options) {
       } : { amount_sats: 0 }),
     };
     const op = await newOperation({
-      walletOwnerId: ownerId, user, kind: 'withdraw', statement: statementOf(plan ? toBtc(moved) : null), details: fullDetails,
+      walletOwnerId: ownerId, user, kind: 'withdraw', statement: statementOf(plan ? toBtc(moved) : null, plan ? toBtc(plan.feeSats) : null),
+      details: fullDetails,
       payload: { ...(plan ?? {}), transactionHash: bound?.digest ?? null, ...(move ? { move } : {}) },
       required: lock.required, networkId: 'bitcoin',
     });
@@ -3780,7 +4004,7 @@ export function createApp(options) {
     const mine = ownerId === user.id;
     return palmMoveRequest({
       user, ownerId, account, toAddress: account.address, feeRate: body.feeRate,
-      statementOf: amount => `Refresh ${mine ? 'my' : 'the'} vault: move ${amount} tBTC back into it, so its recovery clock starts again`,
+      statementOf: (amount, fee) => `Refresh ${mine ? 'my' : 'the'} vault: move ${amount} tBTC back into it, so its recovery clock starts again, network fee ${fee} tBTC`,
       details: {
         action: 'refresh the vault',
         network,
@@ -3849,9 +4073,9 @@ export function createApp(options) {
     };
     return palmMoveRequest({
       user, ownerId, account, toAddress: made.address, feeRate: body.feeRate, move,
-      statementOf: amount => (amount === null
+      statementOf: (amount, fee) => (amount === null
         ? `Change who signs for the vault to ${who}, ${rule}`
-        : `Move the vault to ${who}, ${rule}, and send ${amount} tBTC to it`),
+        : `Move the vault to ${who}, ${rule}, and send ${amount} tBTC to it at ${made.address}, network fee ${fee} tBTC`),
       details: {
         action: 'replace signers',
         network,
@@ -3880,6 +4104,7 @@ export function createApp(options) {
       move.from, JSON.stringify(policy), JSON.stringify(move.signers), op.wallet_user_id);
     if (moved.count !== 1) throw new HttpError(409, 'This vault has already moved.');
     await pruneRoster(op.wallet_user_id);
+    await cancelCollecting(op.wallet_user_id, op.id, 'The vault moved to new signers, so this needs asking again.');
   }
 
   /** What one palm vault shows about its recovery path: the delay, the description, the clock. */
@@ -3935,6 +4160,36 @@ export function createApp(options) {
   /** Everything an inheritance sheet prints. Only for someone on the vault. */
   async function inheritanceSheet({ user, body }) {
     const ownerId = String(body.vaultOwnerId || user.id);
+    const sheetNetwork = String(body.network ?? 'bitcoin');
+    if (isEvm(sheetNetwork)) {
+      const [members, account] = await Promise.all([all('membersOf', ownerId), one('accountOn', ownerId, sheetNetwork)]);
+      if (ownerId !== user.id && !members.some(m => m.member_id === user.id)) throw new HttpError(404, 'Vault not found.');
+      if (account?.lock_kind !== 'palm' || !account.required) throw new HttpError(409, 'An inheritance sheet is for a wallet locked to the palm.');
+      const net = NETWORKS[sheetNetwork];
+      const description = walletDescription({ chainId: net.chainId, address: account.address });
+      return {
+        kind: 'evm',
+        address: account.address,
+        network: sheetNetwork,
+        networkLabel: `${net.label} ${net.chain}`,
+        required: account.required,
+        signers: keyHoldersOf(account, members).map(m => ({ label: m.label, owner: m.is_owner })),
+        recoveryDelayDays: Math.round(account.recovery_delay / 86400),
+        descriptor: description,
+        descriptorQr: await QRCode.toString(description, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' }).catch(() => null),
+        // Everything needed to build this wallet at its address and recover it with no Palm at all.
+        build: (() => {
+          const d = JSON.parse(account.descriptor);
+          return {
+            deployer: DEPLOYER, salt: `0x${Buffer.from(walletSalt(account.palm_vault_id)).toString('hex')}`,
+            signers: d.signers, threshold: d.threshold, palmSigner: d.palmSigner, recoveryDelaySeconds: d.recoveryDelay,
+            chainId: d.chainId, contract: 'PalmWallet v3 (contracts/contracts/PalmWallet.sol)',
+          };
+        })(),
+        palmAt: publicOrigin,
+        printedAt: now(),
+      };
+    }
     const [members, account] = await Promise.all([all('membersOf', ownerId), one('accountOn', ownerId, 'bitcoin')]);
     if (ownerId !== user.id && !members.some(m => m.member_id === user.id)) throw new HttpError(404, 'Vault not found.');
     if (account?.lock_kind !== 'palm' || !account.required) {
@@ -3945,7 +4200,9 @@ export function createApp(options) {
       address: account.address,
       network,
       required: account.required,
-      signers: holders.map(m => ({ label: m.label, owner: m.is_owner })),
+      // Each signer's key and where their twelve words keep it, so the words can be matched to
+      // the vault without Palm.
+      signers: holders.map(m => ({ label: m.label, owner: m.is_owner, key: m.public_key, path: `m/48'/1'/0'/2'/0/${m.key_index}` })),
       recoveryDelayBlocks: account.recovery_delay,
       recoveryDelayDays: daysOfDelay(account.recovery_delay),
       descriptor: account.descriptor,
@@ -3972,7 +4229,123 @@ export function createApp(options) {
     }
   };
 
+  /**
+   * A Palm Wallet as an heir finds it: everything read from its chain, nothing taken from this
+   * server's records, so the door works for a wallet whatever happened to them.
+   */
+  async function readPalmWallet(descriptor) {
+    let parsed;
+    try {
+      parsed = parseWalletDescription(descriptor);
+    } catch (error) {
+      throw new HttpError(400, error.message);
+    }
+    const networkId = Object.keys(NETWORKS).find(id => isEvm(id) && Number(NETWORKS[id].chainId) === parsed.chainId);
+    if (!networkId) throw new HttpError(400, 'Palm Wallets here live on Ethereum Sepolia and BSC testnet, and that description names another chain.');
+    // The gas account pays for a recovery only for a wallet Palm made; any other contract, however
+    // it answers, could have it pay for anything. A wallet's own description lets anyone recover
+    // it without Palm, paying their own fee.
+    if (!(await one('palmWalletAt', networkId, parsed.address))) {
+      throw new HttpError(404, 'That is not a Palm Wallet made here. The build details on its inheritance sheet recover it without Palm.');
+    }
+    const evm = evmChainFor(networkId);
+    const word = raw => BigInt(raw);
+    try {
+      if ((await evm.code(parsed.address)) === '0x') throw new HttpError(409, 'There is no Palm Wallet built at that address on that chain.');
+      const [signersRaw, thresholdRaw, delayRaw, lastRaw, nonceRaw, balance] = await Promise.all([
+        evm.call({ to: parsed.address, data: SIGNERS_CALL }), evm.call({ to: parsed.address, data: THRESHOLD_CALL }),
+        evm.call({ to: parsed.address, data: RECOVERY_DELAY_CALL }), evm.call({ to: parsed.address, data: LAST_ACTIVITY_CALL }),
+        evm.call({ to: parsed.address, data: NONCE_CALL }), evm.balance(parsed.address),
+      ]);
+      const delay = Number(word(delayRaw));
+      const opensAt = Number(word(lastRaw)) + delay;
+      const left = Math.max(0, opensAt - now());
+      return {
+        networkId, chainId: parsed.chainId, address: parsed.address, signers: decodeAddressArray(signersRaw),
+        threshold: Number(word(thresholdRaw)), delay, opensAt, open: left === 0, daysLeft: Math.ceil(left / 86400),
+        nonce: word(nonceRaw).toString(10), balance,
+      };
+    } catch (error) {
+      if (error instanceof HttpError) throw error;
+      if (error instanceof EvmChainError) throw new HttpError(502, error.message);
+      if (error instanceof PalmWalletError || error instanceof SyntaxError || error instanceof RangeError) {
+        throw new HttpError(409, 'That address does not hold a Palm Wallet.');
+      }
+      throw error;
+    }
+  }
+
+  async function palmWalletDoorPlan({ body }) {
+    const pw = await readPalmWallet(body.descriptor);
+    const net = NETWORKS[pw.networkId];
+    const view = {
+      kind: 'evm', network: pw.networkId, symbol: net.symbol, chainId: pw.chainId,
+      address: pw.address, explorer: evmChainFor(pw.networkId).explorerAddress(pw.address),
+      required: pw.threshold, keys: pw.signers, recoveryDelayDays: Math.round(pw.delay / 86400),
+      clock: { opensAt: pw.opensAt, daysLeft: pw.daysLeft, open: pw.open },
+      balance: pw.balance, balanceText: `${format(pw.balance, pw.networkId)} ${net.symbol}`,
+      recovery: null,
+    };
+    // A token, if one is named: everything of that token goes, instead of the coin.
+    const token = body.token ? await tokenOf(pw.networkId, body.token, pw.address) : null;
+    if (token) view.tokenText = `${token.balance} base units of ${token.symbol} (${token.address})`;
+    const to = String(body.to ?? '').trim();
+    if (!to) return view;
+    if (!net.valid(to)) throw new HttpError(400, `That is not a valid ${net.label} address.`);
+    if (!pw.open) {
+      throw new HttpError(409, `The recovery path opens in about ${pw.daysLeft} days. While a signer can still use Palm, they can move the coins normally instead.`);
+    }
+    const amount = token ? token.balance.toString() : pw.balance;
+    if (BigInt(amount) === 0n) throw new HttpError(409, 'This wallet holds nothing of that to recover.');
+    view.recovery = { token: token ? token.address : NATIVE, to: to.toLowerCase(), amount, deadline: String(now() + PALM_WALLET_DEADLINE), nonce: pw.nonce };
+    view.amountText = token ? view.tokenText : view.balanceText;
+    return view;
+  }
+
+  /**
+   * Submits a recovery the heirs signed on their own device: checked here first, signature by
+   * signature, against the wallet's own signers, so the gas account never pays for one the wallet
+   * would refuse. The gas account pays; the recovery path has no fee and no refund.
+   */
+  async function palmWalletDoorSend({ body }) {
+    const pw = await readPalmWallet(body.descriptor);
+    const net = NETWORKS[pw.networkId];
+    if (!pw.open) throw new HttpError(409, `The recovery path opens in about ${pw.daysLeft} days.`);
+    const r = body.recovery ?? {};
+    if (!net.valid(String(r.to ?? ''))) throw new HttpError(400, 'That is not a recovery of this wallet\'s coins.');
+    const native = String(r.token ?? '').toLowerCase() === NATIVE;
+    const held = native ? BigInt(pw.balance) : (await tokenOf(pw.networkId, r.token, pw.address)).balance;
+    if (String(r.nonce) !== pw.nonce) throw new HttpError(409, 'The wallet has moved on since this was signed. Prepare it again.');
+    if (BigInt(String(r.amount ?? '0')) > held || BigInt(String(r.deadline ?? '0')) <= BigInt(now())) {
+      throw new HttpError(409, 'This recovery no longer fits the wallet. Prepare it again.');
+    }
+    let digest;
+    try {
+      digest = eip712RecoveryDigest({ chainId: pw.chainId, wallet: pw.address, recovery: r });
+    } catch (error) {
+      throw new HttpError(400, error instanceof PalmWalletError ? error.message : 'That is not a recovery.');
+    }
+    const bySigner = new Map();
+    const offered = Array.isArray(body.signatures) ? body.signatures : [];
+    if (offered.length > pw.signers.length) throw new HttpError(400, 'More signatures than the wallet has signers.');
+    for (const signature of offered) {
+      let from;
+      try {
+        from = recoverAddress(digest, String(signature));
+      } catch {
+        throw new HttpError(400, 'One of those is not a signature.');
+      }
+      if (!pw.signers.includes(from)) throw new HttpError(400, 'A signature is not from one of this wallet\'s signers.');
+      bySigner.set(from, String(signature));
+    }
+    if (bySigner.size < pw.threshold) throw new HttpError(400, `This wallet needs ${pw.threshold} of its signers, and has ${bySigner.size}.`);
+    const ordered = [...bySigner.keys()].sort().slice(0, pw.threshold).map(address => bySigner.get(address));
+    const txid = await relay(pw.networkId, { address: pw.address, threshold: pw.threshold }, recoverCallOf(r, ordered), 'recover');
+    return { txid, explorer: evmChainFor(pw.networkId).explorerTx(txid) };
+  }
+
   async function recoveryDoorPlan({ body }) {
+    if (/^\s*palmwallet:/i.test(String(body.descriptor ?? ''))) return palmWalletDoorPlan({ body });
     const vault = readVault(body.descriptor);
     let utxos;
     let tip;
@@ -4006,7 +4379,7 @@ export function createApp(options) {
         : 'This vault has no confirmed coins.');
     }
     try {
-      const feeRate = Number(body.feeRate) > 0 ? Number(body.feeRate) : suggested;
+      const feeRate = feeRateFor(body.feeRate, suggested);
       view.plan = planPalmSpend({ vault, utxos: ready, toAddress: to, amountSats: 'max', feeRate, path: 'recovery' });
       view.psbt = palmVaultPsbt(vault, view.plan, { path: 'recovery' });
     } catch (error) {
@@ -4017,6 +4390,7 @@ export function createApp(options) {
   }
 
   async function recoveryDoorSend({ body }) {
+    if (/^\s*palmwallet:/i.test(String(body.descriptor ?? ''))) return palmWalletDoorSend({ body });
     const vault = readVault(body.descriptor);
     const psbt = String(body.psbt ?? '');
     let finished;
@@ -4109,12 +4483,14 @@ export function createApp(options) {
     deploy: { basis: 1_600_000n, limit: 2_200_000n },
     transfer: { basis: 155_000n, limit: 350_000n },
     refresh: { basis: 62_000n, limit: 200_000n },
+    recover: { basis: 110_000n, limit: 300_000n },
     perSigner: 8_000n,
   };
 
   /** A palm wallet's settings, from what the account stores, checked against its address. */
   function palmWalletOf(account) {
     const description = JSON.parse(account.descriptor);
+    if (description.version !== 3) throw new HttpError(409, 'This Palm Wallet was made by an earlier version of Palm and needs moving to a new one.');
     const keys = JSON.parse(account.quorum_keys);
     const params = walletParams({
       signers: keys.map(evmAddressOfPublicKey), threshold: account.required,
@@ -4127,10 +4503,42 @@ export function createApp(options) {
     return { ...params, salt, keys, address: String(account.address).toLowerCase(), chainId: Number(description.chainId) };
   }
 
+  const DECIMALS_CALL = '0x313ce567';
+  const SYMBOL_CALL = '0x95d89b41';
+
+  /** A token as a payment needs it: that it is a contract, its decimals, a short name, and what a wallet holds. */
+  async function tokenOf(networkId, address, holder) {
+    const token = String(address ?? '').trim().toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(token)) throw new HttpError(400, 'That is not a token address.');
+    const evm = evmChainFor(networkId);
+    if ((await evm.code(token)) === '0x') throw new HttpError(400, 'There is no token contract at that address.');
+    const [decimalsRaw, symbolRaw, balance] = await Promise.all([
+      evm.call({ to: token, data: DECIMALS_CALL }).catch(() => null),
+      evm.call({ to: token, data: SYMBOL_CALL }).catch(() => null),
+      evm.tokenBalance(token, holder),
+    ]);
+    const decimals = decimalsRaw ? Number(BigInt(decimalsRaw)) : 18;
+    if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) throw new HttpError(400, 'That token reports a decimals value nobody uses.');
+    // A short plain name for the sentence; anything odd is just called tokens.
+    let symbol = 'tokens';
+    try {
+      const raw = String(symbolRaw ?? '').replace(/^0x/, '');
+      const length = raw.length >= 128 ? Number(BigInt(`0x${raw.slice(64, 128)}`)) : 0;
+      const text = length && length <= 32 ? Buffer.from(raw.slice(128, 128 + length * 2), 'hex').toString('utf8') : '';
+      if (/^[A-Za-z0-9]{1,11}$/.test(text)) symbol = text;
+    } catch {
+      symbol = 'tokens';
+    }
+    return { address: token, decimals, symbol, balance: BigInt(balance) };
+  }
+
   /** The network fee for a call using `units` of gas, at today's price with a fifth to spare. */
   async function networkFeeFor(networkId, units) {
     const fees = await evmChainFor(networkId).fees();
-    return (units * (BigInt(fees.baseFeePerGas) + BigInt(fees.maxPriorityFeePerGas)) * 12n) / 10n;
+    const price = BigInt(fees.baseFeePerGas) + BigInt(fees.maxPriorityFeePerGas);
+    // A network service that reports an absurd price would make every wallet pay it: refused instead.
+    if (price > 2000n * 10n ** 9n) throw new HttpError(502, 'The network reports a gas price far above anything normal. Try again later.');
+    return (units * price * 12n) / 10n;
   }
 
   /** Where a palm wallet stands on its chain: built or not, its next nonce, and its recovery clock. */
@@ -4165,6 +4573,8 @@ export function createApp(options) {
       gasBalance: null,
       gasSymbol: net.symbol,
       feeAddress: feeAddress(),
+      // What the inheritance sheet prints and the recovery door reads.
+      description: walletDescription({ chainId: net.chainId, address: row.address }),
     };
     try {
       const pw = palmWalletOf(row);
@@ -4246,7 +4656,7 @@ export function createApp(options) {
     const { required: palms } = await changeQuorum(user.id, networkId);
     const what = signers.length === 1 ? 'my palm' : `${required} of ${signers.length} and the palm`;
     const statement = transfer
-      ? `Lock my ${net.label} to ${what} on the chain and move ${format(transfer.value, networkId)} ${net.symbol} to it`
+      ? `Lock my ${net.label} to ${what} on the chain and move ${format(transfer.value, networkId)} ${net.symbol} to it at ${address}`
       : `Lock my ${net.label} to ${what} on the chain`;
     const details = {
       action: 'lock to the palm on the chain',
@@ -4285,7 +4695,7 @@ export function createApp(options) {
     if (walletAddressOf(params, walletSalt(quorum.palmVaultId)) !== quorum.address) {
       throw new HttpError(500, 'The Palm Wallet no longer matches the one that was approved.');
     }
-    const description = { kind: 'palm-wallet', version: 2, chainId: quorum.chainId, deployer: DEPLOYER, ...params };
+    const description = { kind: 'palm-wallet', version: 3, chainId: quorum.chainId, deployer: DEPLOYER, ...params };
     await query('lockAccountToPalm', quorum.address, quorum.palmKey, quorum.required, JSON.stringify(quorum.keys),
       quorum.palmVaultId, quorum.palmKey, params.recoveryDelay, JSON.stringify(description), op.wallet_user_id, op.network);
     await query('setQuorumMembers', JSON.stringify(quorum.members ?? []), op.wallet_user_id, op.network);
@@ -4294,6 +4704,12 @@ export function createApp(options) {
     try {
       const account = await one('accountOn', op.wallet_user_id, op.network);
       const pw = palmWalletOf(account);
+      const moved = BigInt(JSON.parse(op.payload).value ?? '0');
+      const buildFee = await networkFeeFor(op.network, GAS.deploy.basis);
+      // A wallet holding too little to repay its own building is not built at the gas account's
+      // expense: its first payment builds it and pays for that. So nobody can drain the gas
+      // account by locking empty accounts.
+      if (moved < 3n * buildFee) return;
       if ((await evmChainFor(op.network).code(pw.address)) === '0x') {
         await relay(op.network, pw, null, 'deploy');
         const owed = await networkFeeFor(op.network, GAS.deploy.basis);
@@ -4324,26 +4740,33 @@ export function createApp(options) {
       throw error;
     }
     const balance = BigInt(state.balance);
+    // A token payment: the amount and Palm's fee in the token, the network fee in the coin.
+    const token = body.token ? await tokenOf(networkId, body.token, pw.address) : null;
+    const holding = token ? token.balance : balance - gasRefund;
     let amount;
     if (body.amount === 'max') {
-      const spare = balance - gasRefund;
-      amount = spare > 0n ? (spare * FEE_DIVISOR) / (FEE_DIVISOR + 1n) : 0n;
+      amount = holding > 0n ? (holding * FEE_DIVISOR) / (FEE_DIVISOR + 1n) : 0n;
     } else {
       if (!/^[1-9][0-9]{0,77}$/.test(String(body.amount ?? '').trim())) {
-        throw new HttpError(400, `Enter an amount in the smallest unit (wei) of ${net.symbol}.`);
+        throw new HttpError(400, `Enter an amount in the smallest unit of ${token ? token.symbol : net.symbol}.`);
       }
       amount = BigInt(String(body.amount).trim());
     }
     const fee = amount / FEE_DIVISOR;
-    if (amount <= 0n || amount + fee + gasRefund > balance) {
-      throw new HttpError(400, `This wallet holds ${format(balance.toString(), networkId)} ${net.symbol}, and a payment also needs Palm's 0.1% and about ${format(gasRefund.toString(), networkId)} ${net.symbol} of network fee.`);
+    if (token && gasRefund > balance) {
+      throw new HttpError(400, `A token payment's network fee is paid in ${net.symbol}: this wallet needs about ${format(gasRefund.toString(), networkId)} ${net.symbol} and holds less.`);
+    }
+    if (amount <= 0n || amount + fee > holding) {
+      throw new HttpError(400, token
+        ? `This wallet holds ${token.balance} base units of ${token.symbol}, and a payment also needs Palm's 0.1%.`
+        : `This wallet holds ${format(balance.toString(), networkId)} ${net.symbol}, and a payment also needs Palm's 0.1% and about ${format(gasRefund.toString(), networkId)} ${net.symbol} of network fee.`);
     }
 
     let transfer;
     try {
       transfer = normalTransfer({
-        token: NATIVE, to, amount: amount.toString(), fee: fee.toString(), feeTo, gasRefund: gasRefund.toString(),
-        deadline: String(now() + PALM_WALLET_DEADLINE), nonce: state.nonce,
+        token: token ? token.address : NATIVE, to, amount: amount.toString(), fee: fee.toString(), feeTo, gasRefund: gasRefund.toString(),
+        refundTo: gasAccount().address, deadline: String(now() + PALM_WALLET_DEADLINE), nonce: state.nonce,
       });
     } catch (error) {
       throw new HttpError(400, error instanceof PalmWalletError ? error.message : 'That payment cannot be made.');
@@ -4351,13 +4774,17 @@ export function createApp(options) {
     const digest = evmTransferDigest({ chainId: pw.chainId, wallet: pw.address, transfer });
     const destination = await describeDestination(ownerId, networkId, to);
     const show = value => `${format(String(value), networkId)} ${net.symbol}`;
-    const statement = `Send ${show(amount)} to ${destination.phrase}, plus ${show(fee + gasRefund)} in fees`;
+    const inToken = value => `${unitsText(value, token?.decimals ?? 18)} ${token?.symbol ?? ''} (${value} base units)`.replace(/ +/g, ' ');
+    const statement = token
+      ? `Send ${inToken(amount)} of token ${token.address} to ${destination.phrase}, plus Palm fee ${inToken(fee)} and network fee ${show(gasRefund)}`
+      : `Send ${show(amount)} to ${destination.phrase}, plus ${show(fee + gasRefund)} in fees`;
     const details = {
       action: 'withdraw', network: networkId, to, ...destination.details,
-      token: 'native', amount_units: transfer.amount,
-      palm_fee: `${show(fee)}, which is 0.1%`, palm_fee_units: transfer.fee, palm_fee_to: transfer.feeTo,
+      token: token ? token.address : 'native', ...(token ? { token_name: token.symbol } : {}), amount_units: transfer.amount,
+      palm_fee: token ? `${inToken(fee)}, which is 0.1%` : `${show(fee)}, which is 0.1%`, palm_fee_units: transfer.fee, palm_fee_to: transfer.feeTo,
       network_fee: `${show(gasRefund)}${state.built ? '' : ', including building the wallet'}`, network_fee_units: transfer.gasRefund,
-      total: show(amount + fee + gasRefund),
+      network_fee_to: transfer.refundTo,
+      total: token ? `${inToken(amount + fee)} and ${show(gasRefund)}` : show(amount + fee + gasRefund),
       wallet: pw.address, chain_id: String(pw.chainId),
       good_until: new Date(Number(transfer.deadline) * 1000).toUTCString(),
       approvals_required: `${pw.threshold} of ${pw.signers.length} signer${pw.signers.length === 1 ? '' : 's'} and the palm`,
@@ -4393,13 +4820,15 @@ export function createApp(options) {
     if (gasRefund > BigInt(state.balance)) {
       throw new HttpError(409, `A refresh pays its own network fee of about ${format(gasRefund.toString(), networkId)} ${net.symbol}, and this wallet holds less.`);
     }
-    const refresh = normalRefresh({ gasRefund: gasRefund.toString(), deadline: String(now() + PALM_WALLET_DEADLINE), nonce: state.nonce });
+    const refresh = normalRefresh({
+      gasRefund: gasRefund.toString(), refundTo: gasAccount().address, deadline: String(now() + PALM_WALLET_DEADLINE), nonce: state.nonce,
+    });
     const digest = evmRefreshDigest({ chainId: pw.chainId, wallet: pw.address, refresh });
     const days = Math.round(pw.recoveryDelay / 86400);
-    const statement = `Refresh ${ownerId === user.id ? 'my' : 'the'} ${net.label} Palm Wallet, so its recovery path stays closed`;
+    const statement = `Refresh ${ownerId === user.id ? 'my' : 'the'} ${net.label} Palm Wallet, so its recovery path stays closed, network fee ${format(gasRefund.toString(), networkId)} ${net.symbol}`;
     const details = {
       action: 'refresh the wallet', network: networkId, wallet: pw.address, chain_id: String(pw.chainId),
-      network_fee: `${format(gasRefund.toString(), networkId)} ${net.symbol}`, network_fee_units: refresh.gasRefund,
+      network_fee: `${format(gasRefund.toString(), networkId)} ${net.symbol}`, network_fee_units: refresh.gasRefund, network_fee_to: refresh.refundTo,
       effect: `nothing moves; the signers alone cannot use the recovery path for about ${days} more days`,
       good_until: new Date(Number(refresh.deadline) * 1000).toUTCString(),
       approvals_required: `${pw.threshold} of ${pw.signers.length} signer${pw.signers.length === 1 ? '' : 's'} and the palm`,
@@ -4448,7 +4877,7 @@ export function createApp(options) {
       policyVersion: policyVersionOf(policyOfAccount(account, wallet), members),
       authorizationVersion: 1,
       bindingNonce: stored.transactionHash,
-      unlock: openSealed(mine.unlock_sealed, vault()).toString('base64'),
+      unlock: (await openUnlock(mine.unlock_sealed, user.id)).toString('base64'),
       salt: mine.salt,
       keyIndex: member.key_index,
       signingKey: member.public_key,
@@ -4555,11 +4984,17 @@ export function createApp(options) {
     const net = NETWORKS[networkId];
     const evm = evmChainFor(networkId);
     const empty = `Palm's gas account on ${net.label} ${net.chain} needs ${net.symbol} to pay the network fee. Send some from a faucet to ${gas.address}, then sign again.`;
+    // One relay at a time per chain, so two never read the same gas account nonce.
+    return transaction(async q => {
+      await q('relayLock', Number(net.chainId) % 2147483647);
+      return relayLocked();
+    });
+    async function relayLocked() {
     try {
       const [code, nonce, fees, balance] = await Promise.all([evm.code(pw.address), evm.nonce(gas.address), evm.fees(), evm.balance(gas.address)]);
       const built = code !== '0x';
       const deployGas = built ? 0n : GAS.deploy.limit;
-      const callGas = data === null ? 0n : (kind === 'refresh' ? GAS.refresh.limit : GAS.transfer.limit) + GAS.perSigner * BigInt(pw.threshold);
+      const callGas = data === null ? 0n : (GAS[kind] ?? GAS.transfer).limit + GAS.perSigner * BigInt(pw.threshold);
       if (BigInt(balance) < (deployGas + callGas) * BigInt(fees.maxFeePerGas)) throw new HttpError(409, empty);
       const send = async (to, callData, gasLimit, n) => {
         const { raw } = signRelayed({
@@ -4568,6 +5003,17 @@ export function createApp(options) {
         }, gas.key);
         return evm.broadcast(raw);
       };
+      if (!built && (await evm.code(DEPLOYER)) === '0x') {
+        throw new HttpError(503, `The standard deployment contract is not on ${net.label} ${net.chain}, so a Palm Wallet cannot be built there.`);
+      }
+      // What would happen is asked first, so a call the wallet would refuse costs nothing.
+      if (built && data !== null) {
+        try {
+          await evm.call({ to: pw.address, data, from: gas.address });
+        } catch (error) {
+          throw new HttpError(409, `The wallet would refuse this, so nothing was sent: ${String(error.message).slice(0, 160)}`);
+        }
+      }
       let next = BigInt(nonce);
       let sent = null;
       if (!built) sent = await send(DEPLOYER, deployCallOf(pw, pw.salt), deployGas, next++);
@@ -4580,6 +5026,40 @@ export function createApp(options) {
         throw new HttpError(502, error.message);
       }
       throw error;
+    }
+    }
+  }
+
+  /** What an unlock secret is bound to: the person whose wallet it opens. */
+  const unlockContext = userId => `palm unlock secret v2:${userId}`;
+
+  /*
+   * Unlock secrets sealed before they were bound to their wallet are bound, once, to the wallet
+   * row they sit in. From then on a sealed secret opens only for the person it belongs to, so a
+   * secret copied into someone else's record, or into a request's payload, opens for nobody.
+   */
+  let sealsBound = null;
+  function bindOldSeals() {
+    sealsBound ??= (async () => {
+      for (const row of (await all('unlockSealsOf'))) {
+        if (!row.unlock_sealed || sealIsBound(row.unlock_sealed)) continue;
+        const secret = openSealed(row.unlock_sealed, vault());
+        await query('rebindUnlockSeal', seal(secret, vault(), unlockContext(row.user_id)), row.user_id, row.unlock_sealed);
+        secret.fill(0);
+      }
+    })().catch(error => {
+      sealsBound = null;
+      throw error;
+    });
+    return sealsBound;
+  }
+
+  async function openUnlock(sealed, userId) {
+    await bindOldSeals();
+    try {
+      return openSealed(sealed, vault(), unlockContext(userId));
+    } catch {
+      throw new HttpError(409, 'That unlock secret does not belong to this account.');
     }
   }
 
@@ -4620,12 +5100,17 @@ export function createApp(options) {
   async function joinOperation({ user, params: [id] }) {
     requirePalmReady();
     const op = await ownOperation(id, user);
-    if (op.kind !== 'unfreeze') await assertNotFrozen(op.wallet_user_id);
+    await assertNotFrozen(op.wallet_user_id, op);
     if (op.status !== 'collecting') throw new HttpError(409, 'This request is no longer collecting approvals.');
     if (op.expires_at <= now()) throw new HttpError(409, 'This request has expired.');
     if (op.kind === 'join') {
       // The vault authorised the invitation; this palm is the invited person proving it is them.
       if (op.started_by !== user.id) throw new HttpError(403, 'Only the invited person can accept this.');
+    } else if (op.wallet_user_id !== user.id && (['recovery', 'signing', 'unfreeze'].includes(op.kind)
+      || (OWNER_KEY_KINDS.has(op.kind) && op.required === 1))) {
+      // These open the owner's own key, or are the owner's alone to decide: only their palm counts.
+      // Where several palms are needed, the owner's must be one of them (see ownerMustApprove).
+      throw new HttpError(403, 'Only the owner\'s own palm can approve this.');
     } else if (op.kind !== 'create') {
       const member = await one('memberIn', op.wallet_user_id, user.id);
       if (!member) throw new HttpError(403, 'You are not an approver for this wallet.');
@@ -4655,7 +5140,15 @@ export function createApp(options) {
     const slots = op.kind === 'recovery' ? 2 : 1;
     const mine = await all('myApprovals', op.id, user.id);
     const open = mine.find(a => a.status === 'open');
-    if (open) return { approval: { id: open.id, status: 'open', slot: open.slot } };
+    // An open approval is reused only while its Veyns request is still alive. One the person
+    // cancelled or let lapse in the Veyns app would never reach their phone again, so it is
+    // closed here and a fresh request made in its place.
+    if (open && !(await palmRequestAlive(open))) {
+      await query('closeApproval', 'failed', 'That palm request was cancelled or ran out of time.', now(), open.id);
+      cancelRemote([open]);
+    } else if (open) {
+      return { approval: { id: open.id, status: 'open', slot: open.slot } };
+    }
     if (mine.filter(a => a.status === 'approved').length >= slots) throw new HttpError(409, 'You have already approved this.');
 
     const approvalId = randomId(16);
@@ -4692,9 +5185,26 @@ export function createApp(options) {
     const a = await ownApproval(id, user);
     if (a.status === 'open') {
       await query('closeApproval', 'cancelled', null, now(), a.id);
-      cancelRemote([a]);
+      // Told to Veyns before answering, so the next request for this person is not refused
+      // because the cancelled one still looks open there.
+      if (a.request_id) {
+        await veyns.backend(`/v1/approvals/${encodeURIComponent(a.request_id)}/cancel`, {})
+          .catch(error => log.warn(`Could not cancel Veyns request: ${error.message}`));
+      }
     }
     return { ok: true };
+  }
+
+  /** Whether an open approval's Veyns request can still reach the person's phone. */
+  async function palmRequestAlive(a) {
+    if (!a.request_id) return now() - a.created_at < PALM_REQUEST_SECONDS;
+    if (now() - a.created_at >= PALM_REQUEST_SECONDS) return false;
+    try {
+      const remote = await veyns.backend(`/v1/approvals/${encodeURIComponent(a.request_id)}`);
+      return ['pending', 'verifying', 'approved'].includes(remote?.status);
+    } catch {
+      return true; // Veyns unreachable: keep what there is rather than pile up requests
+    }
   }
 
   async function cancelOperation({ user, params: [id] }) {
@@ -4733,6 +5243,17 @@ export function createApp(options) {
     };
   }
 
+  /**
+   * Whether a request opens the owner's own key, so the owner's palm must be among its approvals:
+   * the kinds that always do, and a payment from an account their single key still guards.
+   */
+  async function ownerMustApprove(op) {
+    if (OWNER_KEY_KINDS.has(op.kind)) return true;
+    if (op.kind !== 'withdraw') return false;
+    if (isEvm(op.network)) return JSON.parse(op.payload ?? '{}').chain === 'evm';
+    return !(await one('accountOn', op.wallet_user_id, 'bitcoin'))?.required;
+  }
+
   /** Checks the signed palm decision, records it, and runs the operation when the quorum is complete. */
   async function settlePalm(a, user, remote) {
     const fail = reason => query('closeApproval', 'failed', `Palm decision rejected: ${reason}.`, now(), a.id);
@@ -4761,10 +5282,17 @@ export function createApp(options) {
     await query('setDecision', remote.decision_id, a.id, remote.decision);
     await query('bindPalm', palmId(claims.sub), now(), op.wallet_user_id, user.id);
     // Record this approval and, if it completes the quorum, claim the right to run the operation.
+    const ownerMust = await ownerMustApprove(op);
     const mine = await transaction(async q => {
+      // One settlement at a time per request, so two last palms landing together are both counted.
+      await q('lockOperation', op.id);
       if ((await q('claimApproval', `decision:${remote.decision_id}`, now(), a.id)).count !== 1) return false;
       const { n } = (await q('countApproved', op.id)).rows[0];
       if (n < op.required) return false;
+      if (ownerMust) {
+        const owners = (await q('approvalsOf', op.id)).rows.filter(row => row.status === 'approved' && row.user_id === op.wallet_user_id);
+        if (!owners.length) return false;
+      }
       return (await q('startRunning', op.id)).count === 1;
     });
     if (mine) await runOperation(op, remote.decision_id);
@@ -4787,6 +5315,7 @@ export function createApp(options) {
     { method: 'POST', path: '/api/login/start', handler: loginStart, limit: RATE.login },
     { method: 'POST', path: '/api/login/finish', handler: loginFinish, limit: RATE.login },
     { method: 'POST', path: '/api/logout', handler: logout },
+    { method: 'POST', path: '/api/logout/everywhere', handler: logoutEverywhere, auth: true, limit: RATE.write },
     { method: 'GET', path: '/api/price', handler: getPrice, auth: true, limit: RATE.upstream },
     { method: 'GET', path: '/api/scanner', handler: getScanner, auth: true },
     { method: 'GET', path: '/api/evidence', handler: exportAllEvidence, auth: true, limit: RATE.upstream },
@@ -4797,7 +5326,7 @@ export function createApp(options) {
     { method: 'POST', path: '/api/evidence/anchor/retry', handler: retryAnchors, auth: true, limit: RATE.write },
     { method: 'GET', path: /^\/api\/operations\/([\w-]{8,64})\/evidence$/, handler: exportEvidence, auth: true, limit: RATE.upstream },
     { method: 'GET', path: '/api/random', handler: getRandom, auth: true, limit: RATE.upstream },
-    { method: 'GET', path: '/api/wallet', handler: getWallet, auth: true },
+    { method: 'GET', path: '/api/wallet', handler: getWallet, auth: true, limit: RATE.upstream },
     { method: 'POST', path: '/api/wallet/approval', handler: requestWallet, auth: true, limit: RATE.palm },
     { method: 'POST', path: '/api/wallet/register', handler: registerWallet, auth: true, limit: RATE.write },
     { method: 'POST', path: '/api/wallet/upgrade/approval', handler: requestUpgrade, auth: true, limit: RATE.palm },
@@ -4829,7 +5358,8 @@ export function createApp(options) {
     { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/broadcast$/, handler: broadcastSigned, auth: true, limit: RATE.unlock },
     { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/signature$/, handler: addSignature, auth: true, limit: RATE.unlock },
     { method: 'GET', path: /^\/api\/operations\/([\w-]{8,64})\/receipt$/, handler: getReceipt, auth: true },
-    { method: 'GET', path: /^\/api\/chain\/tx\/([0-9a-f]{64})$/, handler: chainTransaction, auth: true },
+    { method: 'GET', path: /^\/api\/chain\/tx\/([0-9a-f]{64})$/, handler: chainTransaction, auth: true, limit: RATE.upstream },
+    { method: 'GET', path: /^\/api\/chain\/evm\/([a-z]+)\/tx\/(0x[0-9a-fA-F]{64})$/, handler: evmChainTransaction, auth: true, limit: RATE.upstream },
     { method: 'POST', path: '/api/policy', handler: requestPolicy, auth: true, limit: RATE.palm },
     { method: 'POST', path: '/api/recovery', handler: requestRecovery, auth: true, limit: RATE.palm },
     { method: 'POST', path: '/api/accounts/approval', handler: requestAccount, auth: true, limit: RATE.palm },
@@ -4837,7 +5367,7 @@ export function createApp(options) {
     { method: 'POST', path: '/api/withdrawals', handler: requestWithdrawal, auth: true, limit: RATE.spend },
     { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/approval$/, handler: joinOperation, auth: true, limit: RATE.palm },
     { method: 'POST', path: /^\/api\/operations\/([\w-]{8,64})\/cancel$/, handler: cancelOperation, auth: true, limit: RATE.write },
-    { method: 'GET', path: /^\/api\/approvals\/([\w-]{8,64})$/, handler: readApproval, auth: true },
+    { method: 'GET', path: /^\/api\/approvals\/([\w-]{8,64})$/, handler: readApproval, auth: true, limit: RATE.write },
     { method: 'POST', path: /^\/api\/approvals\/([\w-]{8,64})\/palm$/, handler: startPalm, auth: true, limit: RATE.palm },
     { method: 'POST', path: /^\/api\/approvals\/([\w-]{8,64})\/cancel$/, handler: cancelApproval, auth: true, limit: RATE.write },
   ];
@@ -4914,7 +5444,7 @@ export function createApp(options) {
         throw new HttpError(403, `Open the wallet at ${publicOrigin}.`);
       }
       const cookies = parseCookies(req.headers.cookie);
-      if (route.auth && cookies[SESSION_COOKIE]) await expireOperations();
+      if (route.auth && cookies[sessionCookie]) await expireOperations();
       const user = route.auth ? await requireUser(cookies) : null;
       // After the session is resolved, so a user-keyed policy has a user to key on, and an
       // unauthenticated caller is turned away by the cheaper check first.

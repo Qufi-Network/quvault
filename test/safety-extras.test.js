@@ -62,7 +62,7 @@ test('a frozen vault refuses everything in flight and anything new, until a palm
   assert.ok(sent.txid, 'and payments work again');
 });
 
-test('a cosigner can freeze the vault; a stranger cannot; unfreezing a shared vault takes the quorum', async t => {
+test('a cosigner can freeze the vault; a stranger cannot; the owner’s palm alone unfreezes it, and a freeze lifts by itself', async t => {
   const env = await start(t);
   const alex = await owner(env);
   const bea = await signedIn(env, 'sub-bea');
@@ -71,14 +71,23 @@ test('a cosigner can freeze the vault; a stranger cannot; unfreezing a shared va
   await joins(env, alex, bea, 'Bea');
 
   assert.equal((await eve.post('/api/vault/freeze', { vaultOwnerId: alex.id })).status, 404, 'not theirs to freeze');
-  ok(await bea.post('/api/vault/freeze', { vaultOwnerId: alex.id }));
+  const frozen = ok(await bea.post('/api/vault/freeze', { vaultOwnerId: alex.id })).frozen;
+  assert.equal(frozen.until, frozen.at + 72 * 3600, 'a freeze says when it lifts');
   assert.ok(ok(await alex.get('/api/wallet')).wallet.frozen);
 
+  // So a signer cannot hold the vault hostage: the owner's palm alone lifts it.
   const unfreezing = ok(await alex.post('/api/vault/unfreeze/approval', {}));
-  assert.equal(unfreezing.operation.required, 2, 'a shared vault needs both palms to unfreeze');
+  assert.equal(unfreezing.operation.required, 1, 'the owner alone');
   await palmApprove(env, alex, unfreezing.operation.id);
-  assert.ok(ok(await alex.get('/api/wallet')).wallet.frozen, 'one palm is not enough');
-  await palmApprove(env, bea, unfreezing.operation.id);
+  assert.equal(ok(await alex.get('/api/wallet')).wallet.frozen, null);
+
+  // Nor freeze it over and over: once lifted, the same person waits before freezing it again.
+  assert.equal((await bea.post('/api/vault/freeze', { vaultOwnerId: alex.id })).status, 429);
+
+  // The owner can freeze it too, and when nobody lifts it, it lifts itself after 72 hours.
+  ok(await alex.post('/api/vault/freeze', {}));
+  assert.ok(ok(await alex.get('/api/wallet')).wallet.frozen);
+  env.advance(72 * 3600 + 1);
   assert.equal(ok(await alex.get('/api/wallet')).wallet.frozen, null);
 });
 
@@ -93,7 +102,7 @@ test('a payee the vault has paid before is no longer marked new', async t => {
   await signAndSend(env, alex, first.operation.id);
 
   const second = ok(await alex.post('/api/withdrawals', { to: DEST, amount: 100_000 }));
-  assert.equal(second.operation.statement, `Send 0.00100000 tBTC to ${DEST}`);
+  assert.match(second.operation.statement, new RegExp(String.raw`^Send 0\.00100000 tBTC to ${DEST}, network fee 0\.\d{8} tBTC$`));
   assert.equal(second.operation.details.first_payment, 'no, paid 1 time before');
 });
 
@@ -108,7 +117,7 @@ test('a saved name takes a palm, and then shows on the phone with the address be
   assert.deepEqual(book.map(a => [a.address, a.name]), [[DEST, 'Savings']]);
 
   const { operation } = ok(await alex.post('/api/withdrawals', { to: DEST, amount: 100_000 }));
-  assert.equal(operation.statement, `Send 0.00100000 tBTC to Savings (${DEST})`);
+  assert.match(operation.statement, new RegExp(String.raw`^Send 0\.00100000 tBTC to Savings \(${DEST}\), network fee 0\.\d{8} tBTC$`));
   assert.equal(operation.details.saved_as, 'Savings');
 });
 
